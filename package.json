@@ -1,0 +1,63 @@
+{
+  "name": "obs-audio-guard",
+  "version": "0.1.0",
+  "description": "Windows companion app for OBS audio silence alerts.",
+  "author": "OBS Audio Guard",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "dist/main/main/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"tsc -p tsconfig.main.json --watch --preserveWatchOutput\" \"wait-on tcp:5173 dist/main/main/main.js && electron .\"",
+    "start": "npm run build && electron .",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && npm run typecheck && vite build && tsc -p tsconfig.main.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
+    "package": "npm run build && electron-builder --dir",
+    "package:win-portable": "npm run build && node scripts/package-win-portable.mjs",
+    "dist:win": "npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.5.2",
+    "lucide-react": "^1.21.0",
+    "obs-websocket-js": "^5.0.8",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "concurrently": "^9.2.0",
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.obsaudioguard.app",
+    "productName": "OBS 音频守卫",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "OBS-Audio-Guard-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
