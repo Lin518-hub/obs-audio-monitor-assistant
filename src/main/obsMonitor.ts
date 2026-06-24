@@ -48,9 +48,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private outputTimer: NodeJS.Timeout | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private testAlertRestore: { state: MonitorRuntimeState; errorMessage: string | null } | null = null;
+  private testAlertRestore: { state: MonitorRuntimeState; errorMessage: string | null; inputs: InputOption[]; lastTargetMeterAt: number | null } | null = null;
   private history: AlertHistoryEntry[] = [];
   private lastTargetMeterAt: number | null = null;
+  private simulatedLive = false;
+  private actualStreaming = false;
+  private actualRecording = false;
 
   constructor(config: AppConfig, displays: DisplayInfo[]) {
     super();
@@ -71,6 +74,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       connected: this.state.connected,
       streaming: this.state.streaming,
       recording: this.state.recording,
+      simulatedLive: this.simulatedLive,
       lastLevelDb: this.state.lastLevelDb,
       silentForSeconds: silentForSeconds(this.state, now),
       secondsUntilAlert: secondsUntilAlert(this.state, this.config, now),
@@ -173,7 +177,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     if (this.testAlertRestore) {
       this.state = this.testAlertRestore.state;
       this.errorMessage = this.testAlertRestore.errorMessage;
+      this.inputs = this.testAlertRestore.inputs;
+      this.lastTargetMeterAt = this.testAlertRestore.lastTargetMeterAt;
       this.testAlertRestore = null;
+      if (!this.state.connected) {
+        this.scheduleReconnect();
+      }
       this.emitSnapshot();
       return this.getSnapshot();
     }
@@ -191,6 +200,13 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
   isTestAlertActive(): boolean {
     return this.testAlertRestore !== null;
+  }
+
+  setSimulatedLive(enabled: boolean): AppSnapshot {
+    this.simulatedLive = enabled;
+    this.state = reduceOutputState(this.state, this.config, enabled || this.actualStreaming, this.actualRecording, Date.now());
+    this.emitSnapshot();
+    return this.getSnapshot();
   }
 
   async testConnection(config: AppConfig): Promise<TestConnectionResult> {
@@ -239,11 +255,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     if (!this.testAlertRestore) {
       this.testAlertRestore = {
         state: this.state,
-        errorMessage: this.errorMessage
+        errorMessage: this.errorMessage,
+        inputs: this.inputs,
+        lastTargetMeterAt: this.lastTargetMeterAt
       };
     }
 
-    this.clearReconnect();
     this.errorMessage = null;
     const targetInputName = this.config.targetInputName || '演示麦克风';
     if (!this.inputs.some((input) => input.inputName === targetInputName)) {
@@ -359,11 +376,14 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         this.obs.call('GetStreamStatus'),
         this.obs.call('GetRecordStatus')
       ]);
+      this.actualStreaming = Boolean(streamStatus.outputActive);
+      this.actualRecording = Boolean(recordStatus.outputActive);
+      const streaming = this.simulatedLive || this.actualStreaming;
       this.state = reduceOutputState(
         this.state,
         this.config,
-        Boolean(streamStatus.outputActive),
-        Boolean(recordStatus.outputActive),
+        streaming,
+        this.actualRecording,
         Date.now()
       );
       this.errorMessage = null;
@@ -372,6 +392,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       const message = error instanceof Error ? error.message : '读取 OBS 推流/录制状态失败。';
       const now = Date.now();
       this.errorMessage = message;
+      this.actualStreaming = false;
+      this.actualRecording = false;
       const next: MonitorRuntimeState = {
         ...this.state,
         streaming: false,
@@ -419,6 +441,9 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private markDisconnected(message: string): void {
+    this.simulatedLive = false;
+    this.actualStreaming = false;
+    this.actualRecording = false;
     this.inputs = [];
     this.state = this.unavailableState('disconnected');
     this.lastTargetMeterAt = null;

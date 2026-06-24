@@ -100,6 +100,7 @@ export interface AppSnapshot {
   connected: boolean;
   streaming: boolean;
   recording: boolean;
+  simulatedLive: boolean;
   lastLevelDb: number | null;
   silentForSeconds: number;
   secondsUntilAlert: number | null;

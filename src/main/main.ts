@@ -12,6 +12,12 @@ const __dirname = dirname(__filename);
 const isDev = !app.isPackaged;
 const shouldUseDevServer = isDev && process.env.npm_lifecycle_event !== 'start';
 const rendererUrl = 'http://127.0.0.1:5173';
+const appIconPngPath = join(__dirname, '../../../build/icon.png');
+const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.obsaudioassistant.app');
+}
 
 let configStore: ConfigStore;
 let historyStore: HistoryStore;
@@ -43,6 +49,9 @@ if (!gotLock) {
 
 async function initializeApp(): Promise<void> {
   Menu.setApplicationMenu(null);
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(appIconPngPath);
+  }
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
   const config = await configStore.load();
@@ -119,6 +128,13 @@ function registerIpc(): void {
     });
     return monitor.updateConfig(nextConfig);
   });
+  ipcMain.handle('monitor:set-simulated-live', (_event, enabled: boolean) => {
+    const snapshot = monitor.setSimulatedLive(enabled);
+    latestSnapshot = snapshot;
+    broadcastSnapshot(snapshot);
+    updateTray(snapshot);
+    return snapshot;
+  });
   ipcMain.handle('alert:test', () => {
     const snapshot = monitor.triggerTestAlert();
     latestSnapshot = snapshot;
@@ -166,6 +182,7 @@ function createSettingsWindow(): void {
     minWidth: 860,
     minHeight: 620,
     title: 'OBS 音频检测助手',
+    icon: appIconPath(),
     backgroundColor: '#f6f8fb',
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
@@ -224,6 +241,7 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
+    icon: appIconPath(),
     skipTaskbar: true,
     frame: false,
     show: false,
@@ -332,6 +350,7 @@ function showAlertWindows(snapshot: AppSnapshot): void {
       maximizable: false,
       fullscreenable: false,
       alwaysOnTop: true,
+      icon: appIconPath(),
       skipTaskbar: true,
       frame: false,
       show: false,
@@ -404,6 +423,7 @@ function showPreAlertWindows(snapshot: AppSnapshot): void {
       maximizable: false,
       fullscreenable: false,
       alwaysOnTop: true,
+      icon: appIconPath(),
       skipTaskbar: true,
       frame: false,
       show: false,
@@ -684,6 +704,10 @@ function selectAlertDisplays(mode: string, displayId: number | null, displays: D
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function appIconPath(): string {
+  return process.platform === 'win32' ? appIconIcoPath : appIconPngPath;
 }
 
 function statusLabel(status: string): string {

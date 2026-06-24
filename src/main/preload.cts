@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('obsGuard', {
   testConnection: (patch: Partial<AppConfig>) =>
     ipcRenderer.invoke('obs:test-connection', patch) as Promise<TestConnectionResult>,
   setPaused: (paused: boolean) => ipcRenderer.invoke('monitor:set-paused', paused) as Promise<AppSnapshot>,
+  setSimulatedLive: (enabled: boolean) => ipcRenderer.invoke('monitor:set-simulated-live', enabled) as Promise<AppSnapshot>,
   testAlert: () => ipcRenderer.invoke('alert:test') as Promise<AppSnapshot>,
   alertAction: (action: AlertAction) => ipcRenderer.invoke('alert:action', action) as Promise<AppSnapshot>,
   forceCloseAlert: () => ipcRenderer.invoke('alert:force-close') as Promise<AppSnapshot>,

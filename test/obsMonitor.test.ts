@@ -37,6 +37,22 @@ describe('OBSMonitor test alert', () => {
     expect(after.alertVisible).toBe(before.alertVisible);
     expect(after.connected).toBe(before.connected);
     expect(after.status).toBe(before.status);
+    expect(after.inputs).toEqual(before.inputs);
+
+    await monitor.stop();
+  });
+
+  it('can temporarily simulate live output for local testing', async () => {
+    const monitor = new OBSMonitor(config, displays);
+
+    const simulated = monitor.setSimulatedLive(true);
+    expect(simulated.simulatedLive).toBe(true);
+    expect(simulated.streaming).toBe(true);
+    expect(simulated.status).toBe('disconnected');
+
+    const stopped = monitor.setSimulatedLive(false);
+    expect(stopped.simulatedLive).toBe(false);
+    expect(stopped.streaming).toBe(false);
 
     await monitor.stop();
   });

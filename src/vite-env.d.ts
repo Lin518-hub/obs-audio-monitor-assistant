@@ -19,6 +19,7 @@ declare global {
       reconnect: () => Promise<AppSnapshot>;
       testConnection: (patch: Partial<AppConfig>) => Promise<TestConnectionResult>;
       setPaused: (paused: boolean) => Promise<AppSnapshot>;
+      setSimulatedLive: (enabled: boolean) => Promise<AppSnapshot>;
       testAlert: () => Promise<AppSnapshot>;
       alertAction: (action: AlertAction) => Promise<AppSnapshot>;
       forceCloseAlert: () => Promise<AppSnapshot>;

@@ -3,9 +3,9 @@ import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
   BellOff,
+  BookOpen,
   Check,
   ChevronDown,
-  CircleHelp,
   CircleDot,
   Clock3,
   History,
@@ -26,7 +26,6 @@ import {
   Volume2,
   Wifi,
   WifiOff,
-  Wrench,
   X
 } from 'lucide-react';
 import type { AlertAction, AppConfig, AppSnapshot, InputOption, TestConnectionResult } from '../shared/types';
@@ -42,6 +41,9 @@ const route =
         ? 'floating'
         : 'settings';
 
+document.body.dataset.route = route;
+document.documentElement.dataset.route = route;
+
 root.render(
   <React.StrictMode>
     {route === 'alert' ? <AlertApp /> : route === 'prealert' ? <PreAlertApp /> : route === 'floating' ? <FloatingApp /> : <SettingsApp />}
@@ -53,11 +55,14 @@ function SettingsApp() {
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [showGuide, setShowGuide] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [thresholdDragging, setThresholdDragging] = useState(false);
   const pendingPatchRef = useRef<Partial<AppConfig>>({});
   const saveTimerRef = useRef<number | null>(null);
+  const meterTrackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -148,9 +153,36 @@ function SettingsApp() {
     scheduleAutoSave({ [key]: value } as Partial<AppConfig>);
   };
   const hasMultipleDisplays = snapshot.displays.length > 1;
+  const updateThresholdFromClientX = (clientX: number) => {
+    const rect = meterTrackRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    updateDraft('silenceThresholdDb', Math.round(percent * 85 - 90));
+  };
+  const beginThresholdDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setThresholdDragging(true);
+    updateThresholdFromClientX(event.clientX);
+
+    const onMove = (moveEvent: PointerEvent) => updateThresholdFromClientX(moveEvent.clientX);
+    const onUp = () => {
+      setThresholdDragging(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
 
   return (
     <main className="app-shell">
+      <div className="window-drag-strip" aria-hidden="true" />
       <section className="topbar">
         <div>
           <div className="eyebrow">OBS Audio Monitor Assistant</div>
@@ -172,17 +204,31 @@ function SettingsApp() {
               <span>{draft.targetInputName || '未选择音源'}</span>
               <strong>{snapshot.lastLevelDb === null ? '--' : `${snapshot.lastLevelDb.toFixed(1)} dB`}</strong>
             </div>
-            <div className="meter-track">
+            <div
+              className={`meter-track ${thresholdDragging ? 'dragging' : ''}`}
+              ref={meterTrackRef}
+              onPointerDown={beginThresholdDrag}
+            >
               <div className="meter-fill" style={{ width: `${levelPercent}%` }} />
-              <div className="threshold-marker" style={{ left: `${Math.max(0, Math.min(100, ((draft.silenceThresholdDb + 90) / 90) * 100))}%` }} />
+              <div
+                className="threshold-marker"
+                role="slider"
+                aria-label="静音阈值"
+                aria-valuemin={-90}
+                aria-valuemax={-5}
+                aria-valuenow={Math.round(draft.silenceThresholdDb)}
+                style={{ left: `${Math.max(0, Math.min(100, ((draft.silenceThresholdDb + 90) / 85) * 100))}%` }}
+              >
+                <span>{Math.round(draft.silenceThresholdDb)} dB</span>
+              </div>
             </div>
           </div>
           <div className="status-cards">
-            <Metric label="直播" value={snapshot.streaming ? '进行中' : '未开始'} active={snapshot.streaming} />
+            <Metric label="直播" value={snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '进行中' : '未开始'} active={snapshot.streaming} />
             <Metric label="录制" value={snapshot.recording ? '进行中' : '未开始'} active={snapshot.recording} />
             <Metric
               label="静音计时"
-              value={snapshot.secondsUntilAlert === null ? `${snapshot.silentForSeconds}s` : `${snapshot.secondsUntilAlert}s 后报警`}
+              value={silenceMetricText(snapshot)}
               active={snapshot.status === 'silent_counting'}
             />
           </div>
@@ -194,27 +240,37 @@ function SettingsApp() {
             <Settings size={18} />
             <span>快捷操作</span>
           </div>
-          <div className="action-stack">
-            <button className={snapshot.config.paused ? 'primary' : 'secondary'} onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
-              {snapshot.config.paused ? <Play size={18} /> : <Pause size={18} />}
-              {snapshot.config.paused ? '恢复检测' : '暂停检测'}
-            </button>
-            <button className="secondary" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
-              <Monitor size={18} />
-              {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
-            </button>
-            <button className="secondary" onClick={() => void window.obsGuard.reconnect()}>
-              <RefreshCw size={18} />
-              重连 OBS
-            </button>
+          <div className="action-groups">
+            <div className="action-group">
+              <span>直播控制</span>
+              <button className={snapshot.config.paused ? 'primary' : 'secondary'} onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
+                {snapshot.config.paused ? <Play size={18} /> : <Pause size={18} />}
+                {snapshot.config.paused ? '恢复检测' : '暂停检测'}
+              </button>
+              <button className="secondary" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
+                <Monitor size={18} />
+                {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
+              </button>
+            </div>
+            <div className="action-group">
+              <span>连接维护</span>
+              <button className="secondary" onClick={() => void window.obsGuard.reconnect()}>
+                <RefreshCw size={18} />
+                重连 OBS
+              </button>
+            </div>
           </div>
           <button className="diagnostic-toggle" onClick={() => setShowDiagnostics((value) => !value)}>
-            <Wrench size={17} />
+            <SlidersHorizontal size={17} />
             诊断与测试
             <ChevronDown size={16} className={showDiagnostics ? 'rotate' : ''} />
           </button>
           {showDiagnostics && (
             <div className="diagnostic-panel">
+              <button className={snapshot.simulatedLive ? 'primary full' : 'ghost full'} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
+                <Play size={17} />
+                {snapshot.simulatedLive ? '关闭模拟开播' : '模拟开播检测'}
+              </button>
               <button className="ghost full" onClick={() => void testConnection()} disabled={testingConnection}>
                 <TestTube2 size={17} />
                 {testingConnection ? '测试中...' : '测试 OBS 连接'}
@@ -227,9 +283,9 @@ function SettingsApp() {
                 <AlertTriangle size={17} />
                 测试报警弹窗
               </button>
-              <button className="ghost full" onClick={() => setShowGuide(true)}>
-                <CircleHelp size={17} />
-                操作说明
+              <button className="ghost full" onClick={() => setShowManual(true)}>
+                <BookOpen size={17} />
+                查看说明书
               </button>
               {testResult && <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
             </div>
@@ -238,12 +294,15 @@ function SettingsApp() {
       </section>
 
       <section className="settings-grid">
-        <div className="panel" data-guide="connection">
-          <div className="panel-title">
-            <Wifi size={18} />
-            <span>OBS 连接</span>
+        <div className="panel">
+          <div className="guide-target-block" data-guide="connection">
+            <div className="panel-title">
+              <Wifi size={18} />
+              <span>OBS 连接</span>
+            </div>
+            <ConnectionNotice snapshot={snapshot} />
           </div>
-          <div className="form-grid two">
+          <div className="form-grid two" data-guide="connection-fields">
             <label>
               <span>主机</span>
               <input value={draft.obsHost} onChange={(event) => updateDraft('obsHost', event.target.value)} />
@@ -378,6 +437,7 @@ function SettingsApp() {
           testingConnection={testingConnection}
         />
       )}
+      {showManual && <ManualDialog onClose={() => setShowManual(false)} />}
     </main>
   );
 }
@@ -518,15 +578,19 @@ function FloatingApp() {
     return null;
   }
 
-  const tone = snapshotTone(snapshot);
+  const tone = floatingTone(snapshot);
+  const displayedSilent = displayedSilenceSeconds(snapshot);
+  const isAudioNormal = audioStateKind(snapshot) === 'normal';
+  const emphasis = floatingEmphasis(snapshot);
   const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
 
   return (
-    <main className={`floating-shell ${tone} ${theme}`}>
+    <main className={`floating-shell ${tone} ${theme} ${emphasis}`}>
+      <div className="floating-ambient" />
       <header className="floating-header">
         <div className="floating-status">
           <span />
-          <strong>{statusText(snapshot.status)}</strong>
+          <strong>{displayStatusText(snapshot)}</strong>
         </div>
         <div className="floating-window-actions">
           <button aria-label={theme === 'dark' ? '切换浅色小浮窗' : '切换深色小浮窗'} onClick={toggleTheme}>
@@ -542,8 +606,8 @@ function FloatingApp() {
       </header>
 
       <section className="floating-time">
-        <span>静音时间</span>
-        <strong>{snapshot.silentForSeconds}s</strong>
+        <span>{isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
+        <strong>{isAudioNormal ? '正在讲话' : `${displayedSilent}s`}</strong>
         <em>{floatingHint(snapshot)}</em>
       </section>
 
@@ -558,7 +622,7 @@ function FloatingApp() {
       </section>
 
       <footer className="floating-footer">
-        <span>{snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
+        <span>{snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
         <button onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
           {snapshot.config.paused ? <Play size={14} /> : <Pause size={14} />}
           {snapshot.config.paused ? '恢复' : '暂停'}
@@ -582,7 +646,7 @@ function SafetyBanner({ snapshot }: { snapshot: AppSnapshot }) {
         <strong className="safety-action">{readinessActionText(snapshot)}</strong>
       </div>
       <div className="safety-meta">
-        <span>{snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
+        <span>{snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
         <strong>{snapshot.config.targetInputName || '未选择音源'}</strong>
       </div>
     </section>
@@ -612,6 +676,32 @@ function HistoryList({ snapshot }: { snapshot: AppSnapshot }) {
   );
 }
 
+type GuideLayout = {
+  rect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    right: number;
+    bottom: number;
+  };
+  card: {
+    left: number;
+    top: number;
+  };
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
+
+const overlapArea = (
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number }
+) => {
+  const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  return width * height;
+};
+
 function GuideDialog({
   onClose,
   onTestConnection,
@@ -627,79 +717,186 @@ function GuideDialog({
     () => [
       {
         target: 'status',
-        title: '先看当前是否安全',
-        body: '这里会直接告诉你 OBS 是否连接、是否开播、目标音源是否有电平。直播中只要看这一块，就能判断麦克风是否正常。',
-        action: null
+        title: '先看顶部状态',
+        body: '这里是直播时最重要的地方。它会告诉你现在是 OBS 未连接、等待开播、检测中、静音预警，还是正在报警。你不需要猜软件有没有工作，先看这一块就够了。'
       },
       {
         target: 'connection',
-        title: '连接 OBS WebSocket',
-        body: 'OBS 里打开“工具”到“WebSocket 服务器设置”，默认端口通常是 4455。有密码就填同一个密码，软件会自动保存。',
+        title: '第一步：打开 OBS 的 WebSocket',
+        body: '先打开 OBS。然后在 OBS 顶部菜单点击“工具”，找到“WebSocket 服务器设置”。如果你看到“启用 WebSocket 服务器”，把它勾上。OBS 28 以后一般自带这个功能，不需要额外安装插件。'
+      },
+      {
+        target: 'connection-fields',
+        title: '第二步：填写端口和密码',
+        body: 'OBS WebSocket 默认端口通常是 4455。如果 OBS 里面设置了服务器密码，就把同一个密码填到这里。主机一般保持 127.0.0.1。设置会自动保存，不需要点保存按钮。',
         action: 'test'
       },
       {
+        target: 'actions',
+        title: '第三步：先测试 OBS 是否连上',
+        body: '打开“诊断与测试”，点击“测试 OBS 连接”。如果提示连接成功，就说明软件已经能读取 OBS 的输入源列表。如果失败，通常是 OBS 没开、WebSocket 没启用、端口不对或密码不一致。',
+        action: 'openDiagnostics'
+      },
+      {
         target: 'source',
-        title: '只选择可能有声音的音源',
-        body: '这里会过滤图片、文字、显示器采集等通常没有声音的来源。电商直播建议选择主播麦克风、无线领夹麦、声卡输入或直播主混音。',
-        action: null
+        title: '第四步：选择要守护的音源',
+        body: '点击“目标音源”，选择真正会发出声音的来源。电商直播里通常选主播麦克风、无线领夹麦、声卡输入或直播主混音。图片、文字、显示器采集这类通常无声的来源会被过滤掉。'
+      },
+      {
+        target: 'source',
+        title: '第五步：设置报警规则',
+        body: '默认连续静音 120 秒报警，前 90 秒会先出现小预警。你可以按直播间节奏调整时长：口播密集的直播间可以短一点，访谈或活动直播可以长一点。阈值一般保持默认 -55 dB。'
       },
       {
         target: 'actions',
-        title: '高频操作留在外面',
-        body: '直播中常用的是暂停检测、打开小浮窗、重连 OBS。测试报警、刷新音源和操作说明已经收进“诊断与测试”。',
-        action: null
+        title: '第六步：不开播也能测试',
+        body: '如果 OBS 已连接但还没正式开播，可以在“诊断与测试”里打开“模拟开播检测”。这样 OBS 没有推流时也能测试电平、静音计时和报警弹窗。测完记得关闭模拟开播。'
+      },
+      {
+        target: 'actions',
+        title: '第七步：直播中常用这几个按钮',
+        body: '直播时外面只保留高频操作：暂停检测、打开小浮窗、重连 OBS。测试连接、刷新音源、模拟开播、测试报警都收在“诊断与测试”里，避免误触。'
+      },
+      {
+        target: 'status',
+        title: '最后：窗口关闭后仍在后台运行',
+        body: '主窗口点关闭只是隐藏到后台，软件会继续检测。需要完全退出时，从系统托盘或菜单栏图标里选择“退出”。现在你可以开始按自己的 OBS 环境测试了。'
       }
     ],
     []
   );
   const [stepIndex, setStepIndex] = useState(0);
-  const [spotlight, setSpotlight] = useState<DOMRect | null>(null);
+  const [layout, setLayout] = useState<GuideLayout | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
 
   useEffect(() => {
-    const updateSpotlight = () => {
-      const target = document.querySelector(`[data-guide="${step.target}"]`);
-      if (!target) {
-        setSpotlight(null);
+    const targets = Array.from(document.querySelectorAll<HTMLElement>('[data-guide]'));
+    targets.forEach((target) => target.classList.remove('guide-active-target'));
+    const target = document.querySelector<HTMLElement>(`[data-guide="${step.target}"]`);
+    let disposed = false;
+    let raf = 0;
+    const timers: number[] = [];
+
+    const updateLayout = () => {
+      if (disposed || !target) {
+        setLayout(null);
         return;
       }
 
-      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      window.setTimeout(() => {
-        setSpotlight(target.getBoundingClientRect());
-      }, 180);
+      const targetRect = target.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const margin = 24;
+      const gap = 18;
+      const padding = 8;
+      const cardWidth = Math.min(cardRef.current?.offsetWidth || 430, viewportWidth - margin * 2);
+      const cardHeight = Math.min(cardRef.current?.offsetHeight || 320, viewportHeight - margin * 2);
+      const rect = {
+        left: clamp(targetRect.left - padding, margin / 2, viewportWidth - margin / 2),
+        top: clamp(targetRect.top - padding, margin / 2, viewportHeight - margin / 2),
+        width: Math.min(targetRect.width + padding * 2, viewportWidth - margin),
+        height: Math.min(targetRect.height + padding * 2, viewportHeight - margin),
+        right: 0,
+        bottom: 0
+      };
+      rect.right = Math.min(rect.left + rect.width, viewportWidth - margin / 2);
+      rect.bottom = Math.min(rect.top + rect.height, viewportHeight - margin / 2);
+
+      const cardBounds = (left: number, top: number) => ({
+        left,
+        top,
+        right: left + cardWidth,
+        bottom: top + cardHeight
+      });
+      const candidates = [
+        {
+          left: rect.right + gap,
+          top: clamp(rect.top, margin, viewportHeight - cardHeight - margin),
+          fits: rect.right + gap + cardWidth <= viewportWidth - margin
+        },
+        {
+          left: rect.left - cardWidth - gap,
+          top: clamp(rect.top, margin, viewportHeight - cardHeight - margin),
+          fits: rect.left - cardWidth - gap >= margin
+        },
+        {
+          left: clamp(rect.left, margin, viewportWidth - cardWidth - margin),
+          top: rect.bottom + gap,
+          fits: rect.bottom + gap + cardHeight <= viewportHeight - margin
+        },
+        {
+          left: clamp(rect.left, margin, viewportWidth - cardWidth - margin),
+          top: rect.top - cardHeight - gap,
+          fits: rect.top - cardHeight - gap >= margin
+        }
+      ];
+      const cleanCandidate = candidates.find((candidate) => candidate.fits);
+      const fallback = candidates
+        .map((candidate) => {
+          const left = clamp(candidate.left, margin, viewportWidth - cardWidth - margin);
+          const top = clamp(candidate.top, margin, viewportHeight - cardHeight - margin);
+          return {
+            left,
+            top,
+            score: overlapArea(rect, cardBounds(left, top))
+          };
+        })
+        .sort((a, b) => a.score - b.score)[0];
+      const card = cleanCandidate
+        ? {
+            left: clamp(cleanCandidate.left, margin, viewportWidth - cardWidth - margin),
+            top: clamp(cleanCandidate.top, margin, viewportHeight - cardHeight - margin)
+          }
+        : {
+            left: fallback.left,
+            top: fallback.top
+          };
+
+      setLayout({ rect, card });
     };
 
-    updateSpotlight();
-    window.addEventListener('resize', updateSpotlight);
-    return () => window.removeEventListener('resize', updateSpotlight);
-  }, [step.target]);
+    const scheduleLayout = () => {
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(updateLayout);
+    };
 
-  const cardStyle = spotlight
-    ? {
-        left: Math.min(window.innerWidth - 380, Math.max(24, spotlight.right + 18)),
-        top: Math.min(window.innerHeight - 280, Math.max(24, spotlight.top))
-      }
-    : undefined;
+    target?.classList.add('guide-active-target');
+    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    scheduleLayout();
+    timers.push(window.setTimeout(updateLayout, 260));
+    window.addEventListener('resize', scheduleLayout);
+    window.addEventListener('scroll', scheduleLayout, true);
+
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(raf);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener('resize', scheduleLayout);
+      window.removeEventListener('scroll', scheduleLayout, true);
+      targets.forEach((item) => item.classList.remove('guide-active-target'));
+      target?.classList.remove('guide-active-target');
+    };
+  }, [step.target]);
 
   return (
     <div className="guide-overlay" role="dialog" aria-modal="true">
-      {spotlight && (
+      {layout && (
         <div
           className="guide-spotlight"
           style={{
-            left: spotlight.left - 8,
-            top: spotlight.top - 8,
-            width: spotlight.width + 16,
-            height: spotlight.height + 16
+            left: layout.rect.left,
+            top: layout.rect.top,
+            width: layout.rect.right - layout.rect.left,
+            height: layout.rect.bottom - layout.rect.top
           }}
         />
       )}
-      <section className="guide-card" style={cardStyle}>
+      <section ref={cardRef} className="guide-card" style={layout ? { left: layout.card.left, top: layout.card.top } : undefined}>
         <div className="guide-card-header">
           <div>
-            <div className="eyebrow">Setup Guide</div>
+            <div className="eyebrow">New User Guide</div>
             <h2>{step.title}</h2>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="跳过操作说明">
@@ -714,6 +911,11 @@ function GuideDialog({
               {testingConnection ? '测试中...' : '测试 OBS 连接'}
             </button>
             {testResult && <span className={testResult.ok ? 'test-ok' : 'test-bad'}>{testResult.message}</span>}
+          </div>
+        )}
+        {step.action === 'openDiagnostics' && (
+          <div className="guide-test-inline">
+            <span>提示：关闭引导后，在右侧快捷操作里展开“诊断与测试”。</span>
           </div>
         )}
         <div className="guide-progress">
@@ -734,17 +936,57 @@ function GuideDialog({
   );
 }
 
+function ManualDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="manual-overlay" role="dialog" aria-modal="true">
+      <section className="manual-dialog">
+        <div className="manual-header">
+          <div>
+            <div className="eyebrow">User Manual</div>
+            <h2>使用说明书</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="关闭说明书">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="manual-sections">
+          <article>
+            <strong>1. 在 OBS 里启用 WebSocket</strong>
+            <p>打开 OBS，点击顶部菜单“工具”，进入“WebSocket 服务器设置”。勾选“启用 WebSocket 服务器”。默认端口通常是 4455，如果你在 OBS 里设置了服务器密码，就把同一个密码填到本软件里。</p>
+          </article>
+          <article>
+            <strong>2. 连接并选择音源</strong>
+            <p>主机通常保持 127.0.0.1。连接成功后，在“目标音源”里选择主播麦克风、无线领夹麦、声卡输入或直播主混音。图片、文字、显示器采集等通常无声来源会被过滤。</p>
+          </article>
+          <article>
+            <strong>3. 设置静音报警规则</strong>
+            <p>默认连续静音 120 秒报警，90 秒时先显示预警。电商直播可以根据口播密度调整时间，阈值一般保持 -55 dB 即可。</p>
+          </article>
+          <article>
+            <strong>4. 不开播时测试</strong>
+            <p>OBS 已连接但还没推流时，可以在“诊断与测试”里打开“模拟开播检测”。这样可以测试静音计时、小浮窗和报警弹窗。测完后关闭模拟开播。</p>
+          </article>
+          <article>
+            <strong>5. 直播中怎么用</strong>
+            <p>平时看顶部状态和小浮窗即可。需要临时调试时点“暂停检测”；需要常驻角落观察时打开“小浮窗”；连接异常时点“重连 OBS”。</p>
+          </article>
+        </div>
+        <button className="primary manual-close" onClick={onClose}>
+          <Check size={18} />
+          我知道了
+        </button>
+      </section>
+    </div>
+  );
+}
+
 function safetyTitle(snapshot: AppSnapshot): string {
   if (snapshot.alertVisible) {
     return '正在报警';
   }
 
-  if (snapshot.preAlertVisible) {
-    return '静音预警中';
-  }
-
   if (snapshot.readinessReason === 'ready') {
-    return '当前安全';
+    return audioStateKind(snapshot) === 'normal' ? '正在讲话' : '静音计时中';
   }
 
   return '尚未进入检测';
@@ -752,7 +994,10 @@ function safetyTitle(snapshot: AppSnapshot): string {
 
 function readinessText(snapshot: AppSnapshot): string {
   const reasonText: Record<string, string> = {
-    ready: snapshot.secondsUntilAlert === null ? '音源电平正常，正在守护直播间麦克风和主音频。' : `已静音 ${snapshot.silentForSeconds} 秒，距离报警 ${snapshot.secondsUntilAlert} 秒。`,
+    ready:
+      audioStateKind(snapshot) === 'normal'
+        ? '检测中，正在讲话，音频正常。'
+        : `静音计时中，已静音 ${displayedSilenceSeconds(snapshot)} 秒，${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告。`,
     obs_disconnected: 'OBS 未连接，请确认 OBS 已打开且 WebSocket 已启用。',
     obs_connecting: '正在连接 OBS WebSocket。',
     not_streaming_or_recording: 'OBS 当前未直播或录制，暂不检测。',
@@ -770,7 +1015,7 @@ function readinessText(snapshot: AppSnapshot): string {
 
 function readinessActionText(snapshot: AppSnapshot): string {
   const actionText: Record<string, string> = {
-    ready: snapshot.secondsUntilAlert === null ? '无需操作，保持监听。' : '观察预警倒计时，确认主播是否正在正常停顿。',
+    ready: audioStateKind(snapshot) === 'normal' ? '音频正常，继续检测。' : `${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告，请确认主播是否真的没有讲话。`,
     obs_disconnected: '下一步：打开 OBS，并确认 WebSocket 服务已启用。',
     obs_connecting: '正在自动连接，必要时点击“重连 OBS”。',
     not_streaming_or_recording: '开播或开始录制后会自动进入检测。',
@@ -791,7 +1036,25 @@ function StatusPill({ snapshot }: { snapshot: AppSnapshot }) {
   return (
     <div className={`status-pill ${connected ? 'online' : 'offline'}`}>
       {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
-      {statusText(snapshot.status)}
+      {displayStatusText(snapshot)}
+    </div>
+  );
+}
+
+function ConnectionNotice({ snapshot }: { snapshot: AppSnapshot }) {
+  return (
+    <div className={`connection-notice ${snapshot.connected ? 'connected' : 'disconnected'}`}>
+      {snapshot.connected ? <Wifi size={17} /> : <WifiOff size={17} />}
+      <div>
+        <strong>{snapshot.connected ? 'OBS 已连接' : snapshot.status === 'connecting' ? '正在连接 OBS' : 'OBS 未连接'}</strong>
+        <span>
+          {snapshot.connected
+            ? snapshot.simulatedLive
+              ? '当前开启了模拟开播检测，可以在 OBS 未推流时测试静音逻辑。'
+              : '已能读取 OBS 状态和可检测音频源。'
+            : '请确认 OBS 已打开，并在 OBS 中启用 WebSocket 服务器。'}
+        </span>
+      </div>
     </div>
   );
 }
@@ -981,7 +1244,7 @@ function statusText(status: string): string {
     idle_not_streaming: '等待直播/录制',
     monitoring: '检测中',
     silent_counting: '静音计时中',
-    pre_alert: '静音预警中',
+    pre_alert: '静音计时中',
     alerting: '正在提醒',
     snoozed: '已延后检测',
     ignored_until_audio_returns: '本次已忽略',
@@ -990,6 +1253,30 @@ function statusText(status: string): string {
   };
 
   return labels[status] ?? status;
+}
+
+function displayStatusText(snapshot: AppSnapshot): string {
+  if (audioStateKind(snapshot) === 'normal') {
+    return '检测中';
+  }
+
+  if (audioStateKind(snapshot) === 'silent') {
+    return '静音计时中';
+  }
+
+  return statusText(snapshot.status);
+}
+
+function silenceMetricText(snapshot: AppSnapshot): string {
+  if (audioStateKind(snapshot) === 'normal') {
+    return '正在讲话';
+  }
+
+  if (audioStateKind(snapshot) === 'silent') {
+    return `${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告`;
+  }
+
+  return statusText(snapshot.status);
 }
 
 function dbLevelPercent(levelDb: number | null): number {
@@ -1036,17 +1323,63 @@ function snapshotTone(snapshot: AppSnapshot): 'safe' | 'warning' | 'danger' | 'i
   return snapshot.readinessReason === 'ready' ? 'safe' : 'idle';
 }
 
+function displayedSilenceSeconds(snapshot: AppSnapshot): number {
+  if (snapshot.silentForSeconds < 3) {
+    return 0;
+  }
+
+  return snapshot.silentForSeconds;
+}
+
+function audioStateKind(snapshot: AppSnapshot): 'normal' | 'silent' | 'other' {
+  if (snapshot.readinessReason !== 'ready') {
+    return 'other';
+  }
+
+  return displayedSilenceSeconds(snapshot) === 0 ? 'normal' : 'silent';
+}
+
+function secondsUntilVisibleAlert(snapshot: AppSnapshot): number {
+  return Math.max(0, snapshot.config.silenceDurationSeconds - displayedSilenceSeconds(snapshot));
+}
+
+function floatingTone(snapshot: AppSnapshot): 'safe' | 'warning' | 'danger' | 'idle' {
+  if (snapshot.alertVisible || (snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10)) {
+    return 'danger';
+  }
+
+  const displayedSilent = displayedSilenceSeconds(snapshot);
+  if (snapshot.preAlertVisible || (displayedSilent >= 30 && displayedSilent % 30 < 5)) {
+    return 'warning';
+  }
+
+  return snapshotTone(snapshot);
+}
+
+function floatingEmphasis(snapshot: AppSnapshot): string {
+  if (snapshot.alertVisible || (snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10)) {
+    return 'critical-emphasis';
+  }
+
+  const displayedSilent = displayedSilenceSeconds(snapshot);
+  if (snapshot.preAlertVisible || (displayedSilent >= 30 && displayedSilent % 30 < 5)) {
+    return 'soft-emphasis';
+  }
+
+  return '';
+}
+
 function floatingHint(snapshot: AppSnapshot): string {
   if (snapshot.alertVisible) {
     return '已触发报警';
   }
 
-  if (snapshot.secondsUntilAlert !== null) {
-    return `${snapshot.secondsUntilAlert}s 后报警`;
+  if (audioStateKind(snapshot) === 'normal') {
+    return '音频正常';
   }
 
-  if (snapshot.readinessReason === 'ready') {
-    return '音频正常';
+  if (audioStateKind(snapshot) === 'silent') {
+    return `${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告`;
   }
 
   return readinessText(snapshot);
