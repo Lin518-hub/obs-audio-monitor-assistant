@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, type AppConfig } from '../src/shared/types.js';
 
 const electronMock = vi.hoisted(() => ({
-  userData: `${process.env.TMPDIR ?? process.env.TEMP ?? '.'}/obs-audio-guard-config-${Date.now()}-${Math.random()
+  userData: `${process.env.TMPDIR ?? process.env.TEMP ?? '.'}/obs-audio-assistant-config-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2)}`
 }));

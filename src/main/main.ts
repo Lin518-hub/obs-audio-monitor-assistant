@@ -164,7 +164,7 @@ function createSettingsWindow(): void {
     height: 720,
     minWidth: 860,
     minHeight: 620,
-    title: 'OBS 音频守卫',
+    title: 'OBS音频检测助手',
     backgroundColor: '#0f1218',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -503,7 +503,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 
 function createTray(): void {
   tray = new Tray(createTrayIcon());
-  tray.setToolTip('OBS 音频守卫');
+  tray.setToolTip('OBS音频检测助手');
   updateTray(latestSnapshot ?? monitor.getSnapshot());
 }
 
@@ -514,7 +514,7 @@ function updateTray(snapshot: AppSnapshot): void {
 
   const statusText = statusLabel(snapshot.status);
   tray.setImage(createTrayIcon(trayColor(snapshot)));
-  tray.setToolTip(`OBS 音频守卫 - ${statusText}`);
+  tray.setToolTip(`OBS音频检测助手 - ${statusText}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `状态：${statusText}`, enabled: false },

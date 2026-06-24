@@ -80,7 +80,7 @@ function SettingsApp() {
   }, [snapshot?.lastLevelDb]);
 
   if (!snapshot || !draft) {
-    return <div className="boot-screen">正在启动 OBS 音频守卫...</div>;
+    return <div className="boot-screen">正在启动 OBS音频检测助手...</div>;
   }
 
   const save = async () => {
@@ -115,13 +115,14 @@ function SettingsApp() {
   const updateDraft = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
   };
+  const hasMultipleDisplays = snapshot.displays.length > 1;
 
   return (
     <main className="app-shell">
       <section className="topbar">
         <div>
-          <div className="eyebrow">OBS Audio Guard</div>
-          <h1>OBS 音频守卫</h1>
+          <div className="eyebrow">OBS Audio Assistant</div>
+          <h1>OBS音频检测助手</h1>
         </div>
         <StatusPill snapshot={snapshot} />
       </section>
@@ -267,45 +268,47 @@ function SettingsApp() {
           </div>
         </div>
 
-        <div className="panel span-two">
-          <div className="panel-title">
-            <Monitor size={18} />
-            <span>报警窗口</span>
+        {hasMultipleDisplays && (
+          <div className="panel span-two">
+            <div className="panel-title">
+              <Monitor size={18} />
+              <span>报警窗口</span>
+            </div>
+            <div className="display-options">
+              <Segment
+                active={draft.alertDisplayMode === 'primary'}
+                icon={<Monitor size={17} />}
+                label="主屏中央"
+                onClick={() => updateDraft('alertDisplayMode', 'primary')}
+              />
+              <Segment
+                active={draft.alertDisplayMode === 'display_id'}
+                icon={<Monitor size={17} />}
+                label="指定屏幕"
+                onClick={() => updateDraft('alertDisplayMode', 'display_id')}
+              />
+              <Segment
+                active={draft.alertDisplayMode === 'all'}
+                icon={<Radio size={17} />}
+                label="所有屏幕"
+                onClick={() => updateDraft('alertDisplayMode', 'all')}
+              />
+            </div>
+            {draft.alertDisplayMode === 'display_id' && (
+              <label className="display-picker">
+                <span>弹出屏幕</span>
+                <select value={draft.alertDisplayId ?? ''} onChange={(event) => updateDraft('alertDisplayId', event.target.value ? Number(event.target.value) : null)}>
+                  <option value="">选择屏幕</option>
+                  {snapshot.displays.map((display) => (
+                    <option value={display.id} key={display.id}>
+                      {display.label} - {display.bounds.width}x{display.bounds.height}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
-          <div className="display-options">
-            <Segment
-              active={draft.alertDisplayMode === 'primary'}
-              icon={<Monitor size={17} />}
-              label="主屏中央"
-              onClick={() => updateDraft('alertDisplayMode', 'primary')}
-            />
-            <Segment
-              active={draft.alertDisplayMode === 'display_id'}
-              icon={<Monitor size={17} />}
-              label="指定屏幕"
-              onClick={() => updateDraft('alertDisplayMode', 'display_id')}
-            />
-            <Segment
-              active={draft.alertDisplayMode === 'all'}
-              icon={<Radio size={17} />}
-              label="所有屏幕"
-              onClick={() => updateDraft('alertDisplayMode', 'all')}
-            />
-          </div>
-          {draft.alertDisplayMode === 'display_id' && (
-            <label className="display-picker">
-              <span>弹出屏幕</span>
-              <select value={draft.alertDisplayId ?? ''} onChange={(event) => updateDraft('alertDisplayId', event.target.value ? Number(event.target.value) : null)}>
-                <option value="">选择屏幕</option>
-                {snapshot.displays.map((display) => (
-                  <option value={display.id} key={display.id}>
-                    {display.label} - {display.bounds.width}x{display.bounds.height}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
+        )}
 
         <div className="panel span-two">
           <div className="panel-title history-title">

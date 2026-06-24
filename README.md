@@ -1,4 +1,4 @@
-# OBS 音频守卫
+# OBS音频检测助手
 
 一个 Windows 下的 OBS 伴随程序，用来监听指定 OBS 音频源。当直播或录制中目标音源连续静音超过设定时间时，弹出醒目的中央置顶提醒。
 
@@ -13,7 +13,7 @@
 - 弹窗支持 `确定`、`单次忽略`。确定会关闭弹窗并重新累计静音时长；单次忽略会关闭弹窗，并在后台 5 分钟后自动恢复检测。
 - 后台设置页和托盘菜单都支持暂停/恢复检测。
 - 主窗口点击关闭按钮会隐藏到后台，彻底退出需要从系统托盘菜单选择 `退出`。
-- 支持主屏、指定屏幕、所有屏幕弹窗策略。
+- 检测到多屏时支持主屏、指定屏幕、所有屏幕弹窗策略；单屏时默认在当前屏幕显示，不额外展示屏幕设置。
 - 支持记住拖动后的报警弹窗位置。
 - 支持 OBS 连接测试和最近 20 条报警历史记录。
 - 设置页提供 `测试报警弹窗`，不用连接 OBS 也能确认弹窗位置和样式。
@@ -46,7 +46,7 @@ OBS 中需要开启 WebSocket：
 npm run build
 ```
 
-Windows 安装包建议在 Windows 机器上生成：
+Windows 安装包：
 
 ```bash
 npm run dist:win
@@ -60,7 +60,7 @@ npm run dist:win
 npm run package:win-portable
 ```
 
-生成后把 `release/OBS-Audio-Guard-版本号-win-x64-portable.zip` 拷到 Windows 解压，双击里面的 `OBS 音频守卫.exe`。
+生成后把 `release/OBS-Audio-Detection-Assistant-版本号-win-x64-portable.zip` 拷到 Windows 解压，双击里面的 `OBS音频检测助手.exe`。
 
 ## 验证
 
