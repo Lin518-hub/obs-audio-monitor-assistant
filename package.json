@@ -1,8 +1,8 @@
 {
-  "name": "obs-audio-detection-assistant",
+  "name": "obs-audio-monitor-assistant",
   "version": "0.1.0",
-  "description": "Windows companion app for OBS audio silence detection and alerts.",
-  "author": "OBS音频检测助手",
+  "description": "OBS audio monitor assistant for livestream operators, focused on silent microphone alerts during live commerce and production workflows.",
+  "author": "OBS 音频检测助手",
   "license": "UNLICENSED",
   "private": true,
   "main": "dist/main/main/main.js",
@@ -39,7 +39,7 @@
   },
   "build": {
     "appId": "com.obsaudioassistant.app",
-    "productName": "OBS音频检测助手",
+    "productName": "OBS 音频检测助手",
     "directories": {
       "output": "release"
     },
@@ -52,7 +52,7 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "OBS音频检测助手-Setup-${version}-${arch}.${ext}"
+      "artifactName": "OBS 音频检测助手-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -61,7 +61,7 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "OBS音频检测助手",
+      "shortcutName": "OBS 音频检测助手",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerSidebar": "build/installer-sidebar.bmp",

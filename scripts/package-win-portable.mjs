@@ -8,7 +8,7 @@ const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const electronPackageJson = JSON.parse(readFileSync(join(root, 'node_modules/electron/package.json'), 'utf8'));
 const electronVersion = electronPackageJson.version;
 const appVersion = packageJson.version;
-const productName = packageJson.build?.productName ?? 'OBS音频检测助手';
+const productName = packageJson.build?.productName ?? 'OBS 音频检测助手';
 const releaseDir = join(root, 'release');
 const workDir = join(releaseDir, '.win-portable-work');
 const electronZipName = `electron-v${electronVersion}-win32-x64.zip`;
@@ -17,9 +17,9 @@ const electronUrls = [
   `https://npmmirror.com/mirrors/electron/v${electronVersion}/${electronZipName}`,
   `https://github.com/electron/electron/releases/download/v${electronVersion}/${electronZipName}`
 ];
-const unpackDir = join(releaseDir, `OBS-Audio-Detection-Assistant-${appVersion}-win-x64-portable`);
+const unpackDir = join(releaseDir, `OBS-Audio-Monitor-Assistant-${appVersion}-win-x64-portable`);
 const appDir = join(unpackDir, 'resources', 'app');
-const zipPath = join(releaseDir, `OBS-Audio-Detection-Assistant-${appVersion}-win-x64-portable.zip`);
+const zipPath = join(releaseDir, `OBS-Audio-Monitor-Assistant-${appVersion}-win-x64-portable.zip`);
 
 rmSync(workDir, { recursive: true, force: true });
 rmSync(unpackDir, { recursive: true, force: true });

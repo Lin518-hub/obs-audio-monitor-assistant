@@ -80,7 +80,7 @@ function SettingsApp() {
   }, [snapshot?.lastLevelDb]);
 
   if (!snapshot || !draft) {
-    return <div className="boot-screen">正在启动 OBS音频检测助手...</div>;
+    return <div className="boot-screen">正在启动 OBS 音频检测助手...</div>;
   }
 
   const save = async () => {
@@ -121,8 +121,8 @@ function SettingsApp() {
     <main className="app-shell">
       <section className="topbar">
         <div>
-          <div className="eyebrow">OBS Audio Assistant</div>
-          <h1>OBS音频检测助手</h1>
+          <div className="eyebrow">OBS Audio Monitor Assistant</div>
+          <h1>OBS 音频检测助手</h1>
         </div>
         <StatusPill snapshot={snapshot} />
       </section>
@@ -405,7 +405,7 @@ function AlertApp() {
       <section className="alert-copy">
         <div className="alert-kicker">音频静音提醒</div>
         <h1>{snapshot.config.targetInputName || '目标音源'} 可能没有声音</h1>
-        <p>已连续静音 {snapshot.silentForSeconds} 秒，请确认麦克风、声卡或 OBS 音频路由。</p>
+        <p>已连续静音 {snapshot.silentForSeconds} 秒，请确认麦克风是否静音、无线麦是否没电、声卡或 OBS 音频路由是否异常。</p>
       </section>
       <section className="alert-actions">
         <button className="quiet" onClick={() => void sendAction('ignore_once')} disabled={closingAction !== null}>
@@ -593,15 +593,15 @@ function GuideDialog({
           </article>
           <article>
             <strong>2. 连接并选择音源</strong>
-            <p>保存 OBS 主机、端口和密码后，点击“刷新音源列表”，选择要监听的麦克风或声音源。</p>
+            <p>保存 OBS 主机、端口和密码后，点击“刷新音源列表”，选择要监听的主播麦克风、无线领夹麦、声卡输入或直播主混音。</p>
           </article>
           <article>
             <strong>3. 设置报警规则</strong>
-            <p>默认连续静音 120 秒报警，阈值默认 -55 dB。你可以按直播间环境调整静音时长和阈值。</p>
+            <p>默认连续静音 120 秒报警，阈值默认 -55 dB。电商直播中可以保留默认值，用来发现麦克风没电、静音键误触、接收器掉线等长时间无声问题。</p>
           </article>
           <article>
             <strong>4. 测试弹窗</strong>
-            <p>点击“测试报警弹窗”检查位置和样式。实际检测只会在 OBS 正在直播或录制时开始。</p>
+            <p>点击“测试报警弹窗”检查位置和样式。实际检测只会在 OBS 正在直播或录制时开始，避免开播前调试阶段误报。</p>
           </article>
           <article>
             <strong>5. 后台运行和退出</strong>
@@ -644,7 +644,7 @@ function safetyTitle(snapshot: AppSnapshot): string {
 
 function readinessText(snapshot: AppSnapshot): string {
   const reasonText: Record<string, string> = {
-    ready: snapshot.secondsUntilAlert === null ? '音源电平正常，正在守护直播间音频。' : `已静音 ${snapshot.silentForSeconds} 秒，距离报警 ${snapshot.secondsUntilAlert} 秒。`,
+    ready: snapshot.secondsUntilAlert === null ? '音源电平正常，正在守护直播间麦克风和主音频。' : `已静音 ${snapshot.silentForSeconds} 秒，距离报警 ${snapshot.secondsUntilAlert} 秒。`,
     obs_disconnected: 'OBS 未连接，请确认 OBS 已打开且 WebSocket 已启用。',
     obs_connecting: '正在连接 OBS WebSocket。',
     not_streaming_or_recording: 'OBS 当前未直播或录制，暂不检测。',
