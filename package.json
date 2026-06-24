@@ -55,10 +55,13 @@
       "artifactName": "OBS 音频检测助手-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
+      "guid": "com.obsaudioassistant.app",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "allowElevation": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "OBS 音频检测助手",

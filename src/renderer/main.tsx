@@ -1,28 +1,35 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
   BellOff,
   Check,
+  ChevronDown,
   CircleHelp,
   CircleDot,
   Clock3,
   History,
+  Mic2,
   Monitor,
+  Moon,
   Pause,
   Play,
   Radio,
   RefreshCw,
-  Save,
+  Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
+  Sun,
   TestTube2,
   Trash2,
   Volume2,
   Wifi,
-  WifiOff
+  WifiOff,
+  Wrench,
+  X
 } from 'lucide-react';
-import type { AlertAction, AppConfig, AppSnapshot, TestConnectionResult } from '../shared/types';
+import type { AlertAction, AppConfig, AppSnapshot, InputOption, TestConnectionResult } from '../shared/types';
 import './styles.css';
 
 const root = createRoot(document.getElementById('root')!);
@@ -44,10 +51,13 @@ root.render(
 function SettingsApp() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [draft, setDraft] = useState<AppConfig | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [showGuide, setShowGuide] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const pendingPatchRef = useRef<Partial<AppConfig>>({});
+  const saveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -67,6 +77,9 @@ function SettingsApp() {
 
     return () => {
       mounted = false;
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+      }
       dispose();
     };
   }, []);
@@ -83,15 +96,33 @@ function SettingsApp() {
     return <div className="boot-screen">正在启动 OBS 音频检测助手...</div>;
   }
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      const next = await window.obsGuard.saveConfig(draft);
-      setSnapshot(next);
-      setDraft(next.config);
-    } finally {
-      setSaving(false);
+  const scheduleAutoSave = (patch: Partial<AppConfig>) => {
+    pendingPatchRef.current = {
+      ...pendingPatchRef.current,
+      ...patch
+    };
+    setSaveState('saving');
+
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
     }
+
+    saveTimerRef.current = window.setTimeout(() => {
+      const pending = pendingPatchRef.current;
+      pendingPatchRef.current = {};
+      saveTimerRef.current = null;
+
+      void window.obsGuard
+        .saveConfig(pending)
+        .then((next) => {
+          setSnapshot(next);
+          setDraft((current) => (current ? { ...next.config, ...pendingPatchRef.current } : next.config));
+          setSaveState('saved');
+        })
+        .catch(() => {
+          setSaveState('error');
+        });
+    }, 420);
   };
 
   const closeGuide = async () => {
@@ -114,6 +145,7 @@ function SettingsApp() {
 
   const updateDraft = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
+    scheduleAutoSave({ [key]: value } as Partial<AppConfig>);
   };
   const hasMultipleDisplays = snapshot.displays.length > 1;
 
@@ -130,7 +162,7 @@ function SettingsApp() {
       <SafetyBanner snapshot={snapshot} />
 
       <section className="dashboard-grid">
-        <div className="panel status-panel">
+        <div className="panel status-panel" data-guide="status">
           <div className="panel-title">
             <CircleDot size={18} />
             <span>实时检测</span>
@@ -157,51 +189,56 @@ function SettingsApp() {
           {snapshot.errorMessage && <div className="inline-warning">{snapshot.errorMessage}</div>}
         </div>
 
-        <div className="panel action-panel">
+        <div className="panel action-panel" data-guide="actions">
           <div className="panel-title">
             <Settings size={18} />
             <span>快捷操作</span>
           </div>
-          <div className="action-row">
+          <div className="action-stack">
             <button className={snapshot.config.paused ? 'primary' : 'secondary'} onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
               {snapshot.config.paused ? <Play size={18} /> : <Pause size={18} />}
               {snapshot.config.paused ? '恢复检测' : '暂停检测'}
+            </button>
+            <button className="secondary" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
+              <Monitor size={18} />
+              {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
             </button>
             <button className="secondary" onClick={() => void window.obsGuard.reconnect()}>
               <RefreshCw size={18} />
               重连 OBS
             </button>
           </div>
-          <button className="ghost full" onClick={() => void testConnection()} disabled={testingConnection}>
-            <TestTube2 size={17} />
-            {testingConnection ? '测试中...' : '测试连接'}
+          <button className="diagnostic-toggle" onClick={() => setShowDiagnostics((value) => !value)}>
+            <Wrench size={17} />
+            诊断与测试
+            <ChevronDown size={16} className={showDiagnostics ? 'rotate' : ''} />
           </button>
-          <button className="ghost full" onClick={() => void window.obsGuard.refreshInputs()}>
-            <RefreshCw size={17} />
-            刷新音源列表
-          </button>
-          <button className="ghost full" onClick={() => void window.obsGuard.testAlert()}>
-            <AlertTriangle size={17} />
-            测试报警弹窗
-          </button>
-          <button className="ghost full" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
-            <Monitor size={17} />
-            {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
-          </button>
-          <button className="ghost full" onClick={() => setShowGuide(true)}>
-            <CircleHelp size={17} />
-            操作说明
-          </button>
-          {testResult && (
-            <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>
-              {testResult.message}
+          {showDiagnostics && (
+            <div className="diagnostic-panel">
+              <button className="ghost full" onClick={() => void testConnection()} disabled={testingConnection}>
+                <TestTube2 size={17} />
+                {testingConnection ? '测试中...' : '测试 OBS 连接'}
+              </button>
+              <button className="ghost full" onClick={() => void window.obsGuard.refreshInputs()}>
+                <RefreshCw size={17} />
+                刷新音源列表
+              </button>
+              <button className="ghost full" onClick={() => void window.obsGuard.testAlert()}>
+                <AlertTriangle size={17} />
+                测试报警弹窗
+              </button>
+              <button className="ghost full" onClick={() => setShowGuide(true)}>
+                <CircleHelp size={17} />
+                操作说明
+              </button>
+              {testResult && <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
             </div>
           )}
         </div>
       </section>
 
       <section className="settings-grid">
-        <div className="panel">
+        <div className="panel" data-guide="connection">
           <div className="panel-title">
             <Wifi size={18} />
             <span>OBS 连接</span>
@@ -213,12 +250,12 @@ function SettingsApp() {
             </label>
             <label>
               <span>端口</span>
-              <input
-                type="number"
+              <NumberControl
+                value={draft.obsPort}
                 min={1}
                 max={65535}
-                value={draft.obsPort}
-                onChange={(event) => updateDraft('obsPort', numberFromInput(event.target.value, draft.obsPort))}
+                step={1}
+                onChange={(value) => updateDraft('obsPort', value)}
               />
             </label>
             <label className="span-two">
@@ -228,7 +265,7 @@ function SettingsApp() {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel" data-guide="source">
           <div className="panel-title">
             <Volume2 size={18} />
             <span>检测规则</span>
@@ -236,33 +273,33 @@ function SettingsApp() {
           <div className="form-grid two">
             <label className="span-two">
               <span>目标音源</span>
-              <select value={draft.targetInputName} onChange={(event) => updateDraft('targetInputName', event.target.value)}>
-                <option value="">选择 OBS 输入源</option>
-                {snapshot.inputs.map((input) => (
-                  <option value={input.inputName} key={`${input.inputKind}:${input.inputName}`}>
-                    {input.inputName}
-                  </option>
-                ))}
-              </select>
+              <SourcePicker
+                inputs={snapshot.inputs}
+                value={draft.targetInputName}
+                onChange={(value) => updateDraft('targetInputName', value)}
+                onRefresh={() => void window.obsGuard.refreshInputs()}
+              />
             </label>
             <label>
               <span>静音时长（秒）</span>
-              <input
-                type="number"
+              <NumberControl
+                value={draft.silenceDurationSeconds}
                 min={5}
                 max={3600}
-                value={draft.silenceDurationSeconds}
-                onChange={(event) => updateDraft('silenceDurationSeconds', numberFromInput(event.target.value, draft.silenceDurationSeconds))}
+                step={5}
+                suffix="秒"
+                onChange={(value) => updateDraft('silenceDurationSeconds', value)}
               />
             </label>
             <label>
               <span>静音阈值（dB）</span>
-              <input
-                type="number"
+              <NumberControl
+                value={draft.silenceThresholdDb}
                 min={-90}
                 max={-5}
-                value={draft.silenceThresholdDb}
-                onChange={(event) => updateDraft('silenceThresholdDb', numberFromInput(event.target.value, draft.silenceThresholdDb))}
+                step={1}
+                suffix="dB"
+                onChange={(value) => updateDraft('silenceThresholdDb', value)}
               />
             </label>
           </div>
@@ -326,11 +363,11 @@ function SettingsApp() {
       </section>
 
       <footer className="footer-actions">
-        <div>默认仅在直播或录制中检测，OBS 空闲时不会报警。</div>
-        <button className="primary" onClick={save} disabled={saving}>
-          <Save size={18} />
-          {saving ? '保存中...' : '保存设置'}
-        </button>
+        <div>设置会自动保存。默认仅在直播或录制中检测，OBS 空闲时不会报警。</div>
+        <div className={`save-indicator ${saveState}`}>
+          <span />
+          {saveState === 'saving' ? '正在自动保存' : saveState === 'saved' ? '已自动保存' : saveState === 'error' ? '保存失败，请检查权限' : '等待设置变更'}
+        </div>
       </footer>
 
       {showGuide && (
@@ -462,11 +499,20 @@ function PreAlertApp() {
 
 function FloatingApp() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('floatingTheme') === 'light' ? 'light' : 'dark'));
 
   useEffect(() => {
     void window.obsGuard.getSnapshot().then(setSnapshot);
     return window.obsGuard.onSnapshot(setSnapshot);
   }, []);
+
+  const toggleTheme = () => {
+    setTheme((current) => {
+      const next = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('floatingTheme', next);
+      return next;
+    });
+  };
 
   if (!snapshot) {
     return null;
@@ -476,13 +522,16 @@ function FloatingApp() {
   const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
 
   return (
-    <main className={`floating-shell ${tone}`}>
+    <main className={`floating-shell ${tone} ${theme}`}>
       <header className="floating-header">
         <div className="floating-status">
           <span />
           <strong>{statusText(snapshot.status)}</strong>
         </div>
         <div className="floating-window-actions">
+          <button aria-label={theme === 'dark' ? '切换浅色小浮窗' : '切换深色小浮窗'} onClick={toggleTheme}>
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
           <button aria-label="打开设置" onClick={() => void window.obsGuard.showSettings()}>
             <Settings size={15} />
           </button>
@@ -530,6 +579,7 @@ function SafetyBanner({ snapshot }: { snapshot: AppSnapshot }) {
       <div>
         <div className="safety-label">{safetyTitle(snapshot)}</div>
         <p>{readinessText(snapshot)}</p>
+        <strong className="safety-action">{readinessActionText(snapshot)}</strong>
       </div>
       <div className="safety-meta">
         <span>{snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
@@ -573,54 +623,112 @@ function GuideDialog({
   testResult: TestConnectionResult | null;
   testingConnection: boolean;
 }) {
+  const steps = useMemo(
+    () => [
+      {
+        target: 'status',
+        title: '先看当前是否安全',
+        body: '这里会直接告诉你 OBS 是否连接、是否开播、目标音源是否有电平。直播中只要看这一块，就能判断麦克风是否正常。',
+        action: null
+      },
+      {
+        target: 'connection',
+        title: '连接 OBS WebSocket',
+        body: 'OBS 里打开“工具”到“WebSocket 服务器设置”，默认端口通常是 4455。有密码就填同一个密码，软件会自动保存。',
+        action: 'test'
+      },
+      {
+        target: 'source',
+        title: '只选择可能有声音的音源',
+        body: '这里会过滤图片、文字、显示器采集等通常没有声音的来源。电商直播建议选择主播麦克风、无线领夹麦、声卡输入或直播主混音。',
+        action: null
+      },
+      {
+        target: 'actions',
+        title: '高频操作留在外面',
+        body: '直播中常用的是暂停检测、打开小浮窗、重连 OBS。测试报警、刷新音源和操作说明已经收进“诊断与测试”。',
+        action: null
+      }
+    ],
+    []
+  );
+  const [stepIndex, setStepIndex] = useState(0);
+  const [spotlight, setSpotlight] = useState<DOMRect | null>(null);
+  const step = steps[stepIndex];
+  const isLastStep = stepIndex === steps.length - 1;
+
+  useEffect(() => {
+    const updateSpotlight = () => {
+      const target = document.querySelector(`[data-guide="${step.target}"]`);
+      if (!target) {
+        setSpotlight(null);
+        return;
+      }
+
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      window.setTimeout(() => {
+        setSpotlight(target.getBoundingClientRect());
+      }, 180);
+    };
+
+    updateSpotlight();
+    window.addEventListener('resize', updateSpotlight);
+    return () => window.removeEventListener('resize', updateSpotlight);
+  }, [step.target]);
+
+  const cardStyle = spotlight
+    ? {
+        left: Math.min(window.innerWidth - 380, Math.max(24, spotlight.right + 18)),
+        top: Math.min(window.innerHeight - 280, Math.max(24, spotlight.top))
+      }
+    : undefined;
+
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="guide-dialog">
-        <div className="guide-header">
+    <div className="guide-overlay" role="dialog" aria-modal="true">
+      {spotlight && (
+        <div
+          className="guide-spotlight"
+          style={{
+            left: spotlight.left - 8,
+            top: spotlight.top - 8,
+            width: spotlight.width + 16,
+            height: spotlight.height + 16
+          }}
+        />
+      )}
+      <section className="guide-card" style={cardStyle}>
+        <div className="guide-card-header">
           <div>
             <div className="eyebrow">Setup Guide</div>
-            <h2>操作说明</h2>
+            <h2>{step.title}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="关闭操作说明">
-            <Check size={19} />
+          <button className="icon-button" onClick={onClose} aria-label="跳过操作说明">
+            <X size={18} />
           </button>
         </div>
-
-        <div className="guide-steps">
-          <article>
-            <strong>1. 打开 OBS WebSocket</strong>
-            <p>在 OBS 里进入“工具”到“WebSocket 服务器设置”，启用 WebSocket。默认端口一般是 4455，如果设置了密码，就在本软件里填同一个密码。</p>
-          </article>
-          <article>
-            <strong>2. 连接并选择音源</strong>
-            <p>保存 OBS 主机、端口和密码后，点击“刷新音源列表”，选择要监听的主播麦克风、无线领夹麦、声卡输入或直播主混音。</p>
-          </article>
-          <article>
-            <strong>3. 设置报警规则</strong>
-            <p>默认连续静音 120 秒报警，阈值默认 -55 dB。电商直播中可以保留默认值，用来发现麦克风没电、静音键误触、接收器掉线等长时间无声问题。</p>
-          </article>
-          <article>
-            <strong>4. 测试弹窗</strong>
-            <p>点击“测试报警弹窗”检查位置和样式。实际检测只会在 OBS 正在直播或录制时开始，避免开播前调试阶段误报。</p>
-          </article>
-          <article>
-            <strong>5. 后台运行和退出</strong>
-            <p>点窗口关闭按钮只会隐藏到后台。需要彻底退出时，从右下角托盘图标菜单选择“退出”。</p>
-          </article>
+        <p>{step.body}</p>
+        {step.action === 'test' && (
+          <div className="guide-test-inline">
+            <button className="secondary" onClick={onTestConnection} disabled={testingConnection}>
+              <TestTube2 size={17} />
+              {testingConnection ? '测试中...' : '测试 OBS 连接'}
+            </button>
+            {testResult && <span className={testResult.ok ? 'test-ok' : 'test-bad'}>{testResult.message}</span>}
+          </div>
+        )}
+        <div className="guide-progress">
+          <span>
+            {stepIndex + 1} / {steps.length}
+          </span>
+          <div>
+            <button className="ghost mini" onClick={onClose}>
+              跳过
+            </button>
+            <button className="primary" onClick={() => (isLastStep ? onClose() : setStepIndex((index) => index + 1))}>
+              {isLastStep ? '完成' : '下一步'}
+            </button>
+          </div>
         </div>
-
-        <div className="guide-test">
-          <button className="secondary" onClick={onTestConnection} disabled={testingConnection}>
-            <TestTube2 size={17} />
-            {testingConnection ? '测试中...' : '测试 OBS 连接'}
-          </button>
-          {testResult && <span className={testResult.ok ? 'test-ok' : 'test-bad'}>{testResult.message}</span>}
-        </div>
-
-        <button className="primary guide-close" onClick={onClose}>
-          <Check size={18} />
-          我知道了
-        </button>
       </section>
     </div>
   );
@@ -660,6 +768,24 @@ function readinessText(snapshot: AppSnapshot): string {
   return reasonText[snapshot.readinessReason] ?? '正在读取状态。';
 }
 
+function readinessActionText(snapshot: AppSnapshot): string {
+  const actionText: Record<string, string> = {
+    ready: snapshot.secondsUntilAlert === null ? '无需操作，保持监听。' : '观察预警倒计时，确认主播是否正在正常停顿。',
+    obs_disconnected: '下一步：打开 OBS，并确认 WebSocket 服务已启用。',
+    obs_connecting: '正在自动连接，必要时点击“重连 OBS”。',
+    not_streaming_or_recording: '开播或开始录制后会自动进入检测。',
+    no_target_selected: '下一步：在“检测规则”里选择主播麦克风或直播主混音。',
+    target_missing: '下一步：刷新音源列表，或在 OBS 中恢复这个音源。',
+    no_target_meter: '下一步：确认该源在当前场景中处于活动状态。',
+    paused: '需要恢复时点击右侧“恢复检测”。',
+    snoozed: '忽略倒计时结束后会自动恢复检测。',
+    alerting: '请处理报警弹窗中的“确定”或“单次忽略”。',
+    error: '请查看错误信息，必要时重连 OBS。'
+  };
+
+  return actionText[snapshot.readinessReason] ?? '等待状态更新。';
+}
+
 function StatusPill({ snapshot }: { snapshot: AppSnapshot }) {
   const connected = snapshot.connected;
   return (
@@ -675,6 +801,166 @@ function Metric({ label, value, active }: { label: string; value: string; active
     <div className={`metric ${active ? 'active' : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function SourcePicker({
+  inputs,
+  value,
+  onChange,
+  onRefresh
+}: {
+  inputs: InputOption[];
+  value: string;
+  onChange: (value: string) => void;
+  onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const selected = inputs.find((input) => input.inputName === value);
+  const filteredInputs = inputs.filter((input) => input.inputName.toLowerCase().includes(query.trim().toLowerCase()));
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="source-picker" ref={pickerRef}>
+      <button className={`source-trigger ${open ? 'open' : ''}`} onClick={() => setOpen((next) => !next)}>
+        <span className="source-trigger-icon">
+          <Mic2 size={18} />
+        </span>
+        <span className="source-trigger-copy">
+          <strong>{selected?.inputName || value || '选择可能有声音的 OBS 音源'}</strong>
+          <em>{selected ? readableInputKind(selected.inputKind) : inputs.length > 0 ? `${inputs.length} 个可检测音源` : '请先连接 OBS 或刷新音源'}</em>
+        </span>
+        <ChevronDown size={18} className={open ? 'rotate' : ''} />
+      </button>
+
+      {open && (
+        <div className="source-menu">
+          <div className="source-search">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索麦克风、声卡、主混音" autoFocus />
+          </div>
+          <div className="source-list">
+            {filteredInputs.length === 0 ? (
+              <div className="source-empty">
+                <strong>没有可选音频源</strong>
+                <span>已过滤图片、文字、显示器采集等通常无声音的来源。请确认 OBS 中有麦克风、声卡、媒体或主混音。</span>
+              </div>
+            ) : (
+              filteredInputs.map((input) => (
+                <button
+                  className={`source-option ${input.inputName === value ? 'active' : ''}`}
+                  key={`${input.inputKind}:${input.inputName}`}
+                  onClick={() => {
+                    onChange(input.inputName);
+                    setOpen(false);
+                    setQuery('');
+                  }}
+                >
+                  <Mic2 size={17} />
+                  <span>
+                    <strong>{input.inputName}</strong>
+                    <em>{readableInputKind(input.inputKind)}</em>
+                  </span>
+                  {input.inputName === value && <Check size={17} />}
+                </button>
+              ))
+            )}
+          </div>
+          <button className="source-refresh" onClick={onRefresh}>
+            <RefreshCw size={16} />
+            重新读取 OBS 音源
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NumberControl({
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = (raw: string) => {
+    const parsed = Number(raw);
+    const next = Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : value;
+    setText(String(next));
+    if (next !== value) {
+      onChange(next);
+    }
+  };
+
+  const stepBy = (direction: -1 | 1) => {
+    const next = Math.min(max, Math.max(min, value + step * direction));
+    setText(String(next));
+    onChange(next);
+  };
+
+  return (
+    <div className="number-control">
+      <button type="button" onClick={() => stepBy(-1)} aria-label="减少数值">
+        -
+      </button>
+      <div className="number-field">
+        <input
+          inputMode="numeric"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={() => commit(text)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              commit(text);
+            }
+          }}
+        />
+        {suffix && <span>{suffix}</span>}
+      </div>
+      <button type="button" onClick={() => stepBy(1)} aria-label="增加数值">
+        +
+      </button>
     </div>
   );
 }
@@ -706,17 +992,36 @@ function statusText(status: string): string {
   return labels[status] ?? status;
 }
 
-function numberFromInput(value: string, fallback: number): number {
-  const next = Number(value);
-  return Number.isFinite(next) ? next : fallback;
-}
-
 function dbLevelPercent(levelDb: number | null): number {
   if (levelDb === null) {
     return 0;
   }
 
   return Math.max(0, Math.min(100, ((levelDb + 90) / 90) * 100));
+}
+
+function readableInputKind(inputKind: string): string {
+  if (inputKind.includes('wasapi') || inputKind.includes('coreaudio') || inputKind.includes('pulse') || inputKind.includes('alsa')) {
+    return '系统音频 / 麦克风';
+  }
+
+  if (inputKind.includes('media') || inputKind.includes('ffmpeg') || inputKind.includes('vlc')) {
+    return '媒体源';
+  }
+
+  if (inputKind.includes('browser')) {
+    return '浏览器源';
+  }
+
+  if (inputKind.includes('dshow') || inputKind.includes('capture')) {
+    return '采集设备';
+  }
+
+  if (inputKind === 'demo_input') {
+    return '演示音源';
+  }
+
+  return inputKind || 'OBS 输入源';
 }
 
 function snapshotTone(snapshot: AppSnapshot): 'safe' | 'warning' | 'danger' | 'idle' {

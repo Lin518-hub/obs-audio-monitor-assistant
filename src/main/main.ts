@@ -42,6 +42,7 @@ if (!gotLock) {
 }
 
 async function initializeApp(): Promise<void> {
+  Menu.setApplicationMenu(null);
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
   const config = await configStore.load();
@@ -165,7 +166,8 @@ function createSettingsWindow(): void {
     minWidth: 860,
     minHeight: 620,
     title: 'OBS 音频检测助手',
-    backgroundColor: '#0f1218',
+    backgroundColor: '#f6f8fb',
+    autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -175,6 +177,8 @@ function createSettingsWindow(): void {
   });
 
   attachWindowDiagnostics(settingsWindow, 'settings');
+  settingsWindow.setMenuBarVisibility(false);
+  settingsWindow.removeMenu();
   loadRendererSafely(settingsWindow, '#settings', 'settings');
 
   settingsWindow.on('closed', () => {

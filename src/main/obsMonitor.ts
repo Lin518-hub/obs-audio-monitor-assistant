@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import OBSWebSocket, { EventSubscription } from 'obs-websocket-js';
 import { maxInputLevelDb } from '../shared/audio.js';
+import { isProbablyAudibleInputKind } from '../shared/inputKinds.js';
 import {
   deriveStatus,
   initialRuntimeState,
@@ -210,11 +211,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     try {
       const response = await obs.call('GetInputList');
+      const audibleInputs = response.inputs.filter((input) => isProbablyAudibleInputKind(String(input.inputKind ?? '')));
       return {
         ok: true,
         stage: 'inputs',
-        message: `连接成功，读取到 ${response.inputs.length} 个输入源。`,
-        inputCount: response.inputs.length
+        message: `连接成功，读取到 ${audibleInputs.length} 个可检测音频源。`,
+        inputCount: audibleInputs.length
       };
     } catch (error) {
       return {
@@ -343,7 +345,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         inputName: String(input.inputName ?? ''),
         inputKind: String(input.inputKind ?? '')
       }))
-      .filter((input) => input.inputName.length > 0);
+      .filter((input) => input.inputName.length > 0)
+      .filter((input) => isProbablyAudibleInputKind(input.inputKind));
   }
 
   private async pollOutputState(): Promise<void> {
