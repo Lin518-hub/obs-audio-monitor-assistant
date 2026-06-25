@@ -14,6 +14,13 @@ const shouldUseDevServer = isDev && process.env.npm_lifecycle_event !== 'start';
 const rendererUrl = 'http://127.0.0.1:5173';
 const appIconPngPath = join(__dirname, '../../../build/icon.png');
 const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
+const trayMacTemplatePath = join(__dirname, '../../../build/tray-macTemplate.png');
+const trayIconPaths = {
+  safe: join(__dirname, '../../../build/tray-safe.png'),
+  warning: join(__dirname, '../../../build/tray-warning.png'),
+  danger: join(__dirname, '../../../build/tray-danger.png'),
+  idle: join(__dirname, '../../../build/tray-idle.png')
+} as const;
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.obsaudioassistant.app');
@@ -36,6 +43,9 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    showSettingsWindow();
+  });
+  app.on('activate', () => {
     showSettingsWindow();
   });
 
@@ -526,9 +536,11 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 }
 
 function createTray(): void {
-  tray = new Tray(createTrayIcon());
+  const snapshot = latestSnapshot ?? monitor.getSnapshot();
+  tray = new Tray(createTrayIcon(trayTone(snapshot)));
   tray.setToolTip('OBS 音频检测助手');
-  updateTray(latestSnapshot ?? monitor.getSnapshot());
+  tray.on('double-click', showSettingsWindow);
+  updateTray(snapshot);
 }
 
 function updateTray(snapshot: AppSnapshot): void {
@@ -537,7 +549,7 @@ function updateTray(snapshot: AppSnapshot): void {
   }
 
   const statusText = statusLabel(snapshot.status);
-  tray.setImage(createTrayIcon(trayColor(snapshot)));
+  tray.setImage(createTrayIcon(trayTone(snapshot)));
   tray.setToolTip(`OBS 音频检测助手 - ${statusText}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -732,31 +744,35 @@ function isHistoryAction(action: AlertAction): action is AlertHistoryAction {
   return action === 'acknowledge' || action === 'ignore_once';
 }
 
-function trayColor(snapshot: AppSnapshot): string {
+type TrayTone = keyof typeof trayIconPaths;
+
+function trayTone(snapshot: AppSnapshot): TrayTone {
   if (snapshot.alertVisible || snapshot.status === 'alerting') {
-    return '#ef4444';
+    return 'danger';
   }
 
   if (snapshot.preAlertVisible || snapshot.status === 'pre_alert') {
-    return '#facc15';
+    return 'warning';
   }
 
   if (snapshot.status === 'monitoring' || snapshot.status === 'silent_counting') {
-    return '#22c55e';
+    return 'safe';
   }
 
-  return '#64748b';
+  return 'idle';
 }
 
-function createTrayIcon(accent = '#22d3ee'): Electron.NativeImage {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect width="32" height="32" rx="7" fill="#111827"/>
-      <path d="M10 18.5v-5a6 6 0 0 1 12 0v5a6 6 0 0 1-12 0Z" fill="${accent}"/>
-      <path d="M16 23.5v3.2M11.5 26.7h9" stroke="#f8fafc" stroke-width="2" stroke-linecap="round"/>
-      <path d="M8 17.5v1.2a8 8 0 0 0 16 0v-1.2" stroke="#f8fafc" stroke-width="2" stroke-linecap="round"/>
-    </svg>
-  `;
+function createTrayIcon(tone: TrayTone): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    const macIcon = nativeImage.createFromPath(trayMacTemplatePath).resize({ width: 18, height: 18 });
+    macIcon.setTemplateImage(true);
+    return macIcon;
+  }
 
-  return nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  const icon = nativeImage.createFromPath(trayIconPaths[tone]);
+  if (!icon.isEmpty()) {
+    return icon.resize({ width: 16, height: 16 });
+  }
+
+  return nativeImage.createFromPath(appIconPath());
 }

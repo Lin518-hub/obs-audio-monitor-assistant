@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
     "package": "npm run build && electron-builder --dir",
     "package:win-portable": "npm run build && node scripts/package-win-portable.mjs",
-    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never"
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "dist:mac": "npm run build && electron-builder --mac zip --universal --publish never"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.5.2",
@@ -46,6 +47,7 @@
     "files": [
       "dist/**/*",
       "build/icon.*",
+      "build/tray-*.png",
       "package.json"
     ],
     "win": {
@@ -54,6 +56,15 @@
       ],
       "icon": "build/icon.ico",
       "artifactName": "OBS 音频检测助手-Setup-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "identity": null,
+      "artifactName": "OBS 音频检测助手-${version}-${arch}.${ext}"
     },
     "nsis": {
       "guid": "com.obsaudioassistant.app",
