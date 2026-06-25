@@ -4,6 +4,7 @@ import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, TestConnec
 contextBridge.exposeInMainWorld('obsGuard', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
   saveConfig: (patch: Partial<AppConfig>) => ipcRenderer.invoke('config:save', patch) as Promise<AppSnapshot>,
+  resetConfig: () => ipcRenderer.invoke('config:reset') as Promise<AppSnapshot>,
   refreshInputs: () => ipcRenderer.invoke('inputs:refresh'),
   reconnect: () => ipcRenderer.invoke('obs:reconnect') as Promise<AppSnapshot>,
   testConnection: (patch: Partial<AppConfig>) =>

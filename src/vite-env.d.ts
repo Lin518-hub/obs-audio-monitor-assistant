@@ -15,6 +15,7 @@ declare global {
     obsGuard: {
       getSnapshot: () => Promise<AppSnapshot>;
       saveConfig: (patch: Partial<AppConfig>) => Promise<AppSnapshot>;
+      resetConfig: () => Promise<AppSnapshot>;
       refreshInputs: () => Promise<InputOption[]>;
       reconnect: () => Promise<AppSnapshot>;
       testConnection: (patch: Partial<AppConfig>) => Promise<TestConnectionResult>;

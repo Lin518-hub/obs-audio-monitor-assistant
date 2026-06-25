@@ -150,6 +150,31 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.emitSnapshot();
   }
 
+  resetTransientState(): AppSnapshot {
+    this.testAlertRestore = null;
+    this.errorMessage = null;
+    this.lastTargetMeterAt = null;
+    this.simulatedLive = false;
+    const now = Date.now();
+    const resetState: MonitorRuntimeState = {
+      ...this.state,
+      streaming: this.actualStreaming,
+      recording: this.actualRecording,
+      lastLevelDb: null,
+      silentSince: null,
+      alertVisible: false,
+      preAlertDismissedSilentSince: null,
+      snoozedUntil: null,
+      ignoredUntilAudioReturns: false
+    };
+    this.state = {
+      ...resetState,
+      status: deriveStatus(resetState, this.config, now)
+    };
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
   async reconnect(): Promise<AppSnapshot> {
     await this.connect();
     return this.getSnapshot();

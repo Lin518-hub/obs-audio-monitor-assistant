@@ -68,4 +68,22 @@ describe('ConfigStore', () => {
     expect(saved.targetInputName).toBe('Mic');
     expect(saved.obsPort).toBe(65_535);
   });
+
+  it('restores defaults and marks the guide as unseen', async () => {
+    const store = new ConfigStore();
+    await store.save({
+      ...DEFAULT_CONFIG,
+      targetInputName: 'Mic',
+      hasSeenGuide: true,
+      floatingWindowEnabled: true,
+      floatingWindowBounds: { x: 20, y: 30, width: 420, height: 220 },
+      alertPositions: {
+        1: { x: 100, y: 200 }
+      }
+    });
+
+    const reset = await store.reset();
+
+    expect(reset).toEqual(DEFAULT_CONFIG);
+  });
 });

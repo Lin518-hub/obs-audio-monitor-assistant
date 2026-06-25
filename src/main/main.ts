@@ -21,6 +21,11 @@ const trayIconPaths = {
   danger: join(__dirname, '../../../build/tray-danger.png'),
   idle: join(__dirname, '../../../build/tray-idle.png')
 } as const;
+const FLOATING_WINDOW_DEFAULT_WIDTH = 340;
+const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
+const FLOATING_WINDOW_MIN_WIDTH = 320;
+const FLOATING_WINDOW_MAX_WIDTH = 560;
+const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.obsaudioassistant.app');
@@ -35,6 +40,7 @@ let tray: Tray | null = null;
 let latestSnapshot: AppSnapshot | null = null;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
+let isAdjustingFloatingWindowSize = false;
 const alertWindows = new Map<number, BrowserWindow>();
 const preAlertWindows = new Map<number, BrowserWindow>();
 
@@ -122,6 +128,7 @@ function registerIpc(): void {
     });
     return monitor.updateConfig(nextConfig);
   });
+  ipcMain.handle('config:reset', () => resetToFactoryDefaults());
   ipcMain.handle('inputs:refresh', () => monitor.refreshInputs());
   ipcMain.handle('obs:reconnect', () => monitor.reconnect());
   ipcMain.handle('obs:test-connection', async (_event, patch: Partial<AppConfig>) => {
@@ -242,15 +249,16 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
-    minWidth: 320,
-    minHeight: 150,
-    maxWidth: 560,
-    maxHeight: 320,
+    minWidth: FLOATING_WINDOW_MIN_WIDTH,
+    minHeight: floatingWindowHeightForWidth(FLOATING_WINDOW_MIN_WIDTH),
+    maxWidth: FLOATING_WINDOW_MAX_WIDTH,
+    maxHeight: floatingWindowHeightForWidth(FLOATING_WINDOW_MAX_WIDTH),
     resizable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
+    hasShadow: false,
     icon: appIconPath(),
     skipTaskbar: true,
     frame: false,
@@ -266,12 +274,14 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
 
   attachWindowDiagnostics(floatingWindow, 'floating');
   floatingWindow.setAlwaysOnTop(true, 'floating');
+  floatingWindow.setAspectRatio(FLOATING_WINDOW_ASPECT_RATIO);
   floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   floatingWindow.once('ready-to-show', () => floatingWindow?.showInactive());
   floatingWindow.on('moved', () => {
     saveFloatingWindowBoundsFromWindow();
   });
   floatingWindow.on('resized', () => {
+    keepFloatingWindowAspectRatio();
     saveFloatingWindowBoundsFromWindow();
   });
   floatingWindow.on('closed', () => {
@@ -313,6 +323,24 @@ async function setFloatingWindowVisible(visible: boolean): Promise<AppSnapshot> 
   } else {
     closeFloatingWindow('destroy');
   }
+
+  updateTray(nextSnapshot);
+  broadcastSnapshot(nextSnapshot);
+  return nextSnapshot;
+}
+
+async function resetToFactoryDefaults(): Promise<AppSnapshot> {
+  closeAlertWindows('destroy');
+  closePreAlertWindows('destroy');
+  closeFloatingWindow('destroy');
+
+  await historyStore.clear();
+  monitor.setHistory([]);
+  monitor.resetTransientState();
+
+  const nextConfig = await configStore.reset();
+  const nextSnapshot = await monitor.updateConfig(nextConfig);
+  latestSnapshot = nextSnapshot;
 
   updateTray(nextSnapshot);
   broadcastSnapshot(nextSnapshot);
@@ -666,8 +694,8 @@ function resolveAlertPosition(
 
 function resolveFloatingWindowBounds(snapshot: AppSnapshot): WindowBounds {
   const saved = snapshot.config.floatingWindowBounds;
-  const width = saved ? clamp(saved.width, 320, 560) : 340;
-  const height = saved ? clamp(saved.height, 150, 320) : 178;
+  const width = saved ? clamp(saved.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH) : FLOATING_WINDOW_DEFAULT_WIDTH;
+  const height = floatingWindowHeightForWidth(width);
   const displays = snapshot.displays.length > 0 ? snapshot.displays : getDisplays();
   const primary = displays.find((display) => display.primary) ?? displays[0];
 
@@ -696,6 +724,27 @@ function resolveFloatingWindowBounds(snapshot: AppSnapshot): WindowBounds {
     width,
     height
   };
+}
+
+function floatingWindowHeightForWidth(width: number): number {
+  return Math.round(width / FLOATING_WINDOW_ASPECT_RATIO);
+}
+
+function keepFloatingWindowAspectRatio(): void {
+  if (!floatingWindow || floatingWindow.isDestroyed() || isAdjustingFloatingWindowSize) {
+    return;
+  }
+
+  const bounds = floatingWindow.getBounds();
+  const width = clamp(bounds.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH);
+  const height = floatingWindowHeightForWidth(width);
+  if (bounds.width === width && Math.abs(bounds.height - height) <= 1) {
+    return;
+  }
+
+  isAdjustingFloatingWindowSize = true;
+  floatingWindow.setBounds({ ...bounds, width, height }, false);
+  isAdjustingFloatingWindowSize = false;
 }
 
 function selectAlertDisplays(mode: string, displayId: number | null, displays: DisplayInfo[]): DisplayInfo[] {

@@ -39,6 +39,14 @@ export class ConfigStore {
     return normalized;
   }
 
+  async reset(): Promise<AppConfig> {
+    return this.save({
+      ...DEFAULT_CONFIG,
+      alertPositions: {},
+      floatingWindowBounds: null
+    });
+  }
+
   private normalize(config: AppConfig): AppConfig {
     const merged = {
       ...DEFAULT_CONFIG,

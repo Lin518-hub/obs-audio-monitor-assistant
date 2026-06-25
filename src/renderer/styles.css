@@ -514,6 +514,12 @@ p {
   width: 100%;
 }
 
+.ghost.danger {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
 .primary.full {
   width: 100%;
 }
@@ -1104,10 +1110,12 @@ input[type="number"]::-webkit-outer-spin-button {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 10px;
+  clip-path: inset(0 round 10px);
+  contain: paint;
   padding: 12px;
   -webkit-app-region: drag;
 }
@@ -1115,18 +1123,14 @@ input[type="number"]::-webkit-outer-spin-button {
 .floating-shell.dark {
   border: 0;
   background: linear-gradient(135deg, rgba(13, 18, 26, 0.96), rgba(23, 18, 22, 0.94));
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-    0 18px 50px rgba(0, 0, 0, 0.36);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
   color: #eef3f8;
 }
 
 .floating-shell.light {
   border: 0;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.72) inset,
-    0 18px 50px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.24) inset;
   color: #172033;
 }
 
@@ -1161,9 +1165,8 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .floating-shell.soft-emphasis {
   box-shadow:
-    0 0 0 1px rgba(234, 179, 8, 0.18) inset,
-    0 0 34px rgba(234, 179, 8, 0.24),
-    0 18px 50px rgba(15, 23, 42, 0.2);
+    0 0 0 2px rgba(250, 204, 21, 0.5) inset,
+    0 0 42px rgba(250, 204, 21, 0.32) inset;
 }
 
 .floating-shell.critical-emphasis {
@@ -1177,8 +1180,9 @@ input[type="number"]::-webkit-outer-spin-button {
 .floating-shell.warning .floating-ambient,
 .floating-shell.soft-emphasis .floating-ambient {
   background:
-    linear-gradient(135deg, transparent 0 35%, rgba(234, 179, 8, 0.22) 35% 36%, transparent 36% 100%),
-    radial-gradient(circle at 18% 18%, rgba(234, 179, 8, 0.2), transparent 30%);
+    linear-gradient(135deg, transparent 0 34%, rgba(250, 204, 21, 0.5) 34% 35.6%, transparent 35.6% 100%),
+    radial-gradient(circle at 18% 18%, rgba(250, 204, 21, 0.3), transparent 31%),
+    radial-gradient(circle at 88% 20%, rgba(250, 204, 21, 0.18), transparent 28%);
 }
 
 .floating-shell.danger .floating-ambient,
@@ -1189,7 +1193,6 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 .floating-header,
-.floating-footer,
 .floating-meter div:first-child {
   display: flex;
   min-width: 0;
@@ -1220,7 +1223,10 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 .floating-shell.warning .floating-status span {
-  background: #eab308;
+  background: #facc15;
+  box-shadow:
+    0 0 0 4px rgba(250, 204, 21, 0.16),
+    0 0 18px rgba(250, 204, 21, 0.72);
 }
 
 .floating-shell.danger .floating-status span {
@@ -1242,8 +1248,7 @@ input[type="number"]::-webkit-outer-spin-button {
   -webkit-app-region: no-drag;
 }
 
-.floating-window-actions button,
-.floating-footer button {
+.floating-window-actions button {
   display: inline-flex;
   min-width: 28px;
   height: 28px;
@@ -1258,8 +1263,7 @@ input[type="number"]::-webkit-outer-spin-button {
   -webkit-app-region: no-drag;
 }
 
-.floating-shell.light .floating-window-actions button,
-.floating-shell.light .floating-footer button {
+.floating-shell.light .floating-window-actions button {
   background: #f8fafc;
 }
 
@@ -1270,14 +1274,12 @@ input[type="number"]::-webkit-outer-spin-button {
   gap: 3px;
 }
 
-.floating-time span,
-.floating-footer span {
+.floating-time span {
   color: #64748b;
   font-size: 12px;
 }
 
-.floating-shell.dark .floating-time span,
-.floating-shell.dark .floating-footer span {
+.floating-shell.dark .floating-time span {
   color: #8fa0b3;
 }
 
@@ -1327,10 +1329,6 @@ input[type="number"]::-webkit-outer-spin-button {
   border-radius: inherit;
   background: linear-gradient(90deg, #22c55e, #eab308 64%, #ef4444);
   transition: width 160ms ease;
-}
-
-.floating-footer {
-  min-height: 28px;
 }
 
 .guide-overlay {

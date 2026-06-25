@@ -148,6 +148,32 @@ function SettingsApp() {
     }
   };
 
+  const resetToFactoryDefaults = async () => {
+    const confirmed = window.confirm('确定恢复出厂设置吗？这会清空本地设置和报警历史，并重新打开新手引导。');
+    if (!confirmed) {
+      return;
+    }
+
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingPatchRef.current = {};
+    setSaveState('saving');
+
+    try {
+      const next = await window.obsGuard.resetConfig();
+      setSnapshot(next);
+      setDraft(next.config);
+      setTestResult(null);
+      setShowManual(false);
+      setShowGuide(true);
+      setSaveState('saved');
+    } catch {
+      setSaveState('error');
+    }
+  };
+
   const updateDraft = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
     scheduleAutoSave({ [key]: value } as Partial<AppConfig>);
@@ -286,6 +312,10 @@ function SettingsApp() {
               <button className="ghost full" onClick={() => setShowManual(true)}>
                 <BookOpen size={17} />
                 查看说明书
+              </button>
+              <button className="ghost danger full" onClick={() => void resetToFactoryDefaults()}>
+                <Trash2 size={17} />
+                恢复出厂设置
               </button>
               {testResult && <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
             </div>
@@ -620,14 +650,6 @@ function FloatingApp() {
           <div style={{ width: `${levelPercent}%` }} />
         </div>
       </section>
-
-      <footer className="floating-footer">
-        <span>{snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播'}</span>
-        <button onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
-          {snapshot.config.paused ? <Play size={14} /> : <Pause size={14} />}
-          {snapshot.config.paused ? '恢复' : '暂停'}
-        </button>
-      </footer>
     </main>
   );
 }
