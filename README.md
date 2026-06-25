@@ -10,6 +10,15 @@
 
 OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源列表和目标音源电平。当目标音源在直播或录制期间连续低于设定阈值时，系统会先给出预警，再触发报警弹窗，帮助现场人员在观众反馈前发现并处理音频异常。
 
+## 下载
+
+最新版本可在 GitHub Releases 页面获取：
+
+[下载 OBS 音频检测助手](https://github.com/Lin518-hub/obs-audio-monitor-assistant/releases/latest)
+
+- Windows 用户下载 `OBS 音频检测助手-Setup-*-x64.exe`。
+- Mac 用户下载 `OBS 音频检测助手-*-universal.zip`，解压后运行其中的 `.app`。
+
 ## 主要功能
 
 - **OBS WebSocket 连接**
