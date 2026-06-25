@@ -16,8 +16,8 @@ OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源
 
 [下载 OBS 音频检测助手](https://github.com/Lin518-hub/obs-audio-monitor-assistant/releases/latest)
 
-- Windows 用户下载 `OBS 音频检测助手-Setup-*-x64.exe`。
-- Mac 用户下载 `OBS 音频检测助手-*-universal.zip`，解压后运行其中的 `.app`。
+- Windows 用户下载 `OBS-Audio-Monitor-Assistant-Setup-*-x64.exe`。
+- Mac 用户下载 `OBS-Audio-Monitor-Assistant-*-universal.zip`，解压后运行其中的 `.app`。
 
 ## 主要功能
 

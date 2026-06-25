@@ -56,7 +56,7 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "OBS 音频检测助手-Setup-${version}-${arch}.${ext}"
+      "artifactName": "OBS-Audio-Monitor-Assistant-Setup-${version}-${arch}.${ext}"
     },
     "mac": {
       "target": [
@@ -65,7 +65,7 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "OBS 音频检测助手-${version}-${arch}.${ext}"
+      "artifactName": "OBS-Audio-Monitor-Assistant-${version}-${arch}.${ext}"
     },
     "nsis": {
       "guid": "com.obsaudioassistant.app",
