@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
     "package": "npm run build && electron-builder --dir",
     "package:win-portable": "npm run build && node scripts/package-win-portable.mjs",
-    "dist:win": "npm run build && electron-builder --win nsis --x64"
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.5.2",
