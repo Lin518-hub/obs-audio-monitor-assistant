@@ -70,7 +70,8 @@ export class ConfigStore {
       rememberAlertPosition: booleanValue(merged.rememberAlertPosition, DEFAULT_CONFIG.rememberAlertPosition),
       alertPositions: alertPositionsValue(merged.alertPositions),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
-      floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds)
+      floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
+      autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch)
     };
   }
 

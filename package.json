@@ -81,7 +81,8 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerSidebar": "build/installer-sidebar.bmp",
-      "installerHeader": "build/installer-header.bmp"
+      "installerHeader": "build/installer-header.bmp",
+      "include": "build/installer.nsh"
     }
   }
 }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray, type Rectangle } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ConfigStore } from './configStore.js';
@@ -15,6 +15,8 @@ const rendererUrl = 'http://127.0.0.1:5173';
 const appIconPngPath = join(__dirname, '../../../build/icon.png');
 const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
 const trayMacTemplatePath = join(__dirname, '../../../build/tray-macTemplate.png');
+const autoLaunchArgs = ['--hidden'];
+const launchHidden = process.argv.includes('--hidden') || process.argv.includes('--background');
 const trayIconPaths = {
   safe: join(__dirname, '../../../build/tray-safe.png'),
   warning: join(__dirname, '../../../build/tray-warning.png'),
@@ -26,6 +28,10 @@ const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
 const FLOATING_WINDOW_MAX_WIDTH = 560;
 const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
+const FLOATING_WINDOW_RADIUS = 12;
+
+app.setName('OBS 音频检测助手');
+app.setPath('userData', join(app.getPath('appData'), 'obs-audio-monitor-assistant'));
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.obsaudioassistant.app');
@@ -70,7 +76,13 @@ async function initializeApp(): Promise<void> {
   }
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
-  const config = await configStore.load();
+  let config = await configStore.load();
+  const systemAutoLaunchEnabled = getAutoLaunchEnabled();
+  if (systemAutoLaunchEnabled && !config.autoLaunch) {
+    config = await configStore.save({ ...config, autoLaunch: true });
+  } else if (config.autoLaunch) {
+    await applyAutoLaunch(true);
+  }
   const history = await historyStore.load();
   monitor = new OBSMonitor(config, getDisplays());
   monitor.setHistory(history);
@@ -78,7 +90,9 @@ async function initializeApp(): Promise<void> {
 
   registerIpc();
   createTray();
-  createSettingsWindow();
+  if (!launchHidden) {
+    createSettingsWindow();
+  }
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
   }
@@ -119,13 +133,42 @@ app.on('before-quit', () => {
   void monitor?.stop();
 });
 
+function getAutoLaunchEnabled(): boolean {
+  try {
+    return app.getLoginItemSettings({
+      path: process.execPath,
+      args: autoLaunchArgs
+    }).openAtLogin;
+  } catch (error) {
+    console.error(`[auto-launch] failed to read setting: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+async function applyAutoLaunch(enabled: boolean): Promise<void> {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      openAsHidden: enabled,
+      path: process.execPath,
+      args: enabled ? autoLaunchArgs : []
+    });
+  } catch (error) {
+    console.error(`[auto-launch] failed to update setting: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle('snapshot:get', () => latestSnapshot ?? monitor.getSnapshot());
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
+    const previous = (latestSnapshot ?? monitor.getSnapshot()).config;
     const nextConfig = await configStore.save({
-      ...(latestSnapshot ?? monitor.getSnapshot()).config,
+      ...previous,
       ...patch
     });
+    if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
+      await applyAutoLaunch(nextConfig.autoLaunch);
+    }
     return monitor.updateConfig(nextConfig);
   });
   ipcMain.handle('config:reset', () => resetToFactoryDefaults());
@@ -275,13 +318,18 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
   attachWindowDiagnostics(floatingWindow, 'floating');
   floatingWindow.setAlwaysOnTop(true, 'floating');
   floatingWindow.setAspectRatio(FLOATING_WINDOW_ASPECT_RATIO);
+  applyFloatingWindowShape();
   floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  floatingWindow.once('ready-to-show', () => floatingWindow?.showInactive());
+  floatingWindow.once('ready-to-show', () => {
+    applyFloatingWindowShape();
+    floatingWindow?.showInactive();
+  });
   floatingWindow.on('moved', () => {
     saveFloatingWindowBoundsFromWindow();
   });
   floatingWindow.on('resized', () => {
     keepFloatingWindowAspectRatio();
+    applyFloatingWindowShape();
     saveFloatingWindowBoundsFromWindow();
   });
   floatingWindow.on('closed', () => {
@@ -337,6 +385,7 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   await historyStore.clear();
   monitor.setHistory([]);
   monitor.resetTransientState();
+  await applyAutoLaunch(false);
 
   const nextConfig = await configStore.reset();
   const nextSnapshot = await monitor.updateConfig(nextConfig);
@@ -745,6 +794,41 @@ function keepFloatingWindowAspectRatio(): void {
   isAdjustingFloatingWindowSize = true;
   floatingWindow.setBounds({ ...bounds, width, height }, false);
   isAdjustingFloatingWindowSize = false;
+}
+
+function applyFloatingWindowShape(): void {
+  if (process.platform !== 'win32' || !floatingWindow || floatingWindow.isDestroyed()) {
+    return;
+  }
+
+  const windowWithShape = floatingWindow as BrowserWindow & {
+    setShape?: (rectangles: Rectangle[]) => void;
+  };
+  if (typeof windowWithShape.setShape !== 'function') {
+    return;
+  }
+
+  const { width, height } = floatingWindow.getBounds();
+  const radius = Math.min(FLOATING_WINDOW_RADIUS, Math.floor(width / 2), Math.floor(height / 2));
+  const rectangles: Rectangle[] = [];
+
+  for (let y = 0; y < height; y += 1) {
+    const distanceFromTop = y < radius ? radius - y : y >= height - radius ? y - (height - radius - 1) : 0;
+    if (distanceFromTop <= 0) {
+      rectangles.push({ x: 0, y, width, height: 1 });
+      continue;
+    }
+
+    const inset = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - distanceFromTop * distanceFromTop)));
+    rectangles.push({
+      x: inset,
+      y,
+      width: Math.max(0, width - inset * 2),
+      height: 1
+    });
+  }
+
+  windowWithShape.setShape(rectangles);
 }
 
 function selectAlertDisplays(mode: string, displayId: number | null, displays: DisplayInfo[]): DisplayInfo[] {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   Moon,
   Pause,
   Play,
+  Power,
   Radio,
   RefreshCw,
   Search,
@@ -23,7 +24,6 @@ import {
   Sun,
   TestTube2,
   Trash2,
-  Volume2,
   Wifi,
   WifiOff,
   X
@@ -219,250 +219,270 @@ function SettingsApp() {
 
       <SafetyBanner snapshot={snapshot} />
 
-      <section className="dashboard-grid">
-        <div className="panel status-panel" data-guide="status">
-          <div className="panel-title">
-            <CircleDot size={18} />
-            <span>实时检测</span>
-          </div>
-          <div className="meter-wrap">
-            <div className="meter-header">
-              <span>{draft.targetInputName || '未选择音源'}</span>
-              <strong>{snapshot.lastLevelDb === null ? '--' : `${snapshot.lastLevelDb.toFixed(1)} dB`}</strong>
+      <section className="settings-layout">
+        <div className="setup-panel">
+          <div className="setup-titlebar">
+            <div>
+              <span>配置流程</span>
+              <strong>按顺序完成直播前检查</strong>
             </div>
-            <div
-              className={`meter-track ${thresholdDragging ? 'dragging' : ''}`}
-              ref={meterTrackRef}
-              onPointerDown={beginThresholdDrag}
-            >
-              <div className="meter-fill" style={{ width: `${levelPercent}%` }} />
-              <div
-                className="threshold-marker"
-                role="slider"
-                aria-label="静音阈值"
-                aria-valuemin={-90}
-                aria-valuemax={-5}
-                aria-valuenow={Math.round(draft.silenceThresholdDb)}
-                style={{ left: `${Math.max(0, Math.min(100, ((draft.silenceThresholdDb + 90) / 85) * 100))}%` }}
-              >
-                <span>{Math.round(draft.silenceThresholdDb)} dB</span>
+            <div className={`save-indicator ${saveState}`}>
+              <span />
+              {saveState === 'saving' ? '自动保存中' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : '实时保存'}
+            </div>
+          </div>
+
+          <div className="setup-flow">
+            <div className="settings-section connection-panel">
+              <div className="guide-target-block guide-target-stack" data-guide="connection">
+                <div className="section-heading">
+                  <span className="section-index">01</span>
+                  <div>
+                    <strong>连接 OBS</strong>
+                    <em>确认 WebSocket 可用，软件才能读取直播状态和音源。</em>
+                  </div>
+                </div>
+                <ConnectionNotice snapshot={snapshot} />
+              </div>
+              <div className="form-grid two" data-guide="connection-fields">
+                <label>
+                  <span>主机</span>
+                  <input value={draft.obsHost} onChange={(event) => updateDraft('obsHost', event.target.value)} />
+                </label>
+                <label>
+                  <span>端口</span>
+                  <NumberControl value={draft.obsPort} min={1} max={65535} step={1} onChange={(value) => updateDraft('obsPort', value)} />
+                </label>
+                <label className="span-two">
+                  <span>WebSocket 密码</span>
+                  <input type="password" value={draft.obsPassword} onChange={(event) => updateDraft('obsPassword', event.target.value)} placeholder="未设置密码可留空" />
+                </label>
               </div>
             </div>
-          </div>
-          <div className="status-cards">
-            <Metric label="直播" value={snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '进行中' : '未开始'} active={snapshot.streaming} />
-            <Metric label="录制" value={snapshot.recording ? '进行中' : '未开始'} active={snapshot.recording} />
-            <Metric
-              label="静音计时"
-              value={silenceMetricText(snapshot)}
-              active={snapshot.status === 'silent_counting'}
-            />
-          </div>
-          {snapshot.errorMessage && <div className="inline-warning">{snapshot.errorMessage}</div>}
-        </div>
 
-        <div className="panel action-panel" data-guide="actions">
-          <div className="panel-title">
-            <Settings size={18} />
-            <span>快捷操作</span>
-          </div>
-          <div className="action-groups">
-            <div className="action-group">
-              <span>直播控制</span>
-              <button className={snapshot.config.paused ? 'primary' : 'secondary'} onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
-                {snapshot.config.paused ? <Play size={18} /> : <Pause size={18} />}
-                {snapshot.config.paused ? '恢复检测' : '暂停检测'}
-              </button>
-              <button className="secondary" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
-                <Monitor size={18} />
-                {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
-              </button>
+            <div className="settings-section rules-panel">
+              <div className="section-heading">
+                <span className="section-index">02</span>
+                <div>
+                  <strong>选择被守护的声音</strong>
+                  <em>只保留麦克风、声卡、混音等可能有声音的 OBS 输入源。</em>
+                </div>
+              </div>
+              <div className="form-grid two">
+                <label className="span-two" data-guide="source">
+                  <span>目标音源</span>
+                  <SourcePicker
+                    inputs={snapshot.inputs}
+                    value={draft.targetInputName}
+                    onChange={(value) => updateDraft('targetInputName', value)}
+                    onRefresh={() => void window.obsGuard.refreshInputs()}
+                  />
+                </label>
+                <label data-guide="rules">
+                  <span>静音时长（秒）</span>
+                  <NumberControl
+                    value={draft.silenceDurationSeconds}
+                    min={5}
+                    max={3600}
+                    step={5}
+                    suffix="秒"
+                    onChange={(value) => updateDraft('silenceDurationSeconds', value)}
+                  />
+                </label>
+                <label>
+                  <span>静音阈值（dB）</span>
+                  <NumberControl
+                    value={draft.silenceThresholdDb}
+                    min={-90}
+                    max={-5}
+                    step={1}
+                    suffix="dB"
+                    onChange={(value) => updateDraft('silenceThresholdDb', value)}
+                  />
+                </label>
+              </div>
             </div>
-            <div className="action-group">
-              <span>连接维护</span>
-              <button className="secondary" onClick={() => void window.obsGuard.reconnect()}>
-                <RefreshCw size={18} />
-                重连 OBS
-              </button>
-            </div>
-          </div>
-          <button className="diagnostic-toggle" onClick={() => setShowDiagnostics((value) => !value)}>
-            <SlidersHorizontal size={17} />
-            诊断与测试
-            <ChevronDown size={16} className={showDiagnostics ? 'rotate' : ''} />
-          </button>
-          {showDiagnostics && (
-            <div className="diagnostic-panel">
-              <button className={snapshot.simulatedLive ? 'primary full' : 'ghost full'} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
-                <Play size={17} />
-                {snapshot.simulatedLive ? '关闭模拟开播' : '模拟开播检测'}
-              </button>
-              <button className="ghost full" onClick={() => void testConnection()} disabled={testingConnection}>
-                <TestTube2 size={17} />
-                {testingConnection ? '测试中...' : '测试 OBS 连接'}
-              </button>
-              <button className="ghost full" onClick={() => void window.obsGuard.refreshInputs()}>
-                <RefreshCw size={17} />
-                刷新音源列表
-              </button>
-              <button className="ghost full" onClick={() => void window.obsGuard.testAlert()}>
-                <AlertTriangle size={17} />
-                测试报警弹窗
-              </button>
-              <button className="ghost full" onClick={() => setShowManual(true)}>
-                <BookOpen size={17} />
-                查看说明书
-              </button>
-              <button className="ghost danger full" onClick={() => void resetToFactoryDefaults()}>
-                <Trash2 size={17} />
-                恢复出厂设置
-              </button>
-              {testResult && <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
-            </div>
-          )}
-        </div>
-      </section>
 
-      <section className="settings-grid">
-        <div className="panel">
-          <div className="guide-target-block" data-guide="connection">
-            <div className="panel-title">
-              <Wifi size={18} />
-              <span>OBS 连接</span>
-            </div>
-            <ConnectionNotice snapshot={snapshot} />
-          </div>
-          <div className="form-grid two" data-guide="connection-fields">
-            <label>
-              <span>主机</span>
-              <input value={draft.obsHost} onChange={(event) => updateDraft('obsHost', event.target.value)} />
-            </label>
-            <label>
-              <span>端口</span>
-              <NumberControl
-                value={draft.obsPort}
-                min={1}
-                max={65535}
-                step={1}
-                onChange={(value) => updateDraft('obsPort', value)}
-              />
-            </label>
-            <label className="span-two">
-              <span>WebSocket 密码</span>
-              <input type="password" value={draft.obsPassword} onChange={(event) => updateDraft('obsPassword', event.target.value)} placeholder="未设置密码可留空" />
-            </label>
-          </div>
-        </div>
-
-        <div className="panel" data-guide="source">
-          <div className="panel-title">
-            <Volume2 size={18} />
-            <span>检测规则</span>
-          </div>
-          <div className="form-grid two">
-            <label className="span-two">
-              <span>目标音源</span>
-              <SourcePicker
-                inputs={snapshot.inputs}
-                value={draft.targetInputName}
-                onChange={(value) => updateDraft('targetInputName', value)}
-                onRefresh={() => void window.obsGuard.refreshInputs()}
-              />
-            </label>
-            <label>
-              <span>静音时长（秒）</span>
-              <NumberControl
-                value={draft.silenceDurationSeconds}
-                min={5}
-                max={3600}
-                step={5}
-                suffix="秒"
-                onChange={(value) => updateDraft('silenceDurationSeconds', value)}
-              />
-            </label>
-            <label>
-              <span>静音阈值（dB）</span>
-              <NumberControl
-                value={draft.silenceThresholdDb}
-                min={-90}
-                max={-5}
-                step={1}
-                suffix="dB"
-                onChange={(value) => updateDraft('silenceThresholdDb', value)}
-              />
-            </label>
-          </div>
-        </div>
-
-        {hasMultipleDisplays && (
-          <div className="panel span-two">
-            <div className="panel-title">
-              <Monitor size={18} />
-              <span>报警窗口</span>
-            </div>
-            <div className="display-options">
-              <Segment
-                active={draft.alertDisplayMode === 'primary'}
-                icon={<Monitor size={17} />}
-                label="主屏中央"
-                onClick={() => updateDraft('alertDisplayMode', 'primary')}
-              />
-              <Segment
-                active={draft.alertDisplayMode === 'display_id'}
-                icon={<Monitor size={17} />}
-                label="指定屏幕"
-                onClick={() => updateDraft('alertDisplayMode', 'display_id')}
-              />
-              <Segment
-                active={draft.alertDisplayMode === 'all'}
-                icon={<Radio size={17} />}
-                label="所有屏幕"
-                onClick={() => updateDraft('alertDisplayMode', 'all')}
-              />
-            </div>
-            {draft.alertDisplayMode === 'display_id' && (
-              <label className="display-picker">
-                <span>弹出屏幕</span>
-                <select value={draft.alertDisplayId ?? ''} onChange={(event) => updateDraft('alertDisplayId', event.target.value ? Number(event.target.value) : null)}>
-                  <option value="">选择屏幕</option>
-                  {snapshot.displays.map((display) => (
-                    <option value={display.id} key={display.id}>
-                      {display.label} - {display.bounds.width}x{display.bounds.height}
-                    </option>
-                  ))}
-                </select>
+            <div className="settings-section system-panel">
+              <div className="section-heading">
+                <span className="section-index">03</span>
+                <div>
+                  <strong>后台守护</strong>
+                  <em>固定直播电脑可以开机自启，减少开播前遗漏。</em>
+                </div>
+              </div>
+              <label className="switch-row" data-guide="startup">
+                <input type="checkbox" checked={draft.autoLaunch} onChange={(event) => updateDraft('autoLaunch', event.target.checked)} />
+                <span className="switch-copy">
+                  <strong>开机自动启动</strong>
+                  <em>开机后在后台运行，直播前无需手动打开。</em>
+                </span>
+                <span className="switch-control" aria-hidden="true">
+                  <span />
+                </span>
               </label>
+            </div>
+
+            {hasMultipleDisplays && (
+              <div className="settings-section">
+                <div className="section-heading">
+                  <span className="section-index">04</span>
+                  <div>
+                    <strong>报警窗口位置</strong>
+                    <em>多屏直播时指定报警出现在哪个屏幕。</em>
+                  </div>
+                </div>
+                <div className="display-options">
+                  <Segment active={draft.alertDisplayMode === 'primary'} icon={<Monitor size={17} />} label="主屏中央" onClick={() => updateDraft('alertDisplayMode', 'primary')} />
+                  <Segment active={draft.alertDisplayMode === 'display_id'} icon={<Monitor size={17} />} label="指定屏幕" onClick={() => updateDraft('alertDisplayMode', 'display_id')} />
+                  <Segment active={draft.alertDisplayMode === 'all'} icon={<Radio size={17} />} label="所有屏幕" onClick={() => updateDraft('alertDisplayMode', 'all')} />
+                </div>
+                {draft.alertDisplayMode === 'display_id' && (
+                  <label className="display-picker">
+                    <span>弹出屏幕</span>
+                    <select value={draft.alertDisplayId ?? ''} onChange={(event) => updateDraft('alertDisplayId', event.target.value ? Number(event.target.value) : null)}>
+                      <option value="">选择屏幕</option>
+                      {snapshot.displays.map((display) => (
+                        <option value={display.id} key={display.id}>
+                          {display.label} - {display.bounds.width}x{display.bounds.height}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
             )}
           </div>
-        )}
-
-        <div className="panel span-two">
-          <div className="panel-title history-title">
-            <span>
-              <History size={18} />
-              <span>报警历史</span>
-            </span>
-            <button className="ghost mini" onClick={() => void window.obsGuard.clearHistory()}>
-              <Trash2 size={15} />
-              清空
-            </button>
-          </div>
-          <HistoryList snapshot={snapshot} />
         </div>
+
+        <aside className="runtime-panel">
+          <div className="runtime-card status-panel">
+            <div className="runtime-card-header">
+              <div>
+                <span>运行状态</span>
+                <strong>实时检测</strong>
+              </div>
+              <CircleDot size={18} />
+            </div>
+            <div className="meter-wrap" data-guide="meter">
+              <div className="meter-header">
+                <span>{draft.targetInputName || '未选择音源'}</span>
+                <strong>{snapshot.lastLevelDb === null ? '--' : `${snapshot.lastLevelDb.toFixed(1)} dB`}</strong>
+              </div>
+              <div className={`meter-track ${thresholdDragging ? 'dragging' : ''}`} ref={meterTrackRef} onPointerDown={beginThresholdDrag}>
+                <div className="meter-fill" style={{ width: `${levelPercent}%` }} />
+                <div
+                  className="threshold-marker"
+                  role="slider"
+                  aria-label="静音阈值"
+                  aria-valuemin={-90}
+                  aria-valuemax={-5}
+                  aria-valuenow={Math.round(draft.silenceThresholdDb)}
+                  style={{ left: `${Math.max(0, Math.min(100, ((draft.silenceThresholdDb + 90) / 85) * 100))}%` }}
+                >
+                  <span>{Math.round(draft.silenceThresholdDb)} dB</span>
+                </div>
+              </div>
+            </div>
+            <div className="status-cards">
+              <Metric label="直播" value={snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '进行中' : '未开始'} active={snapshot.streaming} />
+              <Metric label="录制" value={snapshot.recording ? '进行中' : '未开始'} active={snapshot.recording} />
+              <Metric label="静音计时" value={silenceMetricText(snapshot)} active={snapshot.status === 'silent_counting'} />
+            </div>
+            {snapshot.errorMessage && <div className="inline-warning">{snapshot.errorMessage}</div>}
+          </div>
+
+          <div className="runtime-card action-panel">
+            <div className="runtime-card-header">
+              <div>
+                <span>常用操作</span>
+                <strong>直播中只看这里</strong>
+              </div>
+              <Settings size={18} />
+            </div>
+            <div className="action-groups" data-guide="actions">
+              <div className="action-group">
+                <span>直播控制</span>
+                <div className="action-button-grid">
+                  <button className={snapshot.config.paused ? 'primary' : 'secondary'} onClick={() => void window.obsGuard.setPaused(!snapshot.config.paused)}>
+                    {snapshot.config.paused ? <Play size={18} /> : <Pause size={18} />}
+                    {snapshot.config.paused ? '恢复检测' : '暂停检测'}
+                  </button>
+                  <button className="secondary" onClick={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}>
+                    <Monitor size={18} />
+                    {snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗'}
+                  </button>
+                </div>
+              </div>
+              <div className="action-group">
+                <span>连接维护</span>
+                <button className="secondary" onClick={() => void window.obsGuard.reconnect()}>
+                  <RefreshCw size={18} />
+                  重连 OBS
+                </button>
+              </div>
+            </div>
+            <button className="diagnostic-toggle" data-guide="diagnostics" onClick={() => setShowDiagnostics((value) => !value)}>
+              <SlidersHorizontal size={17} />
+              诊断与测试
+              <ChevronDown size={16} className={showDiagnostics ? 'rotate' : ''} />
+            </button>
+            {showDiagnostics && (
+              <div className="diagnostic-panel">
+                <button className={snapshot.simulatedLive ? 'primary full' : 'ghost full'} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
+                  <Play size={17} />
+                  {snapshot.simulatedLive ? '关闭模拟开播' : '模拟开播检测'}
+                </button>
+                <button className="ghost full" onClick={() => void testConnection()} disabled={testingConnection}>
+                  <TestTube2 size={17} />
+                  {testingConnection ? '测试中...' : '测试 OBS 连接'}
+                </button>
+                <button className="ghost full" onClick={() => void window.obsGuard.refreshInputs()}>
+                  <RefreshCw size={17} />
+                  刷新音源列表
+                </button>
+                <button className="ghost full" onClick={() => void window.obsGuard.testAlert()}>
+                  <AlertTriangle size={17} />
+                  测试报警弹窗
+                </button>
+                <button className="ghost full" onClick={() => setShowManual(true)}>
+                  <BookOpen size={17} />
+                  查看说明书
+                </button>
+                <button className="ghost danger full" onClick={() => void resetToFactoryDefaults()}>
+                  <Trash2 size={17} />
+                  恢复出厂设置
+                </button>
+                {testResult && <div className={`connection-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
+              </div>
+            )}
+          </div>
+
+          <div className="runtime-card history-panel">
+            <div className="runtime-card-header history-title">
+              <span>
+                <History size={18} />
+                <strong>报警历史</strong>
+              </span>
+              <button className="ghost mini" onClick={() => void window.obsGuard.clearHistory()}>
+                <Trash2 size={15} />
+                清空
+              </button>
+            </div>
+            <HistoryList snapshot={snapshot} />
+          </div>
+        </aside>
       </section>
 
       <footer className="footer-actions">
-        <div>设置会自动保存。默认仅在直播或录制中检测，OBS 空闲时不会报警。</div>
-        <div className={`save-indicator ${saveState}`}>
-          <span />
-          {saveState === 'saving' ? '正在自动保存' : saveState === 'saved' ? '已自动保存' : saveState === 'error' ? '保存失败，请检查权限' : '等待设置变更'}
-        </div>
+        <div>默认只在直播或录制中检测，OBS 空闲时不会报警。</div>
       </footer>
 
       {showGuide && (
         <GuideDialog
           onClose={() => void closeGuide()}
           onTestConnection={() => void testConnection()}
+          onSetDiagnostics={setShowDiagnostics}
           testResult={testResult}
           testingConnection={testingConnection}
         />
@@ -658,7 +678,7 @@ function SafetyBanner({ snapshot }: { snapshot: AppSnapshot }) {
   const tone = snapshotTone(snapshot);
 
   return (
-    <section className={`safety-banner ${tone}`}>
+    <section className={`safety-banner ${tone}`} data-guide="overview">
       <div className="safety-icon">
         {tone === 'safe' ? <ShieldCheck size={28} /> : tone === 'warning' ? <Clock3 size={28} /> : <AlertTriangle size={28} />}
       </div>
@@ -710,79 +730,109 @@ type GuideLayout = {
   card: {
     left: number;
     top: number;
+    width: number;
   };
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
+const roundPixel = (value: number) => Math.round(value);
+const easeGuide = (value: number) =>
+  value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+
+const guideLayoutChanged = (current: GuideLayout | null, next: GuideLayout) => {
+  if (!current) {
+    return true;
+  }
+
+  return (
+    current.rect.left !== next.rect.left ||
+    current.rect.top !== next.rect.top ||
+    current.rect.width !== next.rect.width ||
+    current.rect.height !== next.rect.height ||
+    current.rect.right !== next.rect.right ||
+    current.rect.bottom !== next.rect.bottom ||
+    current.card.left !== next.card.left ||
+    current.card.top !== next.card.top ||
+    current.card.width !== next.card.width
+  );
+};
 
 const overlapArea = (
-  a: { left: number; top: number; right: number; bottom: number },
-  b: { left: number; top: number; right: number; bottom: number }
+  first: { left: number; top: number; right: number; bottom: number },
+  second: { left: number; top: number; right: number; bottom: number }
 ) => {
-  const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
-  const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+  const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
   return width * height;
 };
 
 function GuideDialog({
   onClose,
   onTestConnection,
+  onSetDiagnostics,
   testResult,
   testingConnection
 }: {
   onClose: () => void;
   onTestConnection: () => void;
+  onSetDiagnostics: (open: boolean) => void;
   testResult: TestConnectionResult | null;
   testingConnection: boolean;
 }) {
   const steps = useMemo(
     () => [
       {
-        target: 'status',
+        target: 'overview',
         title: '先看顶部状态',
-        body: '这里是直播时最重要的地方。它会告诉你现在是 OBS 未连接、等待开播、检测中、静音预警，还是正在报警。你不需要猜软件有没有工作，先看这一块就够了。'
+        body: '这里显示当前是否安全。直播中先看这一块：OBS 是否连接、是否检测中、是否静音预警或报警。'
       },
       {
         target: 'connection',
         title: '第一步：打开 OBS 的 WebSocket',
-        body: '先打开 OBS。然后在 OBS 顶部菜单点击“工具”，找到“WebSocket 服务器设置”。如果你看到“启用 WebSocket 服务器”，把它勾上。OBS 28 以后一般自带这个功能，不需要额外安装插件。'
+        body: '打开 OBS，在顶部菜单进入“工具”里的“WebSocket 服务器设置”，勾选启用服务器。OBS 28 以后通常自带这个功能。'
       },
       {
         target: 'connection-fields',
         title: '第二步：填写端口和密码',
-        body: 'OBS WebSocket 默认端口通常是 4455。如果 OBS 里面设置了服务器密码，就把同一个密码填到这里。主机一般保持 127.0.0.1。设置会自动保存，不需要点保存按钮。',
+        body: '主机一般保持 127.0.0.1，默认端口通常是 4455。OBS 设置了密码时，把同一个密码填到这里。',
         action: 'test'
       },
       {
-        target: 'actions',
+        target: 'diagnostics',
         title: '第三步：先测试 OBS 是否连上',
-        body: '打开“诊断与测试”，点击“测试 OBS 连接”。如果提示连接成功，就说明软件已经能读取 OBS 的输入源列表。如果失败，通常是 OBS 没开、WebSocket 没启用、端口不对或密码不一致。',
-        action: 'openDiagnostics'
+        body: '展开“诊断与测试”，点击“测试 OBS 连接”。成功后，软件就能读取 OBS 音源列表。',
+        action: 'openDiagnostics',
+        diagnosticsOpen: true
       },
       {
         target: 'source',
         title: '第四步：选择要守护的音源',
-        body: '点击“目标音源”，选择真正会发出声音的来源。电商直播里通常选主播麦克风、无线领夹麦、声卡输入或直播主混音。图片、文字、显示器采集这类通常无声的来源会被过滤掉。'
+        body: '选择主播麦克风、无线麦、声卡输入或直播主混音。图片、文字、显示器采集等无声音源会被过滤。'
       },
       {
-        target: 'source',
+        target: 'rules',
         title: '第五步：设置报警规则',
-        body: '默认连续静音 120 秒报警，前 90 秒会先出现小预警。你可以按直播间节奏调整时长：口播密集的直播间可以短一点，访谈或活动直播可以长一点。阈值一般保持默认 -55 dB。'
+        body: '默认连续静音 120 秒报警，90 秒先预警。口播密集可以缩短，访谈或活动直播可以适当延长。'
       },
       {
         target: 'actions',
         title: '第六步：不开播也能测试',
-        body: '如果 OBS 已连接但还没正式开播，可以在“诊断与测试”里打开“模拟开播检测”。这样 OBS 没有推流时也能测试电平、静音计时和报警弹窗。测完记得关闭模拟开播。'
+        body: 'OBS 已连接但还没开播时，可以用“模拟开播检测”测试电平、静音计时和报警弹窗。'
+      },
+      {
+        target: 'startup',
+        title: '第七步：按需要开启自启动',
+        body: '固定直播电脑建议开启。下次开机后软件会在后台运行，可以从托盘或菜单栏打开设置。'
       },
       {
         target: 'actions',
-        title: '第七步：直播中常用这几个按钮',
-        body: '直播时外面只保留高频操作：暂停检测、打开小浮窗、重连 OBS。测试连接、刷新音源、模拟开播、测试报警都收在“诊断与测试”里，避免误触。'
+        title: '第八步：直播中常用这几个按钮',
+        body: '直播中常用暂停检测、小浮窗和重连 OBS。测试类功能都收在“诊断与测试”里，避免误触。'
       },
       {
-        target: 'status',
+        target: 'app-status',
         title: '最后：窗口关闭后仍在后台运行',
-        body: '主窗口点关闭只是隐藏到后台，软件会继续检测。需要完全退出时，从系统托盘或菜单栏图标里选择“退出”。现在你可以开始按自己的 OBS 环境测试了。'
+        body: '关闭主窗口只是隐藏到后台，检测仍会继续。需要完全退出时，从托盘或菜单栏选择“退出”。'
       }
     ],
     []
@@ -790,20 +840,54 @@ function GuideDialog({
   const [stepIndex, setStepIndex] = useState(0);
   const [layout, setLayout] = useState<GuideLayout | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
+  const lastLayoutRef = useRef<GuideLayout | null>(null);
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
 
   useEffect(() => {
+    onSetDiagnostics(Boolean('diagnosticsOpen' in step && step.diagnosticsOpen));
+  }, [onSetDiagnostics, step]);
+
+  useEffect(() => {
+    document.documentElement.dataset.guideActive = 'true';
+
+    const preventScroll = (event: Event) => {
+      event.preventDefault();
+    };
+    const preventScrollKeys = (event: KeyboardEvent) => {
+      if ([' ', 'PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', preventScroll, { capture: true, passive: false });
+    window.addEventListener('touchmove', preventScroll, { capture: true, passive: false });
+    window.addEventListener('keydown', preventScrollKeys, { capture: true });
+
+    return () => {
+      delete document.documentElement.dataset.guideActive;
+      window.removeEventListener('wheel', preventScroll, { capture: true });
+      window.removeEventListener('touchmove', preventScroll, { capture: true });
+      window.removeEventListener('keydown', preventScrollKeys, { capture: true });
+    };
+  }, []);
+
+  useLayoutEffect(() => {
     const targets = Array.from(document.querySelectorAll<HTMLElement>('[data-guide]'));
     targets.forEach((target) => target.classList.remove('guide-active-target'));
     const target = document.querySelector<HTMLElement>(`[data-guide="${step.target}"]`);
     let disposed = false;
     let raf = 0;
+    let scrollRaf = 0;
     const timers: number[] = [];
+    let resizeObserver: ResizeObserver | null = null;
 
     const updateLayout = () => {
       if (disposed || !target) {
-        setLayout(null);
+        if (lastLayoutRef.current) {
+          lastLayoutRef.current = null;
+          setLayout(null);
+        }
         return;
       }
 
@@ -811,72 +895,58 @@ function GuideDialog({
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       const margin = 24;
-      const gap = 18;
       const padding = 8;
-      const cardWidth = Math.min(cardRef.current?.offsetWidth || 430, viewportWidth - margin * 2);
-      const cardHeight = Math.min(cardRef.current?.offsetHeight || 320, viewportHeight - margin * 2);
+      const gap = 18;
+      const cardWidth = Math.min(viewportWidth - margin * 2, viewportWidth < 760 ? viewportWidth - 24 : 420);
+      const cardHeight = Math.min(cardRef.current?.offsetHeight || 236, viewportHeight - margin * 2);
       const rect = {
-        left: clamp(targetRect.left - padding, margin / 2, viewportWidth - margin / 2),
-        top: clamp(targetRect.top - padding, margin / 2, viewportHeight - margin / 2),
-        width: Math.min(targetRect.width + padding * 2, viewportWidth - margin),
-        height: Math.min(targetRect.height + padding * 2, viewportHeight - margin),
+        left: roundPixel(clamp(targetRect.left - padding, margin / 2, viewportWidth - margin / 2)),
+        top: roundPixel(clamp(targetRect.top - padding, margin / 2, viewportHeight - margin / 2)),
+        width: roundPixel(Math.min(targetRect.width + padding * 2, viewportWidth - margin)),
+        height: roundPixel(Math.min(targetRect.height + padding * 2, viewportHeight - margin)),
         right: 0,
         bottom: 0
       };
-      rect.right = Math.min(rect.left + rect.width, viewportWidth - margin / 2);
-      rect.bottom = Math.min(rect.top + rect.height, viewportHeight - margin / 2);
+      rect.right = roundPixel(Math.min(rect.left + rect.width, viewportWidth - margin / 2));
+      rect.bottom = roundPixel(Math.min(rect.top + rect.height, viewportHeight - margin / 2));
 
-      const cardBounds = (left: number, top: number) => ({
-        left,
-        top,
-        right: left + cardWidth,
-        bottom: top + cardHeight
-      });
+      const maxLeft = Math.max(margin, viewportWidth - cardWidth - margin);
+      const maxTop = Math.max(margin, viewportHeight - cardHeight - margin);
+      const makeCandidate = (left: number, top: number) => {
+        const cleanLeft = clamp(left, margin, maxLeft);
+        const cleanTop = clamp(top, margin, maxTop);
+        return {
+          left: roundPixel(cleanLeft),
+          top: roundPixel(cleanTop),
+          width: roundPixel(cardWidth),
+          overlap: overlapArea(rect, {
+            left: cleanLeft,
+            top: cleanTop,
+            right: cleanLeft + cardWidth,
+            bottom: cleanTop + cardHeight
+          })
+        };
+      };
+      const targetOnLeft = rect.left + rect.width / 2 < viewportWidth / 2;
+      const targetOnTop = rect.top + rect.height / 2 < viewportHeight / 2;
       const candidates = [
-        {
-          left: rect.right + gap,
-          top: clamp(rect.top, margin, viewportHeight - cardHeight - margin),
-          fits: rect.right + gap + cardWidth <= viewportWidth - margin
-        },
-        {
-          left: rect.left - cardWidth - gap,
-          top: clamp(rect.top, margin, viewportHeight - cardHeight - margin),
-          fits: rect.left - cardWidth - gap >= margin
-        },
-        {
-          left: clamp(rect.left, margin, viewportWidth - cardWidth - margin),
-          top: rect.bottom + gap,
-          fits: rect.bottom + gap + cardHeight <= viewportHeight - margin
-        },
-        {
-          left: clamp(rect.left, margin, viewportWidth - cardWidth - margin),
-          top: rect.top - cardHeight - gap,
-          fits: rect.top - cardHeight - gap >= margin
-        }
+        makeCandidate(rect.right + gap, rect.top),
+        makeCandidate(rect.left - cardWidth - gap, rect.top),
+        makeCandidate(rect.left, rect.bottom + gap),
+        makeCandidate(rect.left, rect.top - cardHeight - gap),
+        makeCandidate(targetOnLeft ? maxLeft : margin, targetOnTop ? maxTop : margin),
+        makeCandidate(targetOnLeft ? maxLeft : margin, targetOnTop ? margin : maxTop),
+        makeCandidate(targetOnLeft ? margin : maxLeft, targetOnTop ? maxTop : margin),
+        makeCandidate(targetOnLeft ? margin : maxLeft, targetOnTop ? margin : maxTop)
       ];
-      const cleanCandidate = candidates.find((candidate) => candidate.fits);
-      const fallback = candidates
-        .map((candidate) => {
-          const left = clamp(candidate.left, margin, viewportWidth - cardWidth - margin);
-          const top = clamp(candidate.top, margin, viewportHeight - cardHeight - margin);
-          return {
-            left,
-            top,
-            score: overlapArea(rect, cardBounds(left, top))
-          };
-        })
-        .sort((a, b) => a.score - b.score)[0];
-      const card = cleanCandidate
-        ? {
-            left: clamp(cleanCandidate.left, margin, viewportWidth - cardWidth - margin),
-            top: clamp(cleanCandidate.top, margin, viewportHeight - cardHeight - margin)
-          }
-        : {
-            left: fallback.left,
-            top: fallback.top
-          };
+      const cleanCandidate = candidates.find((candidate) => candidate.overlap < 1);
+      const fallback = [...candidates].sort((a, b) => a.overlap - b.overlap)[0];
+      const nextLayout = { rect, card: cleanCandidate ?? fallback };
 
-      setLayout({ rect, card });
+      if (guideLayoutChanged(lastLayoutRef.current, nextLayout)) {
+        lastLayoutRef.current = nextLayout;
+        setLayout(nextLayout);
+      }
     };
 
     const scheduleLayout = () => {
@@ -884,16 +954,67 @@ function GuideDialog({
       raf = window.requestAnimationFrame(updateLayout);
     };
 
+    const animateScrollToTarget = () => {
+      if (!target) {
+        return;
+      }
+
+      const targetRect = target.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const startY = window.scrollY;
+      const maxScrollY = Math.max(0, document.documentElement.scrollHeight - viewportHeight);
+      const targetDocumentTop = targetRect.top + startY;
+      const targetFocusHeight = Math.min(targetRect.height, viewportHeight * 0.52);
+      const desiredY = clamp(targetDocumentTop - (viewportHeight - targetFocusHeight) / 2, 0, maxScrollY);
+      const distance = Math.abs(desiredY - startY);
+
+      if (distance < 4) {
+        scheduleLayout();
+        return;
+      }
+
+      const duration = Math.min(680, Math.max(360, distance * 0.72));
+      const startedAt = performance.now();
+
+      const tick = (now: number) => {
+        if (disposed) {
+          return;
+        }
+
+        const progress = clamp((now - startedAt) / duration, 0, 1);
+        const nextY = startY + (desiredY - startY) * easeGuide(progress);
+        window.scrollTo(0, nextY);
+        scheduleLayout();
+
+        if (progress < 1) {
+          scrollRaf = window.requestAnimationFrame(tick);
+        } else {
+          window.scrollTo(0, desiredY);
+          scheduleLayout();
+        }
+      };
+
+      window.cancelAnimationFrame(scrollRaf);
+      scrollRaf = window.requestAnimationFrame(tick);
+    };
+
     target?.classList.add('guide-active-target');
-    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     scheduleLayout();
-    timers.push(window.setTimeout(updateLayout, 260));
+    animateScrollToTarget();
+    timers.push(window.setTimeout(updateLayout, 120));
+    timers.push(window.setTimeout(updateLayout, 300));
+    if (target) {
+      resizeObserver = new ResizeObserver(scheduleLayout);
+      resizeObserver.observe(target);
+    }
     window.addEventListener('resize', scheduleLayout);
     window.addEventListener('scroll', scheduleLayout, true);
 
     return () => {
       disposed = true;
+      resizeObserver?.disconnect();
       window.cancelAnimationFrame(raf);
+      window.cancelAnimationFrame(scrollRaf);
       timers.forEach((timer) => window.clearTimeout(timer));
       window.removeEventListener('resize', scheduleLayout);
       window.removeEventListener('scroll', scheduleLayout, true);
@@ -908,14 +1029,26 @@ function GuideDialog({
         <div
           className="guide-spotlight"
           style={{
-            left: layout.rect.left,
-            top: layout.rect.top,
+            transform: `translate3d(${layout.rect.left}px, ${layout.rect.top}px, 0)`,
             width: layout.rect.right - layout.rect.left,
             height: layout.rect.bottom - layout.rect.top
           }}
         />
       )}
-      <section ref={cardRef} className="guide-card" style={layout ? { left: layout.card.left, top: layout.card.top } : undefined}>
+      <section
+        ref={cardRef}
+        className="guide-card"
+        style={
+          layout
+            ? {
+                left: `${layout.card.left}px`,
+                top: `${layout.card.top}px`,
+                width: `${layout.card.width}px`
+              }
+            : undefined
+        }
+      >
+        <div key={stepIndex} className="guide-card-content">
         <div className="guide-card-header">
           <div>
             <div className="eyebrow">New User Guide</div>
@@ -937,7 +1070,11 @@ function GuideDialog({
         )}
         {step.action === 'openDiagnostics' && (
           <div className="guide-test-inline">
-            <span>提示：关闭引导后，在右侧快捷操作里展开“诊断与测试”。</span>
+            <button className="secondary" onClick={() => onSetDiagnostics(true)}>
+              <SlidersHorizontal size={17} />
+              展开诊断与测试
+            </button>
+            <span>展开后可以直接点击里面的测试按钮，当前高亮区域也可以操作。</span>
           </div>
         )}
         <div className="guide-progress">
@@ -952,6 +1089,7 @@ function GuideDialog({
               {isLastStep ? '完成' : '下一步'}
             </button>
           </div>
+        </div>
         </div>
       </section>
     </div>
@@ -1056,7 +1194,7 @@ function readinessActionText(snapshot: AppSnapshot): string {
 function StatusPill({ snapshot }: { snapshot: AppSnapshot }) {
   const connected = snapshot.connected;
   return (
-    <div className={`status-pill ${connected ? 'online' : 'offline'}`}>
+    <div className={`status-pill ${connected ? 'online' : 'offline'}`} data-guide="app-status">
       {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
       {displayStatusText(snapshot)}
     </div>

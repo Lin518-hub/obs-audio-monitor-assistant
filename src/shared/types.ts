@@ -73,6 +73,7 @@ export interface AppConfig {
   alertPositions: Record<string, AlertPosition>;
   floatingWindowEnabled: boolean;
   floatingWindowBounds: WindowBounds | null;
+  autoLaunch: boolean;
 }
 
 export interface InputOption {
@@ -130,5 +131,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   rememberAlertPosition: true,
   alertPositions: {},
   floatingWindowEnabled: false,
-  floatingWindowBounds: null
+  floatingWindowBounds: null,
+  autoLaunch: false
 };
