@@ -1,12 +1,11 @@
-!macro customHeader
-  !include LogicLib.nsh
-  !include nsDialogs.nsh
+!include LogicLib.nsh
+!include nsDialogs.nsh
 
-  Var StartOnBootCheckbox
-  Var StartOnBootState
-!macroend
+!ifndef BUILD_UNINSTALLER
+Var StartOnBootCheckbox
+Var StartOnBootState
 
-!macro customInstallMode
+!macro customPageAfterChangeDir
   Page custom StartOnBootPageCreate StartOnBootPageLeave
 !macroend
 
@@ -42,6 +41,7 @@ FunctionEnd
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "OBS 音频检测助手"
   ${EndIf}
 !macroend
+!endif
 
 !macro customUnInstall
   Delete "$SMSTARTUP\OBS 音频检测助手.lnk"
