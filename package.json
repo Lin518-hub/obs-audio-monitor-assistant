@@ -1,6 +1,6 @@
 {
   "name": "obs-audio-monitor-assistant",
-  "version": "0.1.0",
+  "version": "1.3.0",
   "description": "OBS audio monitor assistant for livestream operators, focused on silent microphone alerts during live commerce and production workflows.",
   "author": "OBS 音频检测助手",
   "license": "UNLICENSED",

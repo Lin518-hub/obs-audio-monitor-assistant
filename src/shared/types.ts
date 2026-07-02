@@ -122,7 +122,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   targetInputName: '',
   silenceDurationSeconds: 120,
   silenceThresholdDb: -55,
-  alertDisplayMode: 'primary',
+  alertDisplayMode: 'all',
   alertDisplayId: null,
   paused: false,
   hasSeenGuide: false,

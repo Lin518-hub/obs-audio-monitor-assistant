@@ -1049,47 +1049,47 @@ function GuideDialog({
         }
       >
         <div key={stepIndex} className="guide-card-content">
-        <div className="guide-card-header">
-          <div>
-            <div className="eyebrow">New User Guide</div>
-            <h2>{step.title}</h2>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="跳过操作说明">
-            <X size={18} />
-          </button>
-        </div>
-        <p>{step.body}</p>
-        {step.action === 'test' && (
-          <div className="guide-test-inline">
-            <button className="secondary" onClick={onTestConnection} disabled={testingConnection}>
-              <TestTube2 size={17} />
-              {testingConnection ? '测试中...' : '测试 OBS 连接'}
-            </button>
-            {testResult && <span className={testResult.ok ? 'test-ok' : 'test-bad'}>{testResult.message}</span>}
-          </div>
-        )}
-        {step.action === 'openDiagnostics' && (
-          <div className="guide-test-inline">
-            <button className="secondary" onClick={() => onSetDiagnostics(true)}>
-              <SlidersHorizontal size={17} />
-              展开诊断与测试
-            </button>
-            <span>展开后可以直接点击里面的测试按钮，当前高亮区域也可以操作。</span>
-          </div>
-        )}
-        <div className="guide-progress">
-          <span>
-            {stepIndex + 1} / {steps.length}
-          </span>
-          <div>
-            <button className="ghost mini" onClick={onClose}>
-              跳过
-            </button>
-            <button className="primary" onClick={() => (isLastStep ? onClose() : setStepIndex((index) => index + 1))}>
-              {isLastStep ? '完成' : '下一步'}
+          <div className="guide-card-header">
+            <div>
+              <div className="eyebrow">New User Guide</div>
+              <h2>{step.title}</h2>
+            </div>
+            <button className="icon-button" onClick={onClose} aria-label="跳过操作说明">
+              <X size={18} />
             </button>
           </div>
-        </div>
+          <p>{step.body}</p>
+          {step.action === 'test' && (
+            <div className="guide-test-inline">
+              <button className="secondary" onClick={onTestConnection} disabled={testingConnection}>
+                <TestTube2 size={17} />
+                {testingConnection ? '测试中...' : '测试 OBS 连接'}
+              </button>
+              {testResult && <span className={testResult.ok ? 'test-ok' : 'test-bad'}>{testResult.message}</span>}
+            </div>
+          )}
+          {step.action === 'openDiagnostics' && (
+            <div className="guide-test-inline">
+              <button className="secondary" onClick={() => onSetDiagnostics(true)}>
+                <SlidersHorizontal size={17} />
+                展开诊断与测试
+              </button>
+              <span>展开后可以直接点击里面的测试按钮，当前高亮区域也可以操作。</span>
+            </div>
+          )}
+          <div className="guide-progress">
+            <span>
+              {stepIndex + 1} / {steps.length}
+            </span>
+            <div>
+              <button className="ghost mini" onClick={onClose}>
+                跳过
+              </button>
+              <button className="primary" onClick={() => (isLastStep ? onClose() : setStepIndex((index) => index + 1))}>
+                {isLastStep ? '完成' : '下一步'}
+              </button>
+            </div>
+          </div>
         </div>
       </section>
     </div>

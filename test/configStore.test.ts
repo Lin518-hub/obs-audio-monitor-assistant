@@ -69,6 +69,18 @@ describe('ConfigStore', () => {
     expect(saved.obsPort).toBe(65_535);
   });
 
+  it('persists the configured silence duration across reloads', async () => {
+    const store = new ConfigStore();
+    await store.save({
+      ...DEFAULT_CONFIG,
+      silenceDurationSeconds: 300
+    });
+
+    const reloaded = await new ConfigStore().load();
+
+    expect(reloaded.silenceDurationSeconds).toBe(300);
+  });
+
   it('restores defaults and marks the guide as unseen', async () => {
     const store = new ConfigStore();
     await store.save({
