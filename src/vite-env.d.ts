@@ -7,7 +7,8 @@ import type {
   AppSnapshot,
   DisplayInfo,
   InputOption,
-  TestConnectionResult
+  TestConnectionResult,
+  UpdateSnapshot
 } from './shared/types';
 
 declare global {
@@ -31,7 +32,12 @@ declare global {
       clearHistory: () => Promise<AlertHistoryEntry[]>;
       updateAlertPosition: (displayId: number, position: { x: number; y: number }) => Promise<void>;
       getDisplays: () => Promise<DisplayInfo[]>;
+      getUpdateState: () => Promise<UpdateSnapshot>;
+      checkForUpdates: () => Promise<UpdateSnapshot>;
+      downloadUpdate: () => Promise<UpdateSnapshot>;
+      installUpdate: () => Promise<UpdateSnapshot>;
       onSnapshot: (callback: (snapshot: AppSnapshot) => void) => () => void;
+      onUpdateState: (callback: (snapshot: UpdateSnapshot) => void) => () => void;
     };
   }
 }

@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray, type Rectangle } from 'electron';
+import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ConfigStore } from './configStore.js';
 import { getDisplays } from './display.js';
 import { HistoryStore } from './historyStore.js';
 import { OBSMonitor } from './obsMonitor.js';
-import type { AlertAction, AlertHistoryAction, AppConfig, AppSnapshot, DisplayInfo, WindowBounds } from '../shared/types.js';
+import type { AlertAction, AlertHistoryAction, AppConfig, AppSnapshot, DisplayInfo, UpdateSnapshot, WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,6 +30,9 @@ const FLOATING_WINDOW_MIN_WIDTH = 320;
 const FLOATING_WINDOW_MAX_WIDTH = 560;
 const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
 const FLOATING_WINDOW_RADIUS = 12;
+const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const UPDATE_INITIAL_CHECK_DELAY_MS = 12 * 1000;
+const { autoUpdater } = electronUpdater;
 
 app.setName('OBS 音频检测助手');
 app.setPath('userData', join(app.getPath('appData'), 'obs-audio-monitor-assistant'));
@@ -44,6 +48,10 @@ let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
 let latestSnapshot: AppSnapshot | null = null;
+let updateState: UpdateSnapshot | null = null;
+let updateCheckInFlight: Promise<UpdateSnapshot> | null = null;
+let updateInitialTimer: NodeJS.Timeout | null = null;
+let updateCheckTimer: NodeJS.Timeout | null = null;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
@@ -90,6 +98,7 @@ async function initializeApp(): Promise<void> {
 
   registerIpc();
   createTray();
+  initializeUpdater();
   if (!launchHidden) {
     createSettingsWindow();
   }
@@ -130,6 +139,14 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (updateInitialTimer) {
+    clearTimeout(updateInitialTimer);
+    updateInitialTimer = null;
+  }
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
+  }
   void monitor?.stop();
 });
 
@@ -233,6 +250,250 @@ function registerIpc(): void {
     await saveAlertPosition(displayId, position);
   });
   ipcMain.handle('displays:get', () => getDisplays());
+  ipcMain.handle('update:get-state', () => getUpdateState());
+  ipcMain.handle('update:check', () => checkForUpdates(true));
+  ipcMain.handle('update:download', () => downloadUpdate());
+  ipcMain.handle('update:install', () => installDownloadedUpdate());
+}
+
+function initializeUpdater(): void {
+  updateState = createInitialUpdateState();
+  broadcastUpdateState();
+
+  if (!isUpdaterSupported()) {
+    return;
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({
+      status: 'checking',
+      percent: null,
+      errorMessage: null,
+      message: '正在检查 GitHub 上的新版本...'
+    });
+  });
+  autoUpdater.on('update-available', (info: UpdateInfo) => {
+    setUpdateState({
+      status: 'available',
+      availableVersion: info.version ?? null,
+      downloadedVersion: null,
+      percent: null,
+      errorMessage: null,
+      lastCheckedAt: Date.now(),
+      message: info.version ? `发现新版本 ${info.version}` : '发现新版本'
+    });
+  });
+  autoUpdater.on('update-not-available', (info: UpdateInfo) => {
+    setUpdateState({
+      status: 'not_available',
+      availableVersion: info.version ?? null,
+      downloadedVersion: null,
+      percent: null,
+      errorMessage: null,
+      lastCheckedAt: Date.now(),
+      message: '当前已经是最新版本'
+    });
+  });
+  autoUpdater.on('download-progress', (progress: ProgressInfo) => {
+    setUpdateState({
+      status: 'downloading',
+      percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : null,
+      errorMessage: null,
+      message: '正在下载更新...'
+    });
+  });
+  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    const version = info.version ?? getUpdateState().availableVersion;
+    setUpdateState({
+      status: 'downloaded',
+      availableVersion: version,
+      downloadedVersion: version,
+      percent: 100,
+      errorMessage: null,
+      message: version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装'
+    });
+  });
+  autoUpdater.on('error', (error: Error) => {
+    const errorMessage = formatUpdateError(error);
+    setUpdateState({
+      status: 'error',
+      percent: null,
+      errorMessage,
+      lastCheckedAt: Date.now(),
+      message: errorMessage
+    });
+  });
+
+  updateInitialTimer = setTimeout(() => {
+    void checkForUpdates(false);
+  }, UPDATE_INITIAL_CHECK_DELAY_MS);
+  updateCheckTimer = setInterval(() => {
+    void checkForUpdates(false);
+  }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+function getUpdateState(): UpdateSnapshot {
+  if (!updateState) {
+    updateState = createInitialUpdateState();
+  }
+
+  return updateState;
+}
+
+function createInitialUpdateState(): UpdateSnapshot {
+  return {
+    status: isUpdaterSupported() ? 'idle' : 'unsupported',
+    source: 'github',
+    currentVersion: app.getVersion(),
+    availableVersion: null,
+    downloadedVersion: null,
+    percent: null,
+    message: isUpdaterSupported() ? '可检查更新' : '打包安装后可检查更新',
+    lastCheckedAt: null,
+    errorMessage: null
+  };
+}
+
+function isUpdaterSupported(): boolean {
+  return app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin');
+}
+
+function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
+  updateState = {
+    ...getUpdateState(),
+    ...patch,
+    source: 'github',
+    currentVersion: app.getVersion()
+  };
+  broadcastUpdateState();
+  if (latestSnapshot) {
+    updateTray(latestSnapshot);
+  }
+  return updateState;
+}
+
+async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
+  if (!isUpdaterSupported()) {
+    return setUpdateState({
+      status: 'unsupported',
+      message: '请在已安装的 Windows 或 macOS 版本中检查更新',
+      errorMessage: null
+    });
+  }
+
+  const current = getUpdateState();
+  if (current.status === 'downloaded') {
+    return current;
+  }
+
+  if (updateCheckInFlight) {
+    return updateCheckInFlight;
+  }
+
+  updateCheckInFlight = (async () => {
+    try {
+      setUpdateState({
+        status: 'checking',
+        percent: null,
+        errorMessage: null,
+        message: manual ? '正在检查 GitHub 上的新版本...' : '正在后台检查更新...'
+      });
+      const result = await autoUpdater.checkForUpdates();
+      const latest = getUpdateState();
+      if (latest.status === 'checking') {
+        const version = result?.updateInfo.version ?? latest.availableVersion ?? null;
+        setUpdateState({
+          status: 'not_available',
+          availableVersion: version,
+          lastCheckedAt: Date.now(),
+          message: '当前已经是最新版本'
+        });
+      }
+      return getUpdateState();
+    } catch (error) {
+      const errorMessage = formatUpdateError(error);
+      return setUpdateState({
+        status: 'error',
+        percent: null,
+        errorMessage,
+        lastCheckedAt: Date.now(),
+        message: errorMessage
+      });
+    } finally {
+      updateCheckInFlight = null;
+    }
+  })();
+
+  return updateCheckInFlight;
+}
+
+async function downloadUpdate(): Promise<UpdateSnapshot> {
+  if (!isUpdaterSupported()) {
+    return getUpdateState();
+  }
+
+  const current = getUpdateState();
+  if (current.status === 'downloaded' || current.status === 'downloading') {
+    return current;
+  }
+
+  if (current.status !== 'available') {
+    const checked = await checkForUpdates(true);
+    if (checked.status !== 'available') {
+      return checked;
+    }
+  }
+
+  try {
+    setUpdateState({
+      status: 'downloading',
+      percent: 0,
+      errorMessage: null,
+      message: '正在下载更新...'
+    });
+    await autoUpdater.downloadUpdate();
+    return getUpdateState();
+  } catch (error) {
+    const errorMessage = formatUpdateError(error);
+    return setUpdateState({
+      status: 'error',
+      percent: null,
+      errorMessage,
+      lastCheckedAt: Date.now(),
+      message: errorMessage
+    });
+  }
+}
+
+function installDownloadedUpdate(): UpdateSnapshot {
+  const current = getUpdateState();
+  if (current.status !== 'downloaded') {
+    return current;
+  }
+
+  isQuitting = true;
+  setImmediate(() => {
+    autoUpdater.quitAndInstall(false, true);
+  });
+  return current;
+}
+
+function formatUpdateError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/github|api\.github|release|latest\.yml/i.test(raw)) {
+    return '无法连接 GitHub 更新源，请稍后重试或手动下载新版安装包';
+  }
+
+  if (/net|timeout|econn|enotfound|certificate|proxy/i.test(raw)) {
+    return '网络无法访问更新源，请检查网络、代理或稍后重试';
+  }
+
+  return raw ? `检查更新失败：${raw}` : '检查更新失败';
 }
 
 function createSettingsWindow(): void {
@@ -633,6 +894,13 @@ function updateTray(snapshot: AppSnapshot): void {
       { label: `状态：${statusText}`, enabled: false },
       { label: '打开设置', click: showSettingsWindow },
       {
+        label: updateTrayLabel(),
+        enabled: updateTrayEnabled(),
+        click: () => {
+          void handleTrayUpdateClick();
+        }
+      },
+      {
         label: snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗',
         click: () => {
           void setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled);
@@ -683,6 +951,16 @@ function loadRendererSafely(window: BrowserWindow, hash: string, label: string):
 function broadcastSnapshot(snapshot: AppSnapshot): void {
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send('snapshot', snapshot);
+  });
+}
+
+function broadcastUpdateState(): void {
+  if (!updateState) {
+    return;
+  }
+
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send('update:state', updateState);
   });
 }
 
@@ -871,6 +1149,47 @@ function statusLabel(status: string): string {
   };
 
   return labels[status] ?? status;
+}
+
+function updateTrayLabel(): string {
+  const state = getUpdateState();
+  switch (state.status) {
+    case 'checking':
+      return '正在检查更新...';
+    case 'available':
+      return state.availableVersion ? `下载更新 ${state.availableVersion}` : '下载更新';
+    case 'downloading':
+      return state.percent === null ? '正在下载更新...' : `正在下载更新 ${Math.round(state.percent)}%`;
+    case 'downloaded':
+      return '重启并安装更新';
+    case 'error':
+      return '检查更新失败，重试';
+    case 'unsupported':
+      return '检查更新（安装包版本可用）';
+    default:
+      return '检查更新';
+  }
+}
+
+function updateTrayEnabled(): boolean {
+  const state = getUpdateState();
+  return state.status !== 'checking' && state.status !== 'downloading' && state.status !== 'unsupported';
+}
+
+async function handleTrayUpdateClick(): Promise<void> {
+  showSettingsWindow();
+  const state = getUpdateState();
+  if (state.status === 'downloaded') {
+    installDownloadedUpdate();
+    return;
+  }
+
+  if (state.status === 'available') {
+    await downloadUpdate();
+    return;
+  }
+
+  await checkForUpdates(true);
 }
 
 function isHistoryAction(action: AlertAction): action is AlertHistoryAction {

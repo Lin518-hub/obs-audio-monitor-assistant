@@ -56,6 +56,28 @@ export interface TestConnectionResult {
   inputCount: number;
 }
 
+export type UpdateStatus =
+  | 'unsupported'
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not_available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error';
+
+export interface UpdateSnapshot {
+  status: UpdateStatus;
+  source: 'github';
+  currentVersion: string;
+  availableVersion: string | null;
+  downloadedVersion: string | null;
+  percent: number | null;
+  message: string;
+  lastCheckedAt: number | null;
+  errorMessage: string | null;
+}
+
 export interface AppConfig {
   obsHost: string;
   obsPort: number;

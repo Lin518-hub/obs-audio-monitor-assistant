@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   CircleDot,
+  Download,
   Clock3,
   History,
   Mic2,
@@ -28,7 +29,7 @@ import {
   WifiOff,
   X
 } from 'lucide-react';
-import type { AlertAction, AppConfig, AppSnapshot, InputOption, TestConnectionResult } from '../shared/types';
+import type { AlertAction, AppConfig, AppSnapshot, InputOption, TestConnectionResult, UpdateSnapshot } from '../shared/types';
 import './styles.css';
 
 const root = createRoot(document.getElementById('root')!);
@@ -60,6 +61,7 @@ function SettingsApp() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [thresholdDragging, setThresholdDragging] = useState(false);
+  const [updateState, setUpdateState] = useState<UpdateSnapshot | null>(null);
   const pendingPatchRef = useRef<Partial<AppConfig>>({});
   const saveTimerRef = useRef<number | null>(null);
   const meterTrackRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +87,21 @@ function SettingsApp() {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
       }
+      dispose();
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.obsGuard.getUpdateState().then((next) => {
+      if (mounted) {
+        setUpdateState(next);
+      }
+    });
+    const dispose = window.obsGuard.onUpdateState(setUpdateState);
+
+    return () => {
+      mounted = false;
       dispose();
     };
   }, []);
@@ -146,6 +163,36 @@ function SettingsApp() {
     } finally {
       setTestingConnection(false);
     }
+  };
+
+  const checkForUpdates = async () => {
+    setUpdateState((current) =>
+      current
+        ? {
+            ...current,
+            status: 'checking',
+            percent: null,
+            errorMessage: null,
+            message: '正在检查 GitHub 上的新版本...'
+          }
+        : current
+    );
+    setUpdateState(await window.obsGuard.checkForUpdates());
+  };
+
+  const downloadUpdate = async () => {
+    setUpdateState((current) =>
+      current
+        ? {
+            ...current,
+            status: 'downloading',
+            percent: current.percent ?? 0,
+            errorMessage: null,
+            message: '正在下载更新...'
+          }
+        : current
+    );
+    setUpdateState(await window.obsGuard.downloadUpdate());
   };
 
   const resetToFactoryDefaults = async () => {
@@ -214,7 +261,17 @@ function SettingsApp() {
           <div className="eyebrow">OBS Audio Monitor Assistant</div>
           <h1>OBS 音频检测助手</h1>
         </div>
-        <StatusPill snapshot={snapshot} />
+        <div className="topbar-actions">
+          {updateState && (
+            <UpdateControl
+              updateState={updateState}
+              onCheck={() => void checkForUpdates()}
+              onDownload={() => void downloadUpdate()}
+              onInstall={() => void window.obsGuard.installUpdate()}
+            />
+          )}
+          <StatusPill snapshot={snapshot} />
+        </div>
       </section>
 
       <SafetyBanner snapshot={snapshot} />
@@ -695,6 +752,109 @@ function SafetyBanner({ snapshot }: { snapshot: AppSnapshot }) {
   );
 }
 
+function UpdateControl({
+  updateState,
+  onCheck,
+  onDownload,
+  onInstall
+}: {
+  updateState: UpdateSnapshot;
+  onCheck: () => void;
+  onDownload: () => void;
+  onInstall: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const busy = updateState.status === 'checking' || updateState.status === 'downloading';
+  const canCheck = updateState.status !== 'unsupported' && !busy;
+  const canDownload = updateState.status === 'available';
+  const canInstall = updateState.status === 'downloaded';
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!controlRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="update-control" ref={controlRef}>
+      <button className={`update-trigger ${updateTone(updateState)}`} onClick={() => setOpen((next) => !next)}>
+        {updateIcon(updateState)}
+        <span>{updateTriggerLabel(updateState)}</span>
+      </button>
+      {open && (
+        <div className="update-menu">
+          <div className="update-menu-head">
+            <div>
+              <span>软件更新</span>
+              <strong>{updateMenuTitle(updateState)}</strong>
+            </div>
+            <button className="icon-button small" onClick={() => setOpen(false)} aria-label="关闭更新菜单">
+              <X size={16} />
+            </button>
+          </div>
+          <p className={updateState.status === 'error' ? 'update-error-text' : ''}>{updateState.message}</p>
+          <div className="update-version-grid">
+            <span>当前版本</span>
+            <strong>v{updateState.currentVersion}</strong>
+            <span>更新源</span>
+            <strong>GitHub Releases</strong>
+            {updateState.lastCheckedAt && (
+              <>
+                <span>上次检查</span>
+                <strong>{new Date(updateState.lastCheckedAt).toLocaleString()}</strong>
+              </>
+            )}
+          </div>
+          {(updateState.status === 'downloading' || updateState.status === 'downloaded') && (
+            <div className="update-progress">
+              <span style={{ width: `${updateState.percent ?? 0}%` }} />
+            </div>
+          )}
+          <div className="update-actions">
+            <button className="secondary" onClick={onCheck} disabled={!canCheck}>
+              <RefreshCw size={16} />
+              {updateState.status === 'checking' ? '检查中...' : '检查更新'}
+            </button>
+            {canDownload && (
+              <button className="primary" onClick={onDownload}>
+                <Download size={16} />
+                下载更新
+              </button>
+            )}
+            {canInstall && (
+              <button className="primary" onClick={onInstall}>
+                <Check size={16} />
+                重启安装
+              </button>
+            )}
+          </div>
+          {updateState.status === 'unsupported' && <div className="update-muted">开发模式不会检查更新。安装包版本会自动启用。</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HistoryList({ snapshot }: { snapshot: AppSnapshot }) {
   if (snapshot.history.length === 0) {
     return <div className="empty-history">暂无报警记录</div>;
@@ -1138,6 +1298,76 @@ function ManualDialog({ onClose }: { onClose: () => void }) {
       </section>
     </div>
   );
+}
+
+function updateTone(updateState: UpdateSnapshot): 'idle' | 'info' | 'warning' | 'success' | 'error' {
+  switch (updateState.status) {
+    case 'available':
+      return 'warning';
+    case 'downloaded':
+      return 'success';
+    case 'checking':
+    case 'downloading':
+      return 'info';
+    case 'error':
+      return 'error';
+    default:
+      return 'idle';
+  }
+}
+
+function updateIcon(updateState: UpdateSnapshot): React.ReactNode {
+  switch (updateState.status) {
+    case 'available':
+    case 'downloading':
+      return <Download size={16} />;
+    case 'downloaded':
+      return <Check size={16} />;
+    case 'error':
+      return <AlertTriangle size={16} />;
+    default:
+      return <RefreshCw size={16} />;
+  }
+}
+
+function updateTriggerLabel(updateState: UpdateSnapshot): string {
+  switch (updateState.status) {
+    case 'checking':
+      return '检查更新中';
+    case 'available':
+      return updateState.availableVersion ? `可更新 v${updateState.availableVersion}` : '发现更新';
+    case 'downloading':
+      return updateState.percent === null ? '下载更新中' : `下载 ${Math.round(updateState.percent)}%`;
+    case 'downloaded':
+      return '重启安装更新';
+    case 'error':
+      return '更新失败';
+    case 'not_available':
+      return '已是新版';
+    case 'unsupported':
+      return '更新';
+    default:
+      return '检查更新';
+  }
+}
+
+function updateMenuTitle(updateState: UpdateSnapshot): string {
+  switch (updateState.status) {
+    case 'available':
+      return updateState.availableVersion ? `发现 v${updateState.availableVersion}` : '发现新版本';
+    case 'downloading':
+      return '正在下载';
+    case 'downloaded':
+      return updateState.downloadedVersion ? `v${updateState.downloadedVersion} 已准备好` : '更新已准备好';
+    case 'error':
+      return '更新源暂时不可用';
+    case 'not_available':
+      return '当前为最新版本';
+    case 'checking':
+      return '正在检查更新';
+    default:
+      return '检查 GitHub 更新';
+  }
 }
 
 function safetyTitle(snapshot: AppSnapshot): string {

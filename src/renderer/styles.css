@@ -146,6 +146,13 @@ p {
   -webkit-app-region: no-drag;
 }
 
+.topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  -webkit-app-region: no-drag;
+}
+
 .eyebrow {
   margin-bottom: 5px;
   color: #2563eb;
@@ -183,6 +190,163 @@ p {
 .status-pill.offline {
   border-color: rgba(239, 68, 68, 0.28);
   color: #b91c1c;
+}
+
+.update-control {
+  position: relative;
+  z-index: 18;
+  -webkit-app-region: no-drag;
+}
+
+.update-trigger {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+  color: #334155;
+  padding: 0 12px;
+  white-space: nowrap;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.update-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.09);
+}
+
+.update-trigger.info {
+  border-color: rgba(37, 99, 235, 0.3);
+  color: #1d4ed8;
+}
+
+.update-trigger.warning {
+  border-color: rgba(234, 179, 8, 0.42);
+  background: #fffbeb;
+  color: #a16207;
+}
+
+.update-trigger.success {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.update-trigger.error {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.update-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: min(360px, calc(100vw - 48px));
+  gap: 12px;
+  border: 1px solid rgba(203, 213, 225, 0.86);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow:
+    0 24px 72px rgba(15, 23, 42, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.74) inset;
+  padding: 14px;
+  animation: panel-slide-down var(--duration-normal) var(--ease-out) both;
+}
+
+.update-menu-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-menu-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.update-menu-head span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.update-menu-head strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.update-menu p {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.update-error-text {
+  color: #b91c1c !important;
+}
+
+.update-version-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.update-version-grid span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.update-version-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #172033;
+  font-size: 12px;
+  text-align: right;
+}
+
+.update-progress {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.update-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e, #2563eb);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.update-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.update-muted {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px;
 }
 
 .settings-layout {
@@ -1680,6 +1844,11 @@ input[type="number"]::-webkit-outer-spin-button {
   color: #334155;
 }
 
+.icon-button.small {
+  width: 32px;
+  height: 32px;
+}
+
 .guide-test-inline {
   display: grid;
   gap: 7px;
@@ -1803,6 +1972,21 @@ input[type="number"]::-webkit-outer-spin-button {
   .footer-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar-actions {
+    justify-content: space-between;
+  }
+
+  .update-control,
+  .update-trigger,
+  .status-pill {
+    flex: 1 1 auto;
+  }
+
+  .update-trigger,
+  .status-pill {
+    justify-content: center;
   }
 
   .settings-layout,
