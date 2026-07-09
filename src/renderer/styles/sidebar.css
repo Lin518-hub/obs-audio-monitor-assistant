@@ -1,0 +1,149 @@
+/* =============================================================================
+ * sidebar.css — 左侧导航(参考 School App 的左栏)
+ * ============================================================================= */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-2);
+}
+
+.sidebar-brand-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-md);
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--green-300) 0%, var(--green-600) 100%);
+  color: var(--neutral-0);
+  flex-shrink: 0;
+  box-shadow: 0 14px 28px rgba(15, 118, 110, 0.18);
+}
+
+.sidebar-brand-name {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3);
+  background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: var(--r-xl);
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--glass-border);
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  cursor: pointer;
+  transition: background 200ms var(--ease-spring-soft), color 200ms var(--ease-spring-soft), transform 260ms var(--ease-spring);
+  position: relative;
+}
+.sidebar-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); transform: translateX(2px); }
+.sidebar-nav-item:active { transform: translateX(2px) scale(0.98); }
+.sidebar-nav-item.active {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+.sidebar-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--green-500);
+}
+.sidebar-nav-item .icon { width: 20px; height: 20px; flex-shrink: 0; }
+.sidebar-nav-item .badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--red-soft);
+  color: var(--red-text);
+  font-size: 11px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+
+/* 侧栏底部:用户信息 */
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: var(--r-xl);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+.sidebar-footer-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FED7AA, #FB923C);
+  display: grid;
+  place-items: center;
+  color: var(--neutral-0);
+  font-size: 14px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.sidebar-footer-info { min-width: 0; flex: 1; }
+.sidebar-footer-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-footer-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sidebar-footer-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green-500);
+}

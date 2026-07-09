@@ -85,7 +85,14 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       preAlertDismissed: this.state.silentSince !== null && this.state.preAlertDismissedSilentSince === this.state.silentSince,
       snoozedUntil: this.state.snoozedUntil,
       history: this.history,
-      errorMessage: this.errorMessage
+      errorMessage: this.errorMessage,
+      // ATEM 字段由 main.ts 的 injectATEMState() 注入，此处提供默认值
+      atemConnected: false,
+      atemConnectionState: 'disconnected',
+      atemProgramInput: 0,
+      atemPreviewInput: 0,
+      atemInputLabels: {},
+      atemInputCount: 0
     };
   }
 

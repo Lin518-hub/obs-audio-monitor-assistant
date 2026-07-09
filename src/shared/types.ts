@@ -66,9 +66,14 @@ export type UpdateStatus =
   | 'downloaded'
   | 'error';
 
+export type UpdateSource = 'auto' | 'github' | 'gh_proxy' | 'ghproxy_net' | 'aliyun';
+
 export interface UpdateSnapshot {
   status: UpdateStatus;
-  source: 'github';
+  source: UpdateSource;
+  sourceLabel: string;
+  sourceUrl: string | null;
+  attemptedSources: string[];
   currentVersion: string;
   availableVersion: string | null;
   downloadedVersion: string | null;
@@ -76,6 +81,25 @@ export interface UpdateSnapshot {
   message: string;
   lastCheckedAt: number | null;
   errorMessage: string | null;
+}
+
+/** ATEM 导播台状态快照 (beta) */
+export interface ATEMStateSnapshot {
+  connected: boolean;
+  connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
+  programInput: number;
+  previewInput: number;
+  inputLabels: Record<number, string>;
+  inputCount: number;
+  errorMessage: string | null;
+}
+
+/** ATEM 连接测试结果 (beta) */
+export interface ATEMTestResult {
+  ok: boolean;
+  message: string;
+  inputCount: number;
+  modelName?: string;
 }
 
 export interface AppConfig {
@@ -89,6 +113,7 @@ export interface AppConfig {
   alertDisplayId: number | null;
   paused: boolean;
   hasSeenGuide: boolean;
+  guideSeenVersion: string;
   preAlertEnabled: boolean;
   preAlertRatio: number;
   rememberAlertPosition: boolean;
@@ -96,6 +121,12 @@ export interface AppConfig {
   floatingWindowEnabled: boolean;
   floatingWindowBounds: WindowBounds | null;
   autoLaunch: boolean;
+  updateSource: UpdateSource;
+  aliyunUpdateBaseUrl: string;
+  /** ATEM 导播台 (beta) */
+  atemEnabled: boolean;
+  atemHost: string;
+  atemHotkeyGlobal: boolean;
 }
 
 export interface InputOption {
@@ -135,6 +166,13 @@ export interface AppSnapshot {
   snoozedUntil: number | null;
   history: AlertHistoryEntry[];
   errorMessage: string | null;
+  /** ATEM 导播台状态 (beta) */
+  atemConnected: boolean;
+  atemConnectionState: string;
+  atemProgramInput: number;
+  atemPreviewInput: number;
+  atemInputLabels: Record<number, string>;
+  atemInputCount: number;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -148,11 +186,18 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertDisplayId: null,
   paused: false,
   hasSeenGuide: false,
+  guideSeenVersion: '',
   preAlertEnabled: true,
   preAlertRatio: 0.75,
   rememberAlertPosition: true,
   alertPositions: {},
   floatingWindowEnabled: false,
   floatingWindowBounds: null,
-  autoLaunch: false
+  autoLaunch: false,
+  updateSource: 'auto',
+  aliyunUpdateBaseUrl: '',
+  /** ATEM 导播台 (beta) */
+  atemEnabled: false,
+  atemHost: '192.168.1.240',
+  atemHotkeyGlobal: false
 };

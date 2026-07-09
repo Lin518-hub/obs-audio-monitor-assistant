@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray, type Rectangle } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray, type Rectangle } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -6,7 +6,8 @@ import { ConfigStore } from './configStore.js';
 import { getDisplays } from './display.js';
 import { HistoryStore } from './historyStore.js';
 import { OBSMonitor } from './obsMonitor.js';
-import type { AlertAction, AlertHistoryAction, AppConfig, AppSnapshot, DisplayInfo, UpdateSnapshot, WindowBounds } from '../shared/types.js';
+import { ATEMMonitor } from './ATEMMonitor.js';
+import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,6 +33,11 @@ const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WI
 const FLOATING_WINDOW_RADIUS = 12;
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const UPDATE_INITIAL_CHECK_DELAY_MS = 12 * 1000;
+const GITHUB_OWNER = 'Lin518-hub';
+const GITHUB_REPO = 'obs-audio-monitor-assistant';
+const GITHUB_RELEASE_BASE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/latest/`;
+const GH_PROXY_RELEASE_BASE_URL = `https://gh-proxy.com/${GITHUB_RELEASE_BASE_URL}`;
+const GHPROXY_NET_RELEASE_BASE_URL = `https://ghproxy.net/${GITHUB_RELEASE_BASE_URL}`;
 const { autoUpdater } = electronUpdater;
 
 app.setName('OBS 音频检测助手');
@@ -44,6 +50,7 @@ if (process.platform === 'win32') {
 let configStore: ConfigStore;
 let historyStore: HistoryStore;
 let monitor: OBSMonitor;
+let atemMonitor: ATEMMonitor;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
@@ -94,7 +101,15 @@ async function initializeApp(): Promise<void> {
   const history = await historyStore.load();
   monitor = new OBSMonitor(config, getDisplays());
   monitor.setHistory(history);
-  latestSnapshot = monitor.getSnapshot();
+
+  atemMonitor = new ATEMMonitor();
+  latestSnapshot = injectATEMState(monitor.getSnapshot());
+
+  void atemMonitor.setConfig(config.atemEnabled, config.atemHost).then(() => {
+    const merged = injectATEMState(monitor.getSnapshot());
+    latestSnapshot = merged;
+    broadcastSnapshot(merged);
+  });
 
   registerIpc();
   createTray();
@@ -111,8 +126,9 @@ async function initializeApp(): Promise<void> {
   screen.on('display-metrics-changed', refreshDisplays);
 
   monitor.on('snapshot', (snapshot) => {
-    latestSnapshot = snapshot;
-    broadcastSnapshot(snapshot);
+    const merged = injectATEMState(snapshot);
+    latestSnapshot = merged;
+    broadcastSnapshot(merged);
     updateTray(snapshot);
     syncFloatingWindow(snapshot);
     if (snapshot.preAlertVisible && !snapshot.alertVisible) {
@@ -125,9 +141,18 @@ async function initializeApp(): Promise<void> {
     }
   });
   monitor.on('alert', (snapshot) => {
-    latestSnapshot = snapshot;
+    const merged = injectATEMState(snapshot);
+    latestSnapshot = merged;
     closePreAlertWindows('destroy');
     showAlertWindows(snapshot);
+  });
+
+  atemMonitor.on('stateChanged', () => {
+    if (latestSnapshot) {
+      const merged = injectATEMState(latestSnapshot);
+      latestSnapshot = merged;
+      broadcastSnapshot(merged);
+    }
   });
 
   await monitor.start();
@@ -148,6 +173,8 @@ app.on('before-quit', () => {
     updateCheckTimer = null;
   }
   void monitor?.stop();
+  void atemMonitor?.stop();
+  unregisterATEMHotkeys();
 });
 
 function getAutoLaunchEnabled(): boolean {
@@ -186,7 +213,27 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
       await applyAutoLaunch(nextConfig.autoLaunch);
     }
-    return monitor.updateConfig(nextConfig);
+    const snapshot = await monitor.updateConfig(nextConfig);
+    latestSnapshot = injectATEMState(snapshot);
+    broadcastSnapshot(latestSnapshot);
+    updateTray(latestSnapshot);
+    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost')) {
+      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost).then(() => {
+        if (latestSnapshot) {
+          const merged = injectATEMState(latestSnapshot);
+          latestSnapshot = merged;
+          broadcastSnapshot(merged);
+        }
+        syncATEMHotkeys();
+      });
+    }
+    if (Object.hasOwn(patch, 'atemHotkeyGlobal')) {
+      syncATEMHotkeys();
+    }
+    if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl')) {
+      refreshUpdateSourceState(nextConfig);
+    }
+    return latestSnapshot;
   });
   ipcMain.handle('config:reset', () => resetToFactoryDefaults());
   ipcMain.handle('inputs:refresh', () => monitor.refreshInputs());
@@ -254,6 +301,74 @@ function registerIpc(): void {
   ipcMain.handle('update:check', () => checkForUpdates(true));
   ipcMain.handle('update:download', () => downloadUpdate());
   ipcMain.handle('update:install', () => installDownloadedUpdate());
+  ipcMain.handle('atem:get-state', () => atemMonitor.getSnapshot());
+  ipcMain.handle('atem:change-preview-input', async (_event, input: number) => {
+    await atemMonitor.changePreviewInput(input);
+  });
+  ipcMain.handle('atem:auto-transition', async () => {
+    await atemMonitor.autoTransition();
+  });
+  ipcMain.handle('atem:change-program-input', async (_event, input: number) => {
+    await atemMonitor.changeProgramInput(input);
+  });
+  ipcMain.handle('atem:test-connection', async (_event, host: string) => {
+    return atemMonitor.testConnection(host);
+  });
+  ipcMain.handle('atem:reconnect', async () => {
+    await atemMonitor.connect();
+    const merged = injectATEMState(monitor.getSnapshot());
+    latestSnapshot = merged;
+    broadcastSnapshot(merged);
+  });
+}
+
+// Merge ATEM state into an AppSnapshot
+function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
+  const atem = atemMonitor?.getSnapshot();
+  if (!atem) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    atemConnected: atem.connected,
+    atemConnectionState: atem.connectionState,
+    atemProgramInput: atem.programInput,
+    atemPreviewInput: atem.previewInput,
+    atemInputLabels: atem.inputLabels,
+    atemInputCount: atem.inputCount
+  };
+}
+
+function syncATEMHotkeys(): void {
+  const config = (latestSnapshot ?? monitor.getSnapshot()).config;
+  unregisterATEMHotkeys();
+  if (config.atemEnabled && config.atemHotkeyGlobal) {
+    registerATEMHotkeys();
+  }
+}
+
+function registerATEMHotkeys(): void {
+  const atem = atemMonitor;
+  if (!atem) return;
+
+  for (let i = 1; i <= 9; i++) {
+    const accelerator = `num${i}`;
+    try {
+      globalShortcut.register(accelerator, () => {
+        void atem.changePreviewInput(i);
+      });
+    } catch (error) {
+      console.error(`[ATEM] failed to register global shortcut ${accelerator}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function unregisterATEMHotkeys(): void {
+  try {
+    globalShortcut.unregisterAll();
+  } catch {
+    // Some shortcuts may not be registered.
+  }
 }
 
 function initializeUpdater(): void {
@@ -270,14 +385,16 @@ function initializeUpdater(): void {
   autoUpdater.allowDowngrade = false;
 
   autoUpdater.on('checking-for-update', () => {
+    const state = getUpdateState();
     setUpdateState({
       status: 'checking',
       percent: null,
       errorMessage: null,
-      message: '正在检查 GitHub 上的新版本...'
+      message: `正在检查 ${state.sourceLabel} 上的新版本...`
     });
   });
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    const state = getUpdateState();
     setUpdateState({
       status: 'available',
       availableVersion: info.version ?? null,
@@ -285,10 +402,11 @@ function initializeUpdater(): void {
       percent: null,
       errorMessage: null,
       lastCheckedAt: Date.now(),
-      message: info.version ? `发现新版本 ${info.version}` : '发现新版本'
+      message: info.version ? `${state.sourceLabel} 发现新版本 ${info.version}` : `${state.sourceLabel} 发现新版本`
     });
   });
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
+    const state = getUpdateState();
     setUpdateState({
       status: 'not_available',
       availableVersion: info.version ?? null,
@@ -296,7 +414,7 @@ function initializeUpdater(): void {
       percent: null,
       errorMessage: null,
       lastCheckedAt: Date.now(),
-      message: '当前已经是最新版本'
+      message: `${state.sourceLabel} 已确认当前为最新版本`
     });
   });
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
@@ -346,9 +464,13 @@ function getUpdateState(): UpdateSnapshot {
 }
 
 function createInitialUpdateState(): UpdateSnapshot {
+  const source = resolveConfiguredUpdateSource();
   return {
     status: isUpdaterSupported() ? 'idle' : 'unsupported',
-    source: 'github',
+    source: source.id,
+    sourceLabel: source.label,
+    sourceUrl: source.url,
+    attemptedSources: [],
     currentVersion: app.getVersion(),
     availableVersion: null,
     downloadedVersion: null,
@@ -367,7 +489,6 @@ function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
   updateState = {
     ...getUpdateState(),
     ...patch,
-    source: 'github',
     currentVersion: app.getVersion()
   };
   broadcastUpdateState();
@@ -379,8 +500,13 @@ function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
 
 async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
   if (!isUpdaterSupported()) {
+    const source = resolveConfiguredUpdateSource();
     return setUpdateState({
       status: 'unsupported',
+      source: source.id,
+      sourceLabel: source.label,
+      sourceUrl: source.url,
+      attemptedSources: [],
       message: '请在已安装的 Windows 或 macOS 版本中检查更新',
       errorMessage: null
     });
@@ -396,40 +522,191 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
   }
 
   updateCheckInFlight = (async () => {
-    try {
-      setUpdateState({
-        status: 'checking',
-        percent: null,
-        errorMessage: null,
-        message: manual ? '正在检查 GitHub 上的新版本...' : '正在后台检查更新...'
-      });
-      const result = await autoUpdater.checkForUpdates();
-      const latest = getUpdateState();
-      if (latest.status === 'checking') {
-        const version = result?.updateInfo.version ?? latest.availableVersion ?? null;
-        setUpdateState({
-          status: 'not_available',
-          availableVersion: version,
-          lastCheckedAt: Date.now(),
-          message: '当前已经是最新版本'
-        });
-      }
-      return getUpdateState();
-    } catch (error) {
-      const errorMessage = formatUpdateError(error);
+    const candidates = resolveUpdateCandidates(currentUpdateConfig());
+    if (candidates.length === 0) {
+      const source = resolveConfiguredUpdateSource();
       return setUpdateState({
         status: 'error',
+        source: source.id,
+        sourceLabel: source.label,
+        sourceUrl: source.url,
+        attemptedSources: [],
         percent: null,
-        errorMessage,
+        errorMessage: '阿里云镜像源尚未配置',
         lastCheckedAt: Date.now(),
-        message: errorMessage
+        message: '请先填写阿里云 OSS/CDN 镜像地址，或切换到 GitHub / GitHub 加速源'
       });
-    } finally {
-      updateCheckInFlight = null;
     }
+
+    const attemptedSources: string[] = [];
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      attemptedSources.push(candidate.label);
+      autoUpdater.setFeedURL(candidate.feed);
+      setUpdateState({
+        status: 'checking',
+        source: candidate.id,
+        sourceLabel: candidate.label,
+        sourceUrl: candidate.url,
+        attemptedSources: [...attemptedSources],
+        percent: null,
+        errorMessage: null,
+        message: manual ? `正在检查 ${candidate.label}...` : `正在通过 ${candidate.label} 后台检查更新...`
+      });
+
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        const latest = getUpdateState();
+        if (latest.status === 'checking') {
+          const version = result?.updateInfo.version ?? latest.availableVersion ?? null;
+          setUpdateState({
+            status: 'not_available',
+            availableVersion: version,
+            lastCheckedAt: Date.now(),
+            message: `${candidate.label} 已确认当前为最新版本`
+          });
+        }
+        return getUpdateState();
+      } catch (error) {
+        lastError = error;
+        if (currentUpdateConfig().updateSource !== 'auto') {
+          break;
+        }
+      }
+    }
+
+    const errorMessage = formatUpdateError(lastError);
+    return setUpdateState({
+      status: 'error',
+      percent: null,
+      errorMessage,
+      attemptedSources,
+      lastCheckedAt: Date.now(),
+      message: attemptedSources.length > 1 ? `${errorMessage}；已尝试 ${attemptedSources.join('、')}` : errorMessage
+    });
   })();
 
-  return updateCheckInFlight;
+  return updateCheckInFlight.finally(() => {
+    updateCheckInFlight = null;
+  });
+}
+
+type UpdateFeed = Parameters<typeof autoUpdater.setFeedURL>[0];
+
+interface UpdateSourceInfo {
+  id: UpdateSource;
+  label: string;
+  url: string | null;
+}
+
+interface UpdateCandidate extends UpdateSourceInfo {
+  feed: UpdateFeed;
+}
+
+function currentUpdateConfig(): AppConfig {
+  return (latestSnapshot ?? monitor?.getSnapshot())?.config ?? DEFAULT_CONFIG;
+}
+
+function refreshUpdateSourceState(config: AppConfig): void {
+  const source = resolveConfiguredUpdateSource(config);
+  setUpdateState({
+    status: isUpdaterSupported() ? 'idle' : 'unsupported',
+    source: source.id,
+    sourceLabel: source.label,
+    sourceUrl: source.url,
+    attemptedSources: [],
+    percent: null,
+    errorMessage: null,
+    message: isUpdaterSupported() ? `更新源已切换为 ${source.label}` : '打包安装后可检查更新'
+  });
+}
+
+function resolveConfiguredUpdateSource(config = currentUpdateConfig()): UpdateSourceInfo {
+  if (config.updateSource === 'auto') {
+    return {
+      id: 'auto',
+      label: config.aliyunUpdateBaseUrl ? '自动选择（阿里云优先）' : '自动选择（GitHub 加速优先）',
+      url: null
+    };
+  }
+
+  const candidates = sourceCandidatesFor(config, false);
+  return candidates[0] ?? { id: config.updateSource, label: updateSourceLabel(config.updateSource), url: null };
+}
+
+function resolveUpdateCandidates(config: AppConfig): UpdateCandidate[] {
+  if (config.updateSource === 'auto') {
+    return sourceCandidatesFor(config, true);
+  }
+
+  return sourceCandidatesFor(config, false).filter((candidate) => candidate.id === config.updateSource);
+}
+
+function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): UpdateCandidate[] {
+  const aliyunUrl = normalizeUpdateBaseUrl(config.aliyunUpdateBaseUrl);
+  const candidates: UpdateCandidate[] = [];
+
+  if ((config.updateSource === 'aliyun' || includeFallbacks) && aliyunUrl) {
+    candidates.push(genericUpdateCandidate('aliyun', '阿里云 OSS/CDN 镜像', aliyunUrl));
+  }
+
+  if (config.updateSource === 'gh_proxy' || includeFallbacks) {
+    candidates.push(genericUpdateCandidate('gh_proxy', 'GitHub 加速源 gh-proxy.com', GH_PROXY_RELEASE_BASE_URL));
+  }
+
+  if (config.updateSource === 'ghproxy_net' || includeFallbacks) {
+    candidates.push(genericUpdateCandidate('ghproxy_net', 'GitHub 加速源 ghproxy.net', GHPROXY_NET_RELEASE_BASE_URL));
+  }
+
+  if (config.updateSource === 'github' || includeFallbacks) {
+    candidates.push({
+      id: 'github',
+      label: 'GitHub Releases',
+      url: GITHUB_RELEASE_BASE_URL,
+      feed: {
+        provider: 'github',
+        owner: GITHUB_OWNER,
+        repo: GITHUB_REPO
+      } as UpdateFeed
+    });
+  }
+
+  return candidates;
+}
+
+function genericUpdateCandidate(id: UpdateSource, label: string, url: string): UpdateCandidate {
+  const normalized = normalizeUpdateBaseUrl(url);
+  return {
+    id,
+    label,
+    url: normalized,
+    feed: {
+      provider: 'generic',
+      url: normalized
+    } as UpdateFeed
+  };
+}
+
+function updateSourceLabel(source: UpdateSource): string {
+  const labels: Record<UpdateSource, string> = {
+    auto: '自动选择',
+    github: 'GitHub Releases',
+    gh_proxy: 'GitHub 加速源 gh-proxy.com',
+    ghproxy_net: 'GitHub 加速源 ghproxy.net',
+    aliyun: '阿里云 OSS/CDN 镜像'
+  };
+
+  return labels[source];
+}
+
+function normalizeUpdateBaseUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 }
 
 async function downloadUpdate(): Promise<UpdateSnapshot> {

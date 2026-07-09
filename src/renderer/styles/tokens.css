@@ -1,0 +1,277 @@
+/* =============================================================================
+ * tokens.css — 第一版浅绿 School App 配色
+ * ============================================================================= */
+
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('../../../build/fonts/HarmonyOS_Sans_Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('../../../build/fonts/HarmonyOS_Sans_Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('../../../build/fonts/HarmonyOS_Sans_Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('../../../build/fonts/HarmonyOS_Sans_Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
+}
+
+:root {
+  /* ============ 第一版配色(浅绿 School App) ============ */
+
+  /* 页面背景 — 极浅绿渐变 */
+  --bg-page-top: #EAF6EE;
+  --bg-page-bottom: #F4FAF6;
+
+  /* 绿色阶 */
+  --green-50: #F0FDF4;
+  --green-100: #DCFCE7;
+  --green-200: #BBF7D0;
+  --green-300: #86EFAC;
+  --green-400: #4ADE80;
+  --green-500: #22C55E;
+  --green-600: #16A34A;
+  --green-700: #15803D;
+
+  /* 中性色 */
+  --neutral-0: #FFFFFF;
+  --neutral-50: #FAFBFC;
+  --neutral-100: #F4F6F8;
+  --neutral-200: #E5E9EE;
+  --neutral-300: #CBD5E1;
+  --neutral-400: #94A3B8;
+  --neutral-500: #64748B;
+  --neutral-600: #475569;
+  --neutral-700: #334155;
+  --neutral-800: #1E293B;
+  --neutral-900: #0F172A;
+
+  /* 状态色 */
+  --yellow-soft: #FEF3C7;
+  --yellow-text: #A16207;
+  --red-soft: #FEE2E2;
+  --red-text: #B91C1C;
+  --blue-soft: #DBEAFE;
+  --blue-text: #1D4ED8;
+  --purple-soft: #EDE9FE;
+  --purple-text: #6D28D9;
+
+  /* 事件色 */
+  --event-green: var(--green-100);
+  --event-green-border: var(--green-300);
+  --event-yellow: #FEF3C7;
+  --event-yellow-border: #FCD34D;
+  --event-purple: #EDE9FE;
+  --event-purple-border: #C4B5FD;
+
+  /* 文本 */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-muted: var(--neutral-500);
+  --text-faint: var(--neutral-400);
+
+  /* 表面 */
+  --bg-card: rgba(255, 255, 255, 0.72);
+  --bg-card-strong: rgba(255, 255, 255, 0.88);
+  --bg-card-soft: rgba(255, 255, 255, 0.55);
+  --bg-hover: #F4F6F8;
+  --bg-active: var(--green-100);
+
+  /* 毛玻璃 — 半透明 */
+  --glass-blur: 20px;
+  --glass-blur-strong: 40px;
+  --glass-saturate: 180%;
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.88);
+  --glass-bg-soft: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(203, 213, 225, 0.4);
+
+  /* 阴影 — 极轻 */
+  --glass-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 18px 42px -28px rgba(15, 23, 42, 0.34),
+    0 6px 18px -16px rgba(15, 23, 42, 0.18);
+  --glass-shadow-lg:
+    0 1px 0 rgba(255, 255, 255, 0.95) inset,
+    0 26px 62px -34px rgba(15, 23, 42, 0.42),
+    0 10px 28px -20px rgba(15, 23, 42, 0.22);
+  --glass-shadow-xl:
+    0 1px 0 rgba(255, 255, 255, 0.95) inset,
+    0 34px 86px -38px rgba(15, 23, 42, 0.48),
+    0 14px 34px -22px rgba(15, 23, 42, 0.24);
+
+  /* 边框 */
+  --border-soft: #E5E9EE;
+  --border-medium: #CBD5E1;
+  --border-focus: var(--green-500);
+
+  /* 圆角 */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* 间距 */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --s-9: 56px;
+  --s-10: 72px;
+
+  /* 动画 */
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-soft: var(--ease-out);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.25, 0.8, 0.25, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  font-family:
+    "HarmonyOS Sans SC",
+    "HarmonyOS Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    system-ui,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  background: var(--bg-page-bottom);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  -webkit-app-region: no-drag;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, var(--bg-page-top) 0%, var(--bg-page-bottom) 100%);
+  background-attachment: fixed;
+  overflow: hidden;
+  color: var(--text-primary);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html[data-route="alert"],
+html[data-route="prealert"],
+html[data-route="floating"] { overflow: hidden; }
+
+body[data-route="alert"],
+body[data-route="prealert"],
+body[data-route="floating"] { background: transparent; overflow: hidden; }
+
+button, input, select, textarea { font: inherit; color: inherit; -webkit-app-region: no-drag; }
+button { border: 0; background: transparent; cursor: pointer; padding: 0; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+input, textarea, select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+h1, h2, h3, h4, p { margin: 0; }
+ul { margin: 0; padding: 0; list-style: none; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 197, 94, 0.18);
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(34, 197, 94, 0.32); }
+
+@keyframes slide-in-right { from { transform: translateX(8px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes slide-in-up { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+@keyframes spring-in {
+  0% { transform: translateY(12px) scale(0.96); opacity: 0; }
+  60% { transform: translateY(-2px) scale(1.01); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+@keyframes float-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(-2px); }
+}
+@keyframes drawer-spring-in {
+  0% { transform: translateX(40px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.boot-screen {
+  display: grid;
+  height: 100vh;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}

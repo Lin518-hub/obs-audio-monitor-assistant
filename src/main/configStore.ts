@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AppConfig, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AppConfig, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -65,13 +65,16 @@ export class ConfigStore {
       alertDisplayId: nullableIntegerValue(merged.alertDisplayId),
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
+      guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
       preAlertEnabled: booleanValue(merged.preAlertEnabled, DEFAULT_CONFIG.preAlertEnabled),
       preAlertRatio: clamp(numberValue(merged.preAlertRatio, DEFAULT_CONFIG.preAlertRatio), 0.1, 0.95),
       rememberAlertPosition: booleanValue(merged.rememberAlertPosition, DEFAULT_CONFIG.rememberAlertPosition),
       alertPositions: alertPositionsValue(merged.alertPositions),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
-      autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch)
+      autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
+      updateSource: updateSourceValue(merged.updateSource),
+      aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl)
     };
   }
 
@@ -130,6 +133,21 @@ function stringValue(value: unknown, fallback: string): string {
 
 function alertDisplayModeValue(value: unknown): AlertDisplayMode {
   return value === 'primary' || value === 'display_id' || value === 'all' ? value : DEFAULT_CONFIG.alertDisplayMode;
+}
+
+function updateSourceValue(value: unknown): UpdateSource {
+  return value === 'auto' || value === 'github' || value === 'gh_proxy' || value === 'ghproxy_net' || value === 'aliyun'
+    ? value
+    : DEFAULT_CONFIG.updateSource;
+}
+
+function normalizeUpdateBaseUrl(value: unknown): string {
+  const raw = stringValue(value, '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  return raw.endsWith('/') ? raw : `${raw}/`;
 }
 
 function alertPositionsValue(value: unknown): Record<string, AlertPosition> {

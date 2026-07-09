@@ -1,6 +1,6 @@
 {
   "name": "obs-audio-monitor-assistant",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "OBS audio monitor assistant for livestream operators, focused on silent microphone alerts during live commerce and production workflows.",
   "author": "OBS 音频检测助手",
   "license": "UNLICENSED",
@@ -18,10 +18,11 @@
     "package": "npm run build && electron-builder --dir",
     "package:win-portable": "npm run build && node scripts/package-win-portable.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
-    "dist:mac": "npm run build && electron-builder --mac zip --universal --publish never"
+    "dist:mac": "npm run build && electron-builder --mac zip --arm64 --publish never"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.5.2",
+    "atem-connection": "^3.9.0",
     "electron-updater": "^6.8.9",
     "lucide-react": "^1.21.0",
     "obs-websocket-js": "^5.0.8",

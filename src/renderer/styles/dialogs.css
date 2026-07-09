@@ -1,0 +1,94 @@
+/* =============================================================================
+ * dialogs.css — 新手引导 + 说明书(全屏覆盖层,延续 School App 风格)
+ * ============================================================================= */
+
+.guide-overlay,
+.manual-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.20);
+  animation: fade-in 280ms var(--ease-out-soft);
+}
+
+.guide-spotlight {
+  position: absolute;
+  border: 2px solid var(--green-500);
+  border-radius: var(--r-md);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.32);
+  pointer-events: none;
+  transition: transform 340ms cubic-bezier(0.22, 0.61, 0.36, 1), width 340ms cubic-bezier(0.22, 0.61, 0.36, 1), height 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.guide-card {
+  position: absolute;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  padding: var(--s-5);
+  background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: var(--r-xl);
+
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.20);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  transition: left 340ms cubic-bezier(0.22, 0.61, 0.36, 1), top 340ms cubic-bezier(0.22, 0.61, 0.36, 1), width 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  animation: slide-in-up 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.guide-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.guide-card-head h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; color: var(--text-primary); }
+.guide-card-body { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.guide-test-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+.test-ok { color: var(--green-700); font-weight: 600; }
+.test-bad { color: var(--red-text); font-weight: 600; }
+.guide-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--s-2);
+  border-top: 1px dashed var(--glass-border);
+}
+.guide-progress > span { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.guide-progress-actions { display: flex; gap: 6px; }
+.guide-active-target { position: relative; z-index: 4; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18); border-radius: var(--r-md); }
+
+.manual-dialog {
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: var(--r-xl);
+
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.20);
+  padding: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: slide-in-up 280ms ease;
+}
+.manual-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+.manual-head h2 { font-size: 22px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em; }
+.manual-sections { display: flex; flex-direction: column; gap: 6px; padding-right: 4px; overflow-y: auto; flex: 1; }
+.manual-sections article {
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--glass-bg-soft); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+
+}
+.manual-sections strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.manual-sections p { color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }

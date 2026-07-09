@@ -41,5 +41,12 @@ contextBridge.exposeInMainWorld('obsGuard', {
     return () => {
       ipcRenderer.off('update:state', listener);
     };
-  }
+  },
+  /** ATEM 导播台 API (beta) */
+  getATEMState: () => ipcRenderer.invoke('atem:get-state'),
+  changePreviewInput: (input: number) => ipcRenderer.invoke('atem:change-preview-input', input),
+  autoTransition: () => ipcRenderer.invoke('atem:auto-transition'),
+  changeProgramInput: (input: number) => ipcRenderer.invoke('atem:change-program-input', input),
+  testATEMConnection: (host: string) => ipcRenderer.invoke('atem:test-connection', host),
+  atemReconnect: () => ipcRenderer.invoke('atem:reconnect')
 });

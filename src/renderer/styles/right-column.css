@@ -1,0 +1,245 @@
+/* =============================================================================
+ * right-column.css — 右栏(参考图里的次要信息:小日历 + 条形图)
+ * 这里装:连接状态 + 设置入口 + 迷你日历(报警历史分布) + 活动状态条形图
+ * ============================================================================= */
+
+.right-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+  overflow-y: auto;
+  padding: 8px 0 16px 0;
+}
+
+.right-card {
+  background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: var(--r-xl);
+  padding: var(--s-5);
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: spring-in 480ms var(--ease-spring) both;
+}
+
+.right-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.right-card-title strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.right-card-title em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ====== 连接状态卡 ====== */
+.connection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--green-50);
+  color: var(--green-700);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+.connection-pill.offline { background: var(--red-soft); color: var(--red-text); }
+.connection-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.connection-list { display: flex; flex-direction: column; gap: 4px; }
+.connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--glass-bg-soft); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+}
+.connection-row-label { color: var(--text-muted); font-weight: 600; }
+.connection-row-value {
+  color: var(--text-primary);
+  font-weight: 700;
+  text-align: right;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-row-value.ok { color: var(--green-700); }
+.connection-row-value.warn { color: var(--yellow-text); }
+.connection-row-value.danger { color: var(--red-text); }
+
+/* ====== 报警历史小日历(参考图的右侧月历) ====== */
+.mini-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.mini-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mini-calendar-header h3 {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.mini-calendar-nav { display: flex; gap: 4px; }
+.mini-calendar-nav button {
+  width: 26px; height: 26px;
+  border-radius: var(--r-pill);
+  background: var(--glass-bg-soft); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+.mini-calendar-nav button:hover { background: var(--green-50); color: var(--green-700); border-color: var(--event-green-border); }
+
+.mini-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+}
+.mini-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.mini-calendar-day {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  position: relative;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.mini-calendar-day:hover { background: var(--green-50); color: var(--green-700); }
+.mini-calendar-day.muted { color: var(--text-faint); }
+.mini-calendar-day.today { background: var(--green-500); color: var(--neutral-0); font-weight: 800; }
+.mini-calendar-day.selected {
+  background: var(--green-100);
+  color: var(--green-700);
+  font-weight: 800;
+  box-shadow: inset 0 0 0 2px var(--green-500);
+}
+.mini-calendar-day.selected.has-event::after { background: var(--green-700); }
+.mini-calendar-day.has-event::after {
+  content: '';
+  position: absolute;
+  bottom: 3px; left: 50%;
+  transform: translateX(-50%);
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--red-text);
+}
+.mini-calendar-day.today.has-event::after { background: var(--glass-bg); }
+
+/* ====== Productivity 条形图(参考图) ====== */
+.chart-card { padding: var(--s-5); }
+.chart-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.chart-title strong { font-size: 15px; font-weight: 800; color: var(--text-primary); }
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  height: 140px;
+  padding-top: var(--s-3);
+}
+.chart-bar-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.chart-bar {
+  width: 100%;
+  background: var(--green-200);
+  border-radius: 6px 6px 0 0;
+  transition: height 280ms var(--ease-out-soft);
+  position: relative;
+  min-height: 4px;
+}
+.chart-bar.active { background: var(--green-500); }
+.chart-bar-tooltip {
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--neutral-900);
+  color: var(--neutral-0);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  display: none;
+}
+.chart-bar-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--neutral-900);
+}
+.chart-bar-wrap:hover .chart-bar-tooltip { display: block; }
+.chart-bar-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chart-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 4px 0;
+  height: 140px;
+}
