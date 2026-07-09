@@ -14,11 +14,24 @@ interface SidebarProps {
   historyCount: number;
 }
 
-const items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[] = [
-  { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
-  { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' },
-  { id: 'atem', label: 'ATEM 导播台', icon: Video, badge: 'BETA' },
-  { id: 'history', label: '报警历史', icon: History }
+const groups: Array<{
+  title: string;
+  items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[];
+}> = [
+  {
+    title: '直播监看',
+    items: [
+      { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+      { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' }
+    ]
+  },
+  {
+    title: '设备与记录',
+    items: [
+      { id: 'atem', label: 'ATEM 导播台', icon: Video, badge: 'BETA' },
+      { id: 'history', label: '报警历史', icon: History }
+    ]
+  }
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, onOpenSettings, historyCount }) => {
@@ -32,23 +45,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, on
       </div>
 
       <nav className="sidebar-nav" aria-label="主导航">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const isActive = active === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
-              onClick={() => onChange(item.id)}
-            >
-              <span className="icon"><Icon size={18} /></span>
-              <span>{item.label}</span>
-              {item.badge && <span className="badge beta">{item.badge}</span>}
-              {item.id === 'history' && historyCount > 0 && <span className="badge">{historyCount}</span>}
-            </button>
-          );
-        })}
+        {groups.map((group) => (
+          <div className="sidebar-nav-group" key={group.title}>
+            <div className="sidebar-nav-group-title">{group.title}</div>
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = active === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
+                  onClick={() => onChange(item.id)}
+                >
+                  <span className="icon"><Icon size={18} /></span>
+                  <span>{item.label}</span>
+                  {item.badge && <span className="badge beta">{item.badge}</span>}
+                  {item.id === 'history' && historyCount > 0 && <span className="badge">{historyCount}</span>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       <div className="sidebar-settings-card">

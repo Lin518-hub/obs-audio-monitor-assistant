@@ -44,18 +44,19 @@ interface TabItem {
   label: string;
   description: string;
   icon: React.ComponentType<{ size?: number }>;
+  group: '连接' | '检测提醒' | '维护';
   visible: (s: AppSnapshot) => boolean;
 }
 
 const tabs: TabItem[] = [
-  { id: 'connection', label: 'OBS 连接', description: 'WebSocket', icon: Cable, visible: () => true },
-  { id: 'atem', label: 'ATEM Beta', description: '导播台 / 机位', icon: Video, visible: () => true },
-  { id: 'monitor', label: '检测与报警', description: '音源 / 时长 / 阈值', icon: Mic2, visible: () => true },
-  { id: 'window', label: '窗口与后台', description: '浮窗 / 多屏 / 自启', icon: Monitor, visible: () => true },
-  { id: 'diagnostics', label: '诊断测试', description: '测试 / 维护', icon: TestTube2, visible: () => true },
-  { id: 'updates', label: '软件更新', description: 'GitHub / 镜像', icon: Download, visible: () => true },
-  { id: 'history', label: '报警历史', description: '最近记录', icon: History, visible: () => true },
-  { id: 'about', label: '关于软件', description: '版本信息', icon: Info, visible: () => true }
+  { id: 'connection', label: 'OBS 连接', description: 'WebSocket', icon: Cable, group: '连接', visible: () => true },
+  { id: 'atem', label: 'ATEM Beta', description: '导播台 / 机位', icon: Video, group: '连接', visible: () => true },
+  { id: 'monitor', label: '检测与报警', description: '音源 / 时长 / 阈值', icon: Mic2, group: '检测提醒', visible: () => true },
+  { id: 'window', label: '窗口与后台', description: '浮窗 / 多屏 / 自启', icon: Monitor, group: '检测提醒', visible: () => true },
+  { id: 'diagnostics', label: '诊断测试', description: '测试 / 维护', icon: TestTube2, group: '维护', visible: () => true },
+  { id: 'updates', label: '软件更新', description: 'GitHub / 镜像', icon: Download, group: '维护', visible: () => true },
+  { id: 'history', label: '报警历史', description: '最近记录', icon: History, group: '维护', visible: () => true },
+  { id: 'about', label: '关于软件', description: '版本信息', icon: Info, group: '维护', visible: () => true }
 ];
 
 const sectionForFocus = (focus?: string | null): SectionId => {
@@ -107,6 +108,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
   const visibleTabs = tabs.filter((t) => t.visible(snapshot));
   const activeTab = visibleTabs.find((t) => t.id === active) ?? visibleTabs[0];
+  const groupedTabs = visibleTabs.reduce<Record<TabItem['group'], TabItem[]>>((acc, tab) => {
+    acc[tab.group].push(tab);
+    return acc;
+  }, { '连接': [], '检测提醒': [], '维护': [] });
 
   return (
     <div className={`settings-overlay ${closing ? 'closing' : ''}`} role="dialog" aria-modal="true" aria-label="设置" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
@@ -120,23 +125,28 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             </div>
           </div>
           <nav className="settings-side-nav" aria-label="设置分类">
-            {visibleTabs.map((t) => {
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={`settings-nav-item ${active === t.id ? 'active' : ''}`}
-                  onClick={() => setActive(t.id)}
-                >
-                  <span className="settings-nav-icon"><Icon size={17} /></span>
-                  <span className="settings-nav-copy">
-                    <strong>{t.label}</strong>
-                    <em>{t.description}</em>
-                  </span>
-                </button>
-              );
-            })}
+            {Object.entries(groupedTabs).map(([group, items]) => items.length > 0 && (
+              <div className="settings-nav-group" key={group}>
+                <div className="settings-nav-group-title">{group}</div>
+                {items.map((t) => {
+                  const Icon = t.icon;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={`settings-nav-item ${active === t.id ? 'active' : ''}`}
+                      onClick={() => setActive(t.id)}
+                    >
+                      <span className="settings-nav-icon"><Icon size={17} /></span>
+                      <span className="settings-nav-copy">
+                        <strong>{t.label}</strong>
+                        <em>{t.description}</em>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         </aside>
         <section className="settings-content">

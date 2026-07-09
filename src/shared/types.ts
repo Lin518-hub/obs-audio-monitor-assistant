@@ -12,7 +12,7 @@ export type MonitorStatus =
   | 'error';
 
 export type AlertDisplayMode = 'primary' | 'display_id' | 'all';
-export type AlertReminderMode = 'classic' | 'toast' | 'both';
+export type AlertReminderMode = 'classic' | 'toast';
 
 export type AlertAction = 'acknowledge' | 'snooze_10m' | 'ignore_once';
 

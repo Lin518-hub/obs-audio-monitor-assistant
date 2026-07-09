@@ -1091,7 +1091,7 @@ function showAlertSurfaces(snapshot: AppSnapshot): void {
   const mode = snapshot.config.alertReminderMode;
   showAlertWindows(snapshot);
 
-  if (mode === 'toast' || mode === 'both') {
+  if (mode === 'toast') {
     showToastAlertWindows(snapshot);
   } else {
     closeToastAlertWindows('destroy');

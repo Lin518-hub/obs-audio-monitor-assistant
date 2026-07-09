@@ -347,8 +347,7 @@ export const RulesSection: React.FC<{
         onChange={(v) => onChange('alertReminderMode', v)}
         options={[
           { value: 'classic', label: '经典弹窗', icon: <AlertTriangle size={13} /> },
-          { value: 'toast', label: '小红窗增强', icon: <AlertTriangle size={13} /> },
-          { value: 'both', label: '双重提醒', icon: <AlertTriangle size={13} /> }
+          { value: 'toast', label: '弹窗 + 小红窗', icon: <AlertTriangle size={13} /> }
         ]}
       />
     </div>

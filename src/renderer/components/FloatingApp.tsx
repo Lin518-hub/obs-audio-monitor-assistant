@@ -50,6 +50,8 @@ export const FloatingApp: React.FC = () => {
   const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
   const scaleStyle = { '--floating-ui-scale': String(scale) } as React.CSSProperties;
   const modules = snapshot.config.floatingWindowModules;
+  const showAudioModule = modules.audio || (!modules.atem && !modules.obsStats);
+  const showExtraModules = modules.atem || modules.obsStats;
   const inputName = snapshot.activeInputName || snapshot.config.targetInputName || '未选择音源';
 
   return (
@@ -74,24 +76,28 @@ export const FloatingApp: React.FC = () => {
           </div>
         </header>
 
-        <section className="floating-time">
-          <span>{isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
-          <strong>{isAudioNormal ? '正在讲话' : `${snapshot.silentForSeconds}s`}</strong>
-          <em>{floatingHint(snapshot)}</em>
-        </section>
+        {showAudioModule && (
+          <>
+            <section className="floating-time">
+              <span>{isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
+              <strong>{isAudioNormal ? '正在讲话' : `${snapshot.silentForSeconds}s`}</strong>
+              <em>{floatingHint(snapshot)}</em>
+            </section>
 
-        <section className="floating-meter">
-          <div>
-            <span><Mic2 size={12} />{inputName}</span>
-            <strong>{formatDb(snapshot.lastLevelDb)}</strong>
-          </div>
-          <div className="floating-meter-track">
-            <div style={{ width: `${levelPercent}%` }} />
-            <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
-          </div>
-        </section>
+            <section className="floating-meter">
+              <div>
+                <span><Mic2 size={12} />{inputName}</span>
+                <strong>{formatDb(snapshot.lastLevelDb)}</strong>
+              </div>
+              <div className="floating-meter-track">
+                <div style={{ width: `${levelPercent}%` }} />
+                <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
+              </div>
+            </section>
+          </>
+        )}
 
-        {(modules.atem || modules.obsStats) && (
+        {showExtraModules && (
           <section className="floating-modules">
             {modules.atem && (
               <div className={`floating-module ${snapshot.atemProgramInputOverLimit ? 'warn' : ''}`}>

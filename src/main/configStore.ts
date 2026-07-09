@@ -166,7 +166,10 @@ function alertDisplayModeValue(value: unknown): AlertDisplayMode {
 }
 
 function alertReminderModeValue(value: unknown): AlertReminderMode {
-  return value === 'classic' || value === 'toast' || value === 'both' ? value : DEFAULT_CONFIG.alertReminderMode;
+  if (value === 'toast' || value === 'both') {
+    return 'toast';
+  }
+  return value === 'classic' ? value : DEFAULT_CONFIG.alertReminderMode;
 }
 
 function updateSourceValue(value: unknown): UpdateSource {
