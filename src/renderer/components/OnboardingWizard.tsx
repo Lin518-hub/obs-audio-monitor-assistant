@@ -50,17 +50,6 @@ interface OnboardingWizardProps {
 }
 
 // =============================================================================
-// 背景浮动粒子（减少为 3 个）
-// =============================================================================
-const BackgroundParticles: React.FC = () => (
-  <div className="onboarding-bg-particles" aria-hidden="true">
-    <div className="onboarding-particle" />
-    <div className="onboarding-particle" />
-    <div className="onboarding-particle" />
-  </div>
-);
-
-// =============================================================================
 // 步骤条
 // =============================================================================
 const StepIndicator: React.FC<{ currentIndex: number }> = memo(({ currentIndex }) => (
@@ -516,7 +505,6 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
 
   return (
     <div className="onboarding-root" role="dialog" aria-modal="true" aria-label="首次设置引导">
-      <BackgroundParticles />
       <StepIndicator currentIndex={stepIndex} />
 
       {/* 卡片 key 稳定，不随步骤切换 remount */}

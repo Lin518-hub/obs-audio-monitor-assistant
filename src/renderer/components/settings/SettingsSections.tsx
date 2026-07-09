@@ -252,6 +252,24 @@ export const RulesSection: React.FC<{
     <p className="settings-section-hint">
       默认 120 秒报警,90 秒先预警。口播密集可缩短静音时长,访谈或活动直播可适当延长。阈值拖动也可在主界面电平表上完成。
     </p>
+    <ToggleRow
+      id="rule-prealert"
+      title="报警前预警"
+      description="达到正式报警时长前先显示黄色小浮窗提示"
+      checked={draft.preAlertEnabled}
+      onChange={(v) => onChange('preAlertEnabled', v)}
+    />
+    <div className="settings-field">
+      <label className="settings-field-label" htmlFor="rule-prealert-ratio">预警触发比例</label>
+      <NumberField
+        value={Math.round((draft.preAlertRatio ?? 0.75) * 100)}
+        min={50}
+        max={95}
+        step={5}
+        suffix="%"
+        onChange={(v) => onChange('preAlertRatio', v / 100)}
+      />
+    </div>
   </Section>
 );
 
@@ -261,7 +279,13 @@ export const DisplaySection: React.FC<{
   snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, snapshot, onChange }) => {
-  if (snapshot.displays.length <= 1) return null;
+  if (snapshot.displays.length <= 1) {
+    return (
+      <Section id="settings-display" icon={Monitor} title="报警窗口位置" description="多屏直播时指定报警出现位置">
+        <div className="settings-hint">当前只检测到 1 个屏幕，报警默认显示在当前屏幕中央。</div>
+      </Section>
+    );
+  }
   return (
     <Section id="settings-display" icon={Monitor} title="报警窗口位置" description="多屏直播时指定报警出现位置">
       <SegmentedControl
@@ -291,6 +315,13 @@ export const DisplaySection: React.FC<{
           </select>
         </div>
       )}
+      <ToggleRow
+        id="display-remember-position"
+        title="记住报警窗口位置"
+        description="拖动报警弹窗后，下次在同一屏幕优先使用上次位置"
+        checked={draft.rememberAlertPosition}
+        onChange={(v) => onChange('rememberAlertPosition', v)}
+      />
     </Section>
   );
 };
@@ -298,9 +329,17 @@ export const DisplaySection: React.FC<{
 // ====== 5. 系统 ======
 export const SystemSection: React.FC<{
   draft: AppConfig;
+  snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, onChange }) => (
-  <Section id="settings-system" icon={Power} title="后台守护" description="固定直播电脑可以开机自启">
+}> = ({ draft, snapshot, onChange }) => (
+  <Section id="settings-system" icon={Power} title="窗口与后台" description="浮窗、后台运行和开机自启">
+    <ToggleRow
+      id="system-floating"
+      title="小浮窗置顶显示"
+      description={draft.floatingWindowEnabled ? '当前已在桌面显示状态浮窗' : '适合直播中放在屏幕角落持续观察'}
+      checked={draft.floatingWindowEnabled}
+      onChange={(v) => onChange('floatingWindowEnabled', v)}
+    />
     <ToggleRow
       id="system-autolaunch"
       title="开机自动启动"
@@ -308,10 +347,13 @@ export const SystemSection: React.FC<{
       checked={draft.autoLaunch}
       onChange={(v) => onChange('autoLaunch', v)}
     />
+    <p className="settings-section-hint">
+      当前检测到 {snapshot.displays.length} 个屏幕。关闭主窗口后软件仍会在托盘或菜单栏后台运行。
+    </p>
   </Section>
 );
 
-// ====== 6. 诊断与测试 ======
+// ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{
   snapshot: AppSnapshot;
   testingConnection: boolean;
@@ -320,7 +362,7 @@ export const DiagnosticsSection: React.FC<{
   onOpenManual: () => void;
   onReset: () => void;
 }> = ({ snapshot, testingConnection, testResult, onTestConnection, onOpenManual, onReset }) => (
-  <Section id="settings-diagnostics" icon={TestTube2} title="诊断与测试" description="本地调试与维护工具">
+  <Section id="settings-diagnostics" icon={TestTube2} title="诊断测试" description="本地调试与维护工具">
     <div className="diagnostics-grid">
       <button type="button" className={`diagnostic-item ${snapshot.simulatedLive ? 'active' : ''}`} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
         <span className="diagnostic-item-icon"><Play size={16} /></span>
@@ -381,7 +423,8 @@ export const DiagnosticsSection: React.FC<{
       </button>
     </div>
 
-    {testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
+    {testingConnection && <div className="diagnostic-result pending">正在测试 OBS WebSocket 连接…</div>}
+    {!testingConnection && testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
   </Section>
 );
 

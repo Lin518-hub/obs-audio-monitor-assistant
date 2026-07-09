@@ -138,17 +138,27 @@
 }
 
 /* ====== FloatingApp ====== */
+.floating-stage {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  -webkit-app-region: drag;
+}
 .floating-shell {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 100%;
-  height: 100%;
+  width: 340px;
+  height: 178px;
   padding: 12px 14px;
   border-radius: var(--r-md);
   overflow: hidden;
   -webkit-app-region: drag;
+  transform: scale(var(--floating-scale, 1));
+  transform-origin: top left;
+  will-change: transform;
 }
 .floating-shell.theme-dark {
   background: linear-gradient(135deg, rgba(13, 18, 26, 0.96), rgba(23, 18, 22, 0.94));

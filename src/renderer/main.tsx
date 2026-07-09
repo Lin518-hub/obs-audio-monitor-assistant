@@ -206,14 +206,6 @@ function SettingsApp() {
                 {snapshot.config.targetInputName || '未选择音源'} · 检测中{search ? ` · 搜索 "${search}"` : ''}
               </p>
             </div>
-            <div className="page-header-actions">
-              <button type="button" className="btn-secondary" onClick={() => void testConnection()}>
-                测试连接
-              </button>
-              <button type="button" className="btn-primary" onClick={() => openSettings()}>
-                打开设置
-              </button>
-            </div>
           </div>
 
           <StatusBanner snapshot={snapshot} />
@@ -281,9 +273,6 @@ function SettingsApp() {
             <div className="page-header-actions">
               <button type="button" className="btn-secondary" onClick={() => void window.obsGuard.clearHistory()}>
                 清空历史
-              </button>
-              <button type="button" className="btn-primary" onClick={() => openSettings()}>
-                打开设置
               </button>
             </div>
           </div>
@@ -363,7 +352,7 @@ const SHORTCUT_CARDS: { id: string; title: string; desc: string; icon: React.Com
   { id: 'connection', title: 'OBS 连接', desc: 'WebSocket 地址与密码', icon: Cable },
   { id: 'source', title: '目标音源', desc: '选择需要守护的音频源', icon: Mic2 },
   { id: 'rules', title: '报警规则', desc: '静音时长与阈值', icon: Timer },
-  { id: 'diagnostics', title: '诊断与测试', desc: '本地调试工具', icon: TestTube2 },
+  { id: 'diagnostics', title: '诊断测试', desc: '本地调试工具', icon: TestTube2 },
   { id: 'updates', title: '软件更新', desc: '检查 GitHub 新版本', icon: Download },
   { id: 'about', title: '关于', desc: `当前 v${APP_VERSION}`, icon: Info }
 ];

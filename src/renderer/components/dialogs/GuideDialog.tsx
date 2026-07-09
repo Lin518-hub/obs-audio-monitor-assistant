@@ -30,10 +30,10 @@ export const GuideDialog: React.FC<{
       { target: 'overview', title: '先看顶部状态横幅', body: '这里显示当前是否安全。直播中先看这一块:OBS 是否连接、是否检测中、是否静音预警或报警。' },
       { target: 'settings-connection', title: '第一步:打开 OBS 的 WebSocket', body: '打开 OBS,在顶部菜单进入"工具"里的"WebSocket 服务器设置",勾选启用服务器。OBS 28 以后通常自带这个功能。', openDrawer: 'connection' },
       { target: 'settings-connection', title: '第二步:填写端口和密码', body: '主机一般保持 127.0.0.1,默认端口通常是 4455。OBS 设置了密码时,把同一个密码填到这里。', action: 'test', openDrawer: 'connection' },
-      { target: 'settings-diagnostics', title: '第三步:测试 OBS 是否连上', body: '在 设置 → 诊断与测试 里点击"测试 OBS 连接"。成功后,软件就能读取 OBS 音源列表。', action: 'openDiagnostics', openDrawer: 'diagnostics' },
+      { target: 'settings-diagnostics', title: '第三步:测试 OBS 是否连上', body: '在设置 → 诊断测试里点击"测试 OBS 连接"。成功后,软件就能读取 OBS 音源列表。', action: 'openDiagnostics', openDrawer: 'diagnostics' },
       { target: 'settings-source', title: '第四步:选择要守护的音源', body: '选择主播麦克风、无线麦、声卡输入或直播主混音。图片、文字、显示器采集等无声音源会被过滤。', openDrawer: 'source' },
       { target: 'settings-rules', title: '第五步:设置报警规则', body: '默认连续静音 120 秒报警,90 秒先预警。口播密集可以缩短,访谈或活动直播可以适当延长。', openDrawer: 'rules' },
-      { target: 'meter', title: '第六步:不开播也能测试', body: 'OBS 已连接但还没开播时,可以在"诊断与测试"里打开"模拟开播检测",测试电平、静音计时和报警弹窗。' },
+      { target: 'meter', title: '第六步:不开播也能测试', body: 'OBS 已连接但还没开播时,可以在"诊断测试"里打开"模拟开播检测",测试电平、静音计时和报警弹窗。' },
       { target: 'settings-system', title: '第七步:按需要开启自启动', body: '固定直播电脑建议开启。下次开机后软件会在后台运行。', openDrawer: 'system' },
       { target: 'meter', title: '第八步:直播中常用大电平表', body: '中栏中间的大电平表显示实时 dB 与距离报警的倒计时。静音阈值可在电平表上拖动调节。' },
       { target: 'connection-status', title: '最后:窗口关闭后仍在后台运行', body: '关闭主窗口只是隐藏到后台,检测仍会继续。需要完全退出时,从托盘或菜单栏选择"退出"。' }
@@ -223,7 +223,7 @@ export const GuideDialog: React.FC<{
         {step.action === 'openDiagnostics' && (
           <div className="guide-test-inline">
             <button type="button" className="btn-secondary" onClick={onSetDiagnostics}>
-              <SlidersHorizontal size={14} /> 展开诊断与测试
+              <SlidersHorizontal size={14} /> 展开诊断测试
             </button>
             <span>展开后可以直接点击里面的测试按钮。</span>
           </div>

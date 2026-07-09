@@ -158,7 +158,7 @@ const readinessActionTextMap: Record<string, (s: AppSnapshot) => string> = {
   obs_disconnected: () => '下一步：打开 OBS，并确认 WebSocket 服务已启用。',
   obs_connecting: () => '正在自动连接，必要时点击"重连 OBS"。',
   not_streaming_or_recording: () => '开播或开始录制后会自动进入检测。',
-  no_target_selected: () => '下一步：在"报警规则"里选择主播麦克风或直播主混音。',
+  no_target_selected: () => '下一步：在"检测与报警"里选择主播麦克风或直播主混音。',
   target_missing: () => '下一步：刷新音源列表，或在 OBS 中恢复这个音源。',
   no_target_meter: () => '下一步：确认该源在当前场景中处于活动状态。',
   paused: () => '需要恢复时点击右侧"恢复检测"。',

@@ -196,7 +196,7 @@
 }
 
 .onboarding-welcome-blur {
-  animation: ob-blur-reveal 1.2s var(--ease-out-soft) both;
+  animation: ob-copy-reveal 420ms var(--ease-out-soft) 80ms both;
 }
 
 .onboarding-welcome-blur h2 {
@@ -237,10 +237,9 @@
   100% { transform: scale(1) rotate(0deg);    opacity: 1; }
 }
 
-@keyframes ob-blur-reveal {
-  0%   { filter: blur(14px); opacity: 0; transform: scale(0.97); }
-  35%  { filter: blur(14px); opacity: 0; }
-  100% { filter: blur(0);    opacity: 1; transform: scale(1); }
+@keyframes ob-copy-reveal {
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
 /* ---- 步骤标题 ---- */

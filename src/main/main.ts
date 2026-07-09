@@ -217,6 +217,9 @@ function registerIpc(): void {
     latestSnapshot = injectATEMState(snapshot);
     broadcastSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
+    if (Object.hasOwn(patch, 'floatingWindowEnabled') || Object.hasOwn(patch, 'floatingWindowBounds')) {
+      syncFloatingWindow(latestSnapshot);
+    }
     if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost')) {
       void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost).then(() => {
         if (latestSnapshot) {
@@ -383,6 +386,7 @@ function initializeUpdater(): void {
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
+  autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.on('checking-for-update', () => {
     const state = getUpdateState();
@@ -660,16 +664,7 @@ function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): Upda
   }
 
   if (config.updateSource === 'github' || includeFallbacks) {
-    candidates.push({
-      id: 'github',
-      label: 'GitHub Releases',
-      url: GITHUB_RELEASE_BASE_URL,
-      feed: {
-        provider: 'github',
-        owner: GITHUB_OWNER,
-        repo: GITHUB_REPO
-      } as UpdateFeed
-    });
+    candidates.push(genericUpdateCandidate('github', 'GitHub Releases', GITHUB_RELEASE_BASE_URL));
   }
 
   return candidates;

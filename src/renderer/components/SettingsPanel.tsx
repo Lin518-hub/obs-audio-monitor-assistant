@@ -6,10 +6,8 @@ import {
   Info,
   Mic2,
   Monitor,
-  Power,
   SlidersHorizontal,
   TestTube2,
-  Timer,
   X
 } from 'lucide-react';
 import type { AppConfig, AppSnapshot, TestConnectionResult, UpdateSnapshot } from '../../shared/types';
@@ -19,7 +17,7 @@ import {
   DisplaySection, HistorySection, RulesSection, SystemSection, UpdatesSection
 } from './settings/SettingsSections';
 
-type SectionId = 'connection' | 'source' | 'rules' | 'display' | 'system' | 'diagnostics' | 'history' | 'updates' | 'about';
+type SectionId = 'connection' | 'monitor' | 'window' | 'diagnostics' | 'updates' | 'history' | 'about';
 
 interface SettingsPanelProps {
   open: boolean;
@@ -50,15 +48,34 @@ interface TabItem {
 
 const tabs: TabItem[] = [
   { id: 'connection', label: 'OBS 连接', description: 'WebSocket', icon: Cable, visible: () => true },
-  { id: 'source', label: '目标音源', description: '麦克风 / 声卡', icon: Mic2, visible: () => true },
-  { id: 'rules', label: '报警规则', description: '时长 / 阈值', icon: Timer, visible: () => true },
-  { id: 'display', label: '报警显示', description: '多屏位置', icon: Monitor, visible: (s) => s.displays.length > 1 },
-  { id: 'system', label: '后台守护', description: '开机自启', icon: Power, visible: () => true },
+  { id: 'monitor', label: '检测与报警', description: '音源 / 时长 / 阈值', icon: Mic2, visible: () => true },
+  { id: 'window', label: '窗口与后台', description: '浮窗 / 多屏 / 自启', icon: Monitor, visible: () => true },
   { id: 'diagnostics', label: '诊断测试', description: '测试 / 维护', icon: TestTube2, visible: () => true },
-  { id: 'history', label: '报警历史', description: '最近记录', icon: History, visible: () => true },
   { id: 'updates', label: '软件更新', description: 'GitHub / 镜像', icon: Download, visible: () => true },
+  { id: 'history', label: '报警历史', description: '最近记录', icon: History, visible: () => true },
   { id: 'about', label: '关于软件', description: '版本信息', icon: Info, visible: () => true }
 ];
+
+const sectionForFocus = (focus?: string | null): SectionId => {
+  switch (focus) {
+    case 'source':
+    case 'rules':
+    case 'monitor':
+      return 'monitor';
+    case 'display':
+    case 'system':
+    case 'window':
+      return 'window';
+    case 'diagnostics':
+    case 'updates':
+    case 'history':
+    case 'about':
+    case 'connection':
+      return focus;
+    default:
+      return 'connection';
+  }
+};
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   const { open, onClose, snapshot, draft, onChangeDraft, updateState, onCheckUpdate, onDownloadUpdate, onInstallUpdate, testingConnection, testResult, onTestConnection, onOpenManual, onReset, appVersion, focusSection } = props;
@@ -80,8 +97,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
   useEffect(() => {
     if (!open) return;
-    const target = focusSection && tabs.some((t) => t.id === focusSection) ? (focusSection as SectionId) : 'connection';
-    setActive(target);
+    setActive(sectionForFocus(focusSection));
   }, [open, focusSection]);
 
   if (!open && !closing) return null;
@@ -128,10 +144,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
           </div>
           <div className="settings-body">
             {active === 'connection' && <ConnectionSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
-            {active === 'source' && <AudioSourceSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
-            {active === 'rules' && <RulesSection draft={draft} onChange={onChangeDraft} />}
-            {active === 'display' && <DisplaySection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
-            {active === 'system' && <SystemSection draft={draft} onChange={onChangeDraft} />}
+            {active === 'monitor' && (
+              <>
+                <AudioSourceSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+                <RulesSection draft={draft} onChange={onChangeDraft} />
+              </>
+            )}
+            {active === 'window' && (
+              <>
+                <SystemSection draft={draft} onChange={onChangeDraft} snapshot={snapshot} />
+                <DisplaySection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+              </>
+            )}
             {active === 'diagnostics' && (<DiagnosticsSection snapshot={snapshot} testingConnection={testingConnection} testResult={testResult} onTestConnection={onTestConnection} onOpenManual={onOpenManual} onReset={onReset} />)}
             {active === 'history' && <HistorySection snapshot={snapshot} onClear={() => void window.obsGuard.clearHistory()} />}
             {active === 'updates' && <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} />}

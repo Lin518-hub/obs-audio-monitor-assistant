@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Bell, Calendar, History, Mic2, Settings as SettingsIcon, LayoutDashboard } from 'lucide-react';
+import { Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon } from 'lucide-react';
 import { APP_VERSION } from '../utils/appVersion';
 import { displayStatusText } from '../utils/status';
 import type { AppSnapshot } from '../../shared/types';
@@ -46,15 +46,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, on
             </button>
           );
         })}
-        <button
-          type="button"
-          className="sidebar-nav-item"
-          onClick={onOpenSettings}
-        >
-          <span className="icon"><SettingsIcon size={18} /></span>
-          <span>设置</span>
-        </button>
       </nav>
+
+      <button type="button" className="sidebar-settings-pill" onClick={onOpenSettings}>
+        <SettingsIcon size={18} />
+        <span>设置</span>
+      </button>
 
       <div className="sidebar-footer">
         <div className="sidebar-footer-avatar" aria-hidden="true">
