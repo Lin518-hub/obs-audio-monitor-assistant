@@ -32,6 +32,8 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private lastState: ATEMStateSnapshot = this.emptyState();
   private connectionState: ATEMConnectionState = 'disconnected';
+  private programInputStartedAt: number | null = null;
+  private cameraTimeLimitSeconds = 180;
 
   get enabledState(): boolean {
     return this.enabled;
@@ -46,18 +48,28 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   }
 
   getSnapshot(): ATEMStateSnapshot {
-    return { ...this.lastState };
+    const elapsedSeconds = this.programInputStartedAt
+      ? Math.max(0, Math.floor((Date.now() - this.programInputStartedAt) / 1000))
+      : 0;
+    return {
+      ...this.lastState,
+      programInputStartedAt: this.programInputStartedAt,
+      programInputElapsedSeconds: elapsedSeconds,
+      programInputOverLimit: this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds
+    };
   }
 
-  async setConfig(enabled: boolean, host: string): Promise<ATEMStateSnapshot> {
+  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 180): Promise<ATEMStateSnapshot> {
     const hostChanged = this.host !== host;
     const enabledChanged = this.enabled !== enabled;
     this.enabled = enabled;
     this.host = host;
+    this.cameraTimeLimitSeconds = Math.max(10, Math.round(cameraTimeLimitSeconds));
 
     if (!enabled) {
       await this.disconnect();
       this.connectionState = 'disconnected';
+      this.programInputStartedAt = null;
       this.lastState = this.emptyState();
       this.emitState();
       return this.getSnapshot();
@@ -153,6 +165,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     }
 
     this.connectionState = 'disconnected';
+    this.programInputStartedAt = null;
     this.lastState = this.emptyState();
     this.emitState();
   }
@@ -322,6 +335,12 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       }
     }
 
+    if (programInput !== this.lastState.programInput) {
+      this.programInputStartedAt = Date.now();
+    } else if (this.programInputStartedAt === null && programInput > 0) {
+      this.programInputStartedAt = Date.now();
+    }
+
     this.connectionState = 'connected';
     this.lastState = {
       connected: true,
@@ -330,6 +349,13 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       previewInput,
       inputLabels,
       inputCount,
+      programInputStartedAt: this.programInputStartedAt,
+      programInputElapsedSeconds: this.programInputStartedAt
+        ? Math.max(0, Math.floor((Date.now() - this.programInputStartedAt) / 1000))
+        : 0,
+      programInputOverLimit: this.programInputStartedAt
+        ? Date.now() - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
+        : false,
       errorMessage: null
     };
 
@@ -492,6 +518,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       previewInput: 0,
       inputLabels: {},
       inputCount: 0,
+      programInputStartedAt: null,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false,
       errorMessage: null
     };
   }

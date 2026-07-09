@@ -208,10 +208,12 @@ body {
 }
 
 html[data-route="alert"],
+html[data-route="toast-alert"],
 html[data-route="prealert"],
 html[data-route="floating"] { overflow: hidden; }
 
 body[data-route="alert"],
+body[data-route="toast-alert"],
 body[data-route="prealert"],
 body[data-route="floating"] { background: transparent; overflow: hidden; }
 

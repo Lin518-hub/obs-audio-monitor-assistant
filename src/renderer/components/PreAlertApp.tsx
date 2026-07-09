@@ -29,7 +29,7 @@ export const PreAlertApp: React.FC = () => {
       <div className="prealert-icon"><Clock3 size={24} /></div>
       <section>
         <div className="prealert-kicker">静音预警</div>
-        <strong>{snapshot.config.targetInputName || '目标音源'} 已静音 {snapshot.silentForSeconds} 秒</strong>
+        <strong>{snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 已静音 {snapshot.silentForSeconds} 秒</strong>
         <p>约 {snapshot.preAlertRemainingSeconds ?? 0} 秒后触发正式报警</p>
       </section>
     </main>

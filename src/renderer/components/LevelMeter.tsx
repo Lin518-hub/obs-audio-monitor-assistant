@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Activity, Mic2 } from 'lucide-react';
 import type { AppConfig, AppSnapshot } from '../../shared/types';
-import { audioStateKind, dbLevelPercent, displayedSilenceSeconds, formatDb, secondsUntilVisibleAlert, thresholdPercent } from '../utils/status';
+import { audioStateKind, dbLevelPercent, displayedSilenceSeconds, formatDb, secondsUntilVisibleAlert, snapshotTargetName, thresholdPercent } from '../utils/status';
 
 interface LevelMeterProps {
   snapshot: AppSnapshot;
@@ -22,6 +22,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
   const state = audioStateKind(snapshot);
   const silent = displayedSilenceSeconds(snapshot);
   const remaining = secondsUntilVisibleAlert(snapshot);
+  const targetName = snapshotTargetName(snapshot);
 
   const applyClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
@@ -64,7 +65,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
       <header className="level-meter-header">
         <h2>
           实时电平
-          <em>{snapshot.config.targetInputName || '未选择音源'}</em>
+          <em>{targetName}</em>
         </h2>
         <div className={`level-meter-state state-${state}`}>
           <Activity size={14} />
@@ -75,7 +76,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
       <div className="level-meter-figure">
         <span className="level-meter-source">
           <Mic2 size={14} />
-          {snapshot.config.targetInputName || '未选择音源'}
+          {targetName}
         </span>
         <strong className={`level-meter-value level-${state}`}>{formatDb(snapshot.lastLevelDb)}</strong>
       </div>

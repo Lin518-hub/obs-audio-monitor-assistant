@@ -5,11 +5,16 @@ import type { AppSnapshot } from '../../shared/types';
 interface HistoryListProps {
   snapshot: AppSnapshot;
   onClear: () => void;
+  search?: string;
 }
 
 const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleString();
 
-export const HistoryList: React.FC<HistoryListProps> = ({ snapshot, onClear }) => {
+export const HistoryList: React.FC<HistoryListProps> = ({ snapshot, onClear, search = '' }) => {
+  const query = search.trim().toLowerCase();
+  const entries = query
+    ? snapshot.history.filter((entry) => `${entry.inputName} ${formatTime(entry.timestamp)} ${entry.silentForSeconds}`.toLowerCase().includes(query))
+    : snapshot.history;
   return (
     <section className="settings-section history-page-card" id="history-page">
       <div className="settings-section-title">
@@ -20,12 +25,12 @@ export const HistoryList: React.FC<HistoryListProps> = ({ snapshot, onClear }) =
         </div>
       </div>
 
-      {snapshot.history.length === 0 ? (
-        <div className="empty-block">暂无报警记录</div>
+      {entries.length === 0 ? (
+        <div className="empty-block">{snapshot.history.length === 0 ? '暂无报警记录' : '没有匹配的报警记录'}</div>
       ) : (
         <>
           <div className="history-list" style={{ maxHeight: 'none' }}>
-            {snapshot.history.map((entry) => (
+            {entries.map((entry) => (
               <div className="history-item" key={entry.id}>
                 <div>
                   <strong>{entry.inputName}</strong>

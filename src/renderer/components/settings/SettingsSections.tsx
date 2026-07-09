@@ -244,6 +244,31 @@ export const ATEMSection: React.FC<{
             checked={draft.atemHotkeyGlobal}
             onChange={(v) => onChange('atemHotkeyGlobal', v)}
           />
+          <ToggleRow
+            id="atem-hardcut-confirm"
+            title="硬切确认保护"
+            description="执行 Hard Cut 前需要二次确认，避免直播中误切到错误机位"
+            checked={draft.atemHardCutConfirm}
+            onChange={(v) => onChange('atemHardCutConfirm', v)}
+          />
+          <ToggleRow
+            id="atem-camera-timer"
+            title="机位超时提醒"
+            description="当同一个 PGM 机位停留超过设定时间，在 ATEM 面板和小浮窗中提示"
+            checked={draft.atemCameraTimeAlertEnabled}
+            onChange={(v) => onChange('atemCameraTimeAlertEnabled', v)}
+          />
+          <div className="settings-field">
+            <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
+            <NumberField
+              value={draft.atemCameraTimeLimitSeconds}
+              min={10}
+              max={3600}
+              step={10}
+              suffix="秒"
+              onChange={(v) => onChange('atemCameraTimeLimitSeconds', v)}
+            />
+          </div>
 
           {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
             <div className="atem-input-list">
@@ -281,12 +306,17 @@ export const AudioSourceSection: React.FC<{
       <SourcePicker
         inputs={snapshot.inputs}
         value={draft.targetInputName}
+        values={draft.targetInputNames}
         onChange={(v) => onChange('targetInputName', v)}
+        onChangeMany={(v) => {
+          onChange('targetInputNames', v);
+          onChange('targetInputName', v[0] ?? '');
+        }}
         onRefresh={() => void window.obsGuard.refreshInputs()}
       />
     </div>
     <p className="settings-section-hint">
-      推荐主播麦克风、无线领夹麦、声卡输入或直播主混音。图片、文字、显示器采集等无声音源已被自动过滤。
+      可同时选择主播、嘉宾、场外麦或直播主混音。任一被选中音源连续静音超时都会报警；图片、文字、显示器采集等无声音源已被自动过滤。
     </p>
   </Section>
 );
@@ -310,6 +340,25 @@ export const RulesSection: React.FC<{
     <p className="settings-section-hint">
       默认 120 秒报警,90 秒先预警。口播密集可缩短静音时长,访谈或活动直播可适当延长。阈值拖动也可在主界面电平表上完成。
     </p>
+    <div className="settings-field">
+      <span className="settings-field-label">正式报警样式</span>
+      <SegmentedControl
+        value={draft.alertReminderMode}
+        onChange={(v) => onChange('alertReminderMode', v)}
+        options={[
+          { value: 'classic', label: '经典弹窗', icon: <AlertTriangle size={13} /> },
+          { value: 'toast', label: '小红窗增强', icon: <AlertTriangle size={13} /> },
+          { value: 'both', label: '双重提醒', icon: <AlertTriangle size={13} /> }
+        ]}
+      />
+    </div>
+    <ToggleRow
+      id="rule-alert-sound"
+      title="声音提示"
+      description="正式报警时通过系统默认扬声器播放一声提示音"
+      checked={draft.alertSoundEnabled}
+      onChange={(v) => onChange('alertSoundEnabled', v)}
+    />
     <ToggleRow
       id="rule-prealert"
       title="报警前预警"
@@ -405,6 +454,30 @@ export const SystemSection: React.FC<{
       checked={draft.autoLaunch}
       onChange={(v) => onChange('autoLaunch', v)}
     />
+    <div className="settings-subgroup">
+      <div className="settings-subgroup-title">小浮窗显示内容</div>
+      <ToggleRow
+        id="floating-module-audio"
+        title="音频状态"
+        description="显示当前检测状态、静音倒计时和电平"
+        checked={draft.floatingWindowModules.audio}
+        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, audio: v })}
+      />
+      <ToggleRow
+        id="floating-module-atem"
+        title="ATEM 当前机位"
+        description="显示 PGM 机位和当前机位持续时间"
+        checked={draft.floatingWindowModules.atem}
+        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v })}
+      />
+      <ToggleRow
+        id="floating-module-stats"
+        title="OBS 性能摘要"
+        description="显示 FPS 和 CPU 使用率"
+        checked={draft.floatingWindowModules.obsStats}
+        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, obsStats: v })}
+      />
+    </div>
     <p className="settings-section-hint">
       当前检测到 {snapshot.displays.length} 个屏幕。关闭主窗口后软件仍会在托盘或菜单栏后台运行。
     </p>

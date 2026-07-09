@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import OBSWebSocket, { EventSubscription } from 'obs-websocket-js';
-import { maxInputLevelDb } from '../shared/audio.js';
+import { isSilent, maxInputLevelDb } from '../shared/audio.js';
 import { isProbablyAudibleInputKind } from '../shared/inputKinds.js';
 import {
   deriveStatus,
@@ -22,9 +22,16 @@ import type {
   AppSnapshot,
   DisplayInfo,
   InputOption,
+  InputMonitorSnapshot,
+  OBSStatsSnapshot,
   ReadinessReason,
+  SilenceEventEntry,
   TestConnectionResult
 } from '../shared/types.js';
+
+const METER_STALE_MS = 5000;
+const VOLUME_HISTORY_RETENTION_MS = 10 * 60 * 1000;
+const MAX_SILENCE_EVENTS = 100;
 
 interface MonitorEvents {
   snapshot: [AppSnapshot];
@@ -38,6 +45,16 @@ type OBSInputVolumeMetersEvent = {
   }>;
 };
 
+interface PerInputMonitorState {
+  inputName: string;
+  inputKind: string;
+  lastLevelDb: number | null;
+  lastMeterAt: number | null;
+  silentSince: number | null;
+  activeEventId: string | null;
+  alertTriggered: boolean;
+}
+
 export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private obs: OBSWebSocket | null = null;
   private config: AppConfig;
@@ -50,6 +67,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private testAlertRestore: { state: MonitorRuntimeState; errorMessage: string | null; inputs: InputOption[]; lastTargetMeterAt: number | null } | null = null;
   private history: AlertHistoryEntry[] = [];
+  private silenceEvents: SilenceEventEntry[] = [];
+  private inputStates = new Map<string, PerInputMonitorState>();
+  private activeInputName = '';
+  private volumeHistory: AppSnapshot['volumeHistory'] = [];
+  private obsStats: OBSStatsSnapshot = emptyOBSStats();
   private lastTargetMeterAt: number | null = null;
   private simulatedLive = false;
   private actualStreaming = false;
@@ -75,6 +97,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       streaming: this.state.streaming,
       recording: this.state.recording,
       simulatedLive: this.simulatedLive,
+      activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
       lastLevelDb: this.state.lastLevelDb,
       silentForSeconds: silentForSeconds(this.state, now),
       secondsUntilAlert: secondsUntilAlert(this.state, this.config, now),
@@ -85,6 +108,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       preAlertDismissed: this.state.silentSince !== null && this.state.preAlertDismissedSilentSince === this.state.silentSince,
       snoozedUntil: this.state.snoozedUntil,
       history: this.history,
+      silenceEvents: this.silenceEvents,
+      inputMonitors: this.getInputMonitorSnapshots(now),
+      volumeHistory: this.volumeHistory,
+      obsStats: this.obsStats,
       errorMessage: this.errorMessage,
       // ATEM 字段由 main.ts 的 injectATEMState() 注入，此处提供默认值
       atemConnected: false,
@@ -92,7 +119,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemProgramInput: 0,
       atemPreviewInput: 0,
       atemInputLabels: {},
-      atemInputCount: 0
+      atemInputCount: 0,
+      atemProgramInputStartedAt: null,
+      atemProgramInputElapsedSeconds: 0,
+      atemProgramInputOverLimit: false
     };
   }
 
@@ -122,8 +152,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       };
     }
 
-    if (previous.targetInputName !== this.config.targetInputName) {
+    if (targetKey(previous) !== targetKey(this.config)) {
       this.lastTargetMeterAt = null;
+      this.activeInputName = this.getTargetInputNames()[0] || '';
+      this.clearSilentInputStates();
       this.state = {
         ...this.state,
         lastLevelDb: null,
@@ -162,6 +194,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.errorMessage = null;
     this.lastTargetMeterAt = null;
     this.simulatedLive = false;
+    this.activeInputName = this.getTargetInputNames()[0] || '';
+    this.clearSilentInputStates();
     const now = Date.now();
     const resetState: MonitorRuntimeState = {
       ...this.state,
@@ -219,6 +253,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return this.getSnapshot();
     }
 
+    this.clearSilentInputStates();
     this.state = reduceAlertAction(this.state, this.config, action, Date.now());
     this.emitSnapshot();
     return this.getSnapshot();
@@ -295,6 +330,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     this.errorMessage = null;
     const targetInputName = this.config.targetInputName || '演示麦克风';
+    this.activeInputName = targetInputName;
     if (!this.inputs.some((input) => input.inputName === targetInputName)) {
       this.inputs = [{ inputName: targetInputName, inputKind: 'demo_input' }, ...this.inputs];
     }
@@ -355,6 +391,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.errorMessage = null;
       await this.loadInputs();
       await this.pollOutputState();
+      await this.pollOBSStats();
       this.startOutputPolling();
       this.emitSnapshot();
     } catch (error) {
@@ -396,6 +433,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       }))
       .filter((input) => input.inputName.length > 0)
       .filter((input) => isProbablyAudibleInputKind(input.inputKind));
+
+    for (const input of this.inputs) {
+      this.ensureInputState(input.inputName, input.inputKind);
+    }
   }
 
   private async pollOutputState(): Promise<void> {
@@ -444,25 +485,66 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     }
   }
 
+  private async pollOBSStats(): Promise<void> {
+    if (!this.obs || !this.state.connected) {
+      this.obsStats = emptyOBSStats();
+      return;
+    }
+
+    try {
+      const stats = await this.obs.call('GetStats');
+      this.obsStats = {
+        cpuUsage: numberOrNull(stats.cpuUsage),
+        memoryUsageMb: bytesToMb(numberOrNull(stats.memoryUsage)),
+        availableDiskSpaceMb: bytesToMb(numberOrNull(stats.availableDiskSpace)),
+        activeFps: numberOrNull(stats.activeFps),
+        averageFrameRenderTimeMs: numberOrNull(stats.averageFrameRenderTime),
+        renderSkippedFrames: numberOrNull(stats.renderSkippedFrames),
+        renderTotalFrames: numberOrNull(stats.renderTotalFrames),
+        outputSkippedFrames: numberOrNull(stats.outputSkippedFrames),
+        outputTotalFrames: numberOrNull(stats.outputTotalFrames),
+        streamBitrateKbps: numberOrNull((stats as { outputSkippedFrames?: unknown; outputTotalFrames?: unknown; } & Record<string, unknown>).streamBitrate)
+      };
+    } catch {
+      this.obsStats = emptyOBSStats();
+    }
+  }
+
   private handleVolumeMeters(event: OBSInputVolumeMetersEvent): void {
     if (this.testAlertRestore) {
       return;
     }
 
-    const target = this.config.targetInputName;
-    if (!target) {
+    const targets = this.getTargetInputNames();
+    if (targets.length === 0) {
       return;
     }
 
-    const input = event.inputs.find((item) => item.inputName === target);
-    if (!input) {
-      return;
-    }
-
-    const wasAlertVisible = this.state.alertVisible;
+    const inputMeta = new Map(this.inputs.map((input) => [input.inputName, input.inputKind]));
+    const targetSet = new Set(targets);
     const now = Date.now();
-    this.lastTargetMeterAt = now;
-    this.state = reduceAudioLevel(this.state, this.config, maxInputLevelDb(input.inputLevelsMul), now);
+    let sawTarget = false;
+
+    for (const item of event.inputs) {
+      const name = item.inputName;
+      if (!targetSet.has(name)) {
+        continue;
+      }
+
+      sawTarget = true;
+      const state = this.ensureInputState(name, inputMeta.get(name) ?? '');
+      const levelDb = maxInputLevelDb(item.inputLevelsMul);
+      this.updateInputLevel(state, levelDb, now);
+      this.volumeHistory.push({ timestamp: now, inputName: name, levelDb });
+    }
+
+    if (!sawTarget) {
+      return;
+    }
+
+    this.pruneVolumeHistory(now);
+    const wasAlertVisible = this.state.alertVisible;
+    this.recomputeAggregateState(now);
     const snapshot = this.getSnapshot();
 
     if (!wasAlertVisible && this.state.alertVisible) {
@@ -479,6 +561,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.inputs = [];
     this.state = this.unavailableState('disconnected');
     this.lastTargetMeterAt = null;
+    this.activeInputName = '';
+    this.obsStats = emptyOBSStats();
     this.errorMessage = message;
     this.stopOutputPolling();
     this.emitSnapshot();
@@ -503,6 +587,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.stopOutputPolling();
     this.outputTimer = setInterval(() => {
       void this.pollOutputState();
+      void this.pollOBSStats();
     }, 5000);
   }
 
@@ -535,6 +620,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
           preAlertDismissedSilentSince: null
         };
       }
+      this.recomputeAggregateState(now);
       this.state = {
         ...this.state,
         status: deriveStatus(this.state, this.config, now)
@@ -566,6 +652,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private getReadinessReason(now: number): ReadinessReason {
+    const targets = this.getTargetInputNames();
     if (this.config.paused) {
       return 'paused';
     }
@@ -590,18 +677,255 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return 'not_streaming_or_recording';
     }
 
-    if (!this.config.targetInputName) {
+    if (targets.length === 0) {
       return 'no_target_selected';
     }
 
-    if (this.inputs.length > 0 && !this.inputs.some((input) => input.inputName === this.config.targetInputName)) {
+    if (this.inputs.length > 0 && targets.some((target) => !this.inputs.some((input) => input.inputName === target))) {
       return 'target_missing';
     }
 
-    if (this.lastTargetMeterAt === null || now - this.lastTargetMeterAt > 5000) {
+    if (this.lastTargetMeterAt === null || now - this.lastTargetMeterAt > METER_STALE_MS) {
       return 'no_target_meter';
     }
 
     return 'ready';
   }
+
+  private getTargetInputNames(): string[] {
+    const fromList = Array.isArray(this.config.targetInputNames) ? this.config.targetInputNames : [];
+    const names = fromList.length > 0 ? fromList : (this.config.targetInputName ? [this.config.targetInputName] : []);
+    return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+  }
+
+  private ensureInputState(inputName: string, inputKind: string): PerInputMonitorState {
+    const existing = this.inputStates.get(inputName);
+    if (existing) {
+      existing.inputKind = inputKind || existing.inputKind;
+      return existing;
+    }
+
+    const state: PerInputMonitorState = {
+      inputName,
+      inputKind,
+      lastLevelDb: null,
+      lastMeterAt: null,
+      silentSince: null,
+      activeEventId: null,
+      alertTriggered: false
+    };
+    this.inputStates.set(inputName, state);
+    return state;
+  }
+
+  private updateInputLevel(state: PerInputMonitorState, levelDb: number, now: number): void {
+    state.lastLevelDb = levelDb;
+    state.lastMeterAt = now;
+    this.lastTargetMeterAt = Math.max(this.lastTargetMeterAt ?? 0, now);
+
+    if (!isSilent(levelDb, this.config.silenceThresholdDb)) {
+      if (state.silentSince !== null) {
+        this.finishSilenceEvent(state, now);
+      }
+      state.silentSince = null;
+      state.activeEventId = null;
+      state.alertTriggered = false;
+      return;
+    }
+
+    if (state.silentSince === null) {
+      state.silentSince = now;
+      state.alertTriggered = false;
+      state.activeEventId = this.startSilenceEvent(state, now);
+    }
+  }
+
+  private recomputeAggregateState(now: number): void {
+    const targets = this.getTargetInputNames();
+    const canMonitor =
+      this.state.connected &&
+      !this.config.paused &&
+      (this.state.streaming || this.state.recording) &&
+      !(this.state.snoozedUntil !== null && this.state.snoozedUntil > now);
+
+    if (!canMonitor || targets.length === 0) {
+      this.state = {
+        ...this.state,
+        lastLevelDb: null,
+        silentSince: null,
+        alertVisible: false,
+        preAlertDismissedSilentSince: null,
+        ignoredUntilAudioReturns: false,
+        status: deriveStatus(this.state, this.config, now)
+      };
+      return;
+    }
+
+    const states = targets
+      .map((target) => this.inputStates.get(target))
+      .filter((state): state is PerInputMonitorState => Boolean(state && state.lastMeterAt !== null && now - state.lastMeterAt <= METER_STALE_MS));
+
+    if (states.length === 0) {
+      this.state = {
+        ...this.state,
+        lastLevelDb: null,
+        silentSince: null,
+        preAlertDismissedSilentSince: null,
+        status: deriveStatus(this.state, this.config, now)
+      };
+      return;
+    }
+
+    const silentStates = states
+      .filter((state) => state.silentSince !== null)
+      .sort((a, b) => (a.silentSince ?? now) - (b.silentSince ?? now));
+
+    if (silentStates.length === 0) {
+      const loudest = [...states].sort((a, b) => (b.lastLevelDb ?? -100) - (a.lastLevelDb ?? -100))[0];
+      this.activeInputName = loudest?.inputName ?? targets[0] ?? '';
+      this.state = {
+        ...this.state,
+        lastLevelDb: loudest?.lastLevelDb ?? null,
+        silentSince: null,
+        alertVisible: false,
+        preAlertDismissedSilentSince: null,
+        ignoredUntilAudioReturns: false,
+        status: deriveStatus(this.state, this.config, now)
+      };
+      return;
+    }
+
+    const active = silentStates[0];
+    this.activeInputName = active.inputName;
+    const silentSince = active.silentSince ?? now;
+    const shouldAlert = !this.state.alertVisible && now - silentSince >= this.config.silenceDurationSeconds * 1000;
+    if (shouldAlert) {
+      active.alertTriggered = true;
+      this.markSilenceEventAlerted(active);
+    }
+
+    this.state = {
+      ...this.state,
+      lastLevelDb: active.lastLevelDb,
+      silentSince,
+      alertVisible: this.state.alertVisible || shouldAlert,
+      status: deriveStatus(this.state, this.config, now)
+    };
+  }
+
+  private getInputMonitorSnapshots(now: number): InputMonitorSnapshot[] {
+    const selected = new Set(this.getTargetInputNames());
+    const knownNames = new Set([...this.inputs.map((input) => input.inputName), ...selected]);
+    return Array.from(knownNames).map((inputName) => {
+      const input = this.inputs.find((item) => item.inputName === inputName);
+      const state = this.inputStates.get(inputName);
+      const lastMeterAt = state?.lastMeterAt ?? null;
+      const isFresh = lastMeterAt !== null && now - lastMeterAt <= METER_STALE_MS;
+      const silentSeconds = state?.silentSince ? Math.max(0, Math.floor((now - state.silentSince) / 1000)) : 0;
+      const selectedInput = selected.has(inputName);
+      return {
+        inputName,
+        inputKind: input?.inputKind ?? state?.inputKind ?? '',
+        selected: selectedInput,
+        lastLevelDb: isFresh ? state?.lastLevelDb ?? null : null,
+        lastMeterAt,
+        silentForSeconds: silentSeconds,
+        secondsUntilAlert: selectedInput && state?.silentSince
+          ? Math.max(0, this.config.silenceDurationSeconds - silentSeconds)
+          : null,
+        status: !selectedInput ? 'not_selected' : !isFresh ? 'missing_meter' : state?.silentSince ? 'silent' : 'normal'
+      };
+    });
+  }
+
+  private clearSilentInputStates(): void {
+    const now = Date.now();
+    for (const state of this.inputStates.values()) {
+      if (state.silentSince !== null) {
+        this.finishSilenceEvent(state, now);
+      }
+      state.silentSince = null;
+      state.activeEventId = null;
+      state.alertTriggered = false;
+    }
+  }
+
+  private startSilenceEvent(state: PerInputMonitorState, now: number): string {
+    const id = `${now}-${Math.random().toString(36).slice(2, 8)}`;
+    this.silenceEvents = [
+      {
+        id,
+        inputName: state.inputName,
+        startedAt: now,
+        recoveredAt: null,
+        durationSeconds: 0,
+        alertTriggered: false
+      },
+      ...this.silenceEvents
+    ].slice(0, MAX_SILENCE_EVENTS);
+    return id;
+  }
+
+  private finishSilenceEvent(state: PerInputMonitorState, now: number): void {
+    if (!state.activeEventId || state.silentSince === null) {
+      return;
+    }
+
+    this.silenceEvents = this.silenceEvents.map((entry) => entry.id === state.activeEventId
+      ? {
+          ...entry,
+          recoveredAt: now,
+          durationSeconds: Math.max(0, Math.floor((now - state.silentSince!) / 1000)),
+          alertTriggered: entry.alertTriggered || state.alertTriggered
+        }
+      : entry
+    );
+  }
+
+  private markSilenceEventAlerted(state: PerInputMonitorState): void {
+    if (!state.activeEventId) {
+      return;
+    }
+
+    this.silenceEvents = this.silenceEvents.map((entry) => entry.id === state.activeEventId
+      ? { ...entry, alertTriggered: true }
+      : entry
+    );
+  }
+
+  private pruneVolumeHistory(now: number): void {
+    const minTime = now - VOLUME_HISTORY_RETENTION_MS;
+    this.volumeHistory = this.volumeHistory.filter((point) => point.timestamp >= minTime);
+  }
+}
+
+function targetKey(config: AppConfig): string {
+  const names = (config.targetInputNames?.length ? config.targetInputNames : config.targetInputName ? [config.targetInputName] : [])
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .sort();
+  return names.join('\n');
+}
+
+function emptyOBSStats(): OBSStatsSnapshot {
+  return {
+    cpuUsage: null,
+    memoryUsageMb: null,
+    availableDiskSpaceMb: null,
+    activeFps: null,
+    averageFrameRenderTimeMs: null,
+    renderSkippedFrames: null,
+    renderTotalFrames: null,
+    outputSkippedFrames: null,
+    outputTotalFrames: null,
+    streamBitrateKbps: null
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function bytesToMb(value: number | null): number | null {
+  return value === null ? null : value / 1024 / 1024;
 }

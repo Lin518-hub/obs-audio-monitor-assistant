@@ -292,7 +292,10 @@ export const recordingStatusLabel = (snapshot: AppSnapshot): string => {
 };
 
 export const snapshotTargetName = (snapshot: AppSnapshot): string =>
-  snapshot.config.targetInputName || '未选择音源';
+  snapshot.activeInputName ||
+  (snapshot.config.targetInputNames.length > 1
+    ? `${snapshot.config.targetInputNames.length} 路音源`
+    : snapshot.config.targetInputNames[0] || snapshot.config.targetInputName || '未选择音源');
 
 export const snapshotLiveStateLabel = (snapshot: AppSnapshot): string => {
   if (snapshot.simulatedLive) return '模拟开播';

@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AppConfig, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AppConfig, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -53,16 +53,27 @@ export class ConfigStore {
       ...config
     };
 
+    const targetInputName = stringValue(merged.targetInputName, '').trim();
+    const targetInputNames = stringArrayValue(merged.targetInputNames);
+    const migratedTargets = targetInputNames.length > 0
+      ? targetInputNames
+      : targetInputName
+        ? [targetInputName]
+        : [];
+
     return {
       ...merged,
       obsHost: stringValue(merged.obsHost, DEFAULT_CONFIG.obsHost).trim() || DEFAULT_CONFIG.obsHost,
       obsPort: clamp(Math.round(numberValue(merged.obsPort, DEFAULT_CONFIG.obsPort)), 1, 65535),
       obsPassword: stringValue(merged.obsPassword, ''),
-      targetInputName: stringValue(merged.targetInputName, '').trim(),
+      targetInputName: targetInputName || migratedTargets[0] || '',
+      targetInputNames: migratedTargets,
       silenceDurationSeconds: clamp(Math.round(numberValue(merged.silenceDurationSeconds, DEFAULT_CONFIG.silenceDurationSeconds)), 5, 60 * 60),
       silenceThresholdDb: clamp(numberValue(merged.silenceThresholdDb, DEFAULT_CONFIG.silenceThresholdDb), -90, -5),
       alertDisplayMode: alertDisplayModeValue(merged.alertDisplayMode),
       alertDisplayId: nullableIntegerValue(merged.alertDisplayId),
+      alertReminderMode: alertReminderModeValue(merged.alertReminderMode),
+      alertSoundEnabled: booleanValue(merged.alertSoundEnabled, DEFAULT_CONFIG.alertSoundEnabled),
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
@@ -72,12 +83,16 @@ export class ConfigStore {
       alertPositions: alertPositionsValue(merged.alertPositions),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
+      floatingWindowModules: floatingWindowModulesValue(merged.floatingWindowModules),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       updateSource: updateSourceValue(merged.updateSource),
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
       atemEnabled: booleanValue(merged.atemEnabled, DEFAULT_CONFIG.atemEnabled),
       atemHost: stringValue(merged.atemHost, DEFAULT_CONFIG.atemHost).trim() || DEFAULT_CONFIG.atemHost,
-      atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal)
+      atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal),
+      atemHardCutConfirm: booleanValue(merged.atemHardCutConfirm, DEFAULT_CONFIG.atemHardCutConfirm),
+      atemCameraTimeAlertEnabled: booleanValue(merged.atemCameraTimeAlertEnabled, DEFAULT_CONFIG.atemCameraTimeAlertEnabled),
+      atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60)
     };
   }
 
@@ -134,8 +149,24 @@ function stringValue(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+function stringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    value
+      .map((item) => stringValue(item, '').trim())
+      .filter(Boolean)
+  ));
+}
+
 function alertDisplayModeValue(value: unknown): AlertDisplayMode {
   return value === 'primary' || value === 'display_id' || value === 'all' ? value : DEFAULT_CONFIG.alertDisplayMode;
+}
+
+function alertReminderModeValue(value: unknown): AlertReminderMode {
+  return value === 'classic' || value === 'toast' || value === 'both' ? value : DEFAULT_CONFIG.alertReminderMode;
 }
 
 function updateSourceValue(value: unknown): UpdateSource {
@@ -191,5 +222,18 @@ function windowBoundsValue(value: unknown): WindowBounds | null {
     y: Math.round(raw.y as number),
     width: clamp(Math.round(raw.width as number), 320, 560),
     height: clamp(Math.round(raw.height as number), 150, 320)
+  };
+}
+
+function floatingWindowModulesValue(value: unknown): AppConfig['floatingWindowModules'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return DEFAULT_CONFIG.floatingWindowModules;
+  }
+
+  const raw = value as Partial<AppConfig['floatingWindowModules']>;
+  return {
+    audio: booleanValue(raw.audio, DEFAULT_CONFIG.floatingWindowModules.audio),
+    atem: booleanValue(raw.atem, DEFAULT_CONFIG.floatingWindowModules.atem),
+    obsStats: booleanValue(raw.obsStats, DEFAULT_CONFIG.floatingWindowModules.obsStats)
   };
 }

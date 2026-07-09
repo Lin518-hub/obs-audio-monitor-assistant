@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Mic2, Moon, Settings, Sun } from 'lucide-react';
+import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
 import type { AppSnapshot } from '../../shared/types';
 import {
   audioStateKind, dbLevelPercent, displayStatusText, floatingEmphasis, floatingHint, floatingTone, formatDb, thresholdPercent
@@ -48,7 +48,9 @@ export const FloatingApp: React.FC = () => {
   const emphasis = floatingEmphasis(snapshot);
   const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
   const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
-  const scaleStyle = { '--floating-scale': String(scale) } as React.CSSProperties;
+  const scaleStyle = { '--floating-ui-scale': String(scale) } as React.CSSProperties;
+  const modules = snapshot.config.floatingWindowModules;
+  const inputName = snapshot.activeInputName || snapshot.config.targetInputName || '未选择音源';
 
   return (
     <main className="floating-stage" style={scaleStyle}>
@@ -80,7 +82,7 @@ export const FloatingApp: React.FC = () => {
 
         <section className="floating-meter">
           <div>
-            <span><Mic2 size={12} />{snapshot.config.targetInputName || '未选择音源'}</span>
+            <span><Mic2 size={12} />{inputName}</span>
             <strong>{formatDb(snapshot.lastLevelDb)}</strong>
           </div>
           <div className="floating-meter-track">
@@ -88,6 +90,25 @@ export const FloatingApp: React.FC = () => {
             <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
           </div>
         </section>
+
+        {(modules.atem || modules.obsStats) && (
+          <section className="floating-modules">
+            {modules.atem && (
+              <div className={`floating-module ${snapshot.atemProgramInputOverLimit ? 'warn' : ''}`}>
+                <Video size={12} />
+                <span>PGM {snapshot.atemProgramInput || '--'}</span>
+                <strong>{snapshot.atemProgramInputElapsedSeconds}s</strong>
+              </div>
+            )}
+            {modules.obsStats && (
+              <div className="floating-module">
+                <Activity size={12} />
+                <span>{snapshot.obsStats.activeFps ? `${snapshot.obsStats.activeFps.toFixed(0)} FPS` : 'OBS'}</span>
+                <strong>{snapshot.obsStats.cpuUsage !== null ? `${snapshot.obsStats.cpuUsage.toFixed(0)}%` : '--'}</strong>
+              </div>
+            )}
+          </section>
+        )}
       </section>
     </main>
   );

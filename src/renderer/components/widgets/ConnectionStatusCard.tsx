@@ -25,7 +25,7 @@ export const ConnectionStatusCard: React.FC<ConnectionStatusCardProps> = ({ snap
         <span className={`connection-pill ${connected ? '' : 'offline'}`}>{connected ? '已连接' : '未连接'}</span>
       </div>
       <div className="connection-list">
-        <Row label="目标音源" value={target} tone={snapshot.config.targetInputName ? 'ok' : 'warn'} />
+        <Row label="目标音源" value={target} tone={snapshot.config.targetInputNames.length > 0 || snapshot.config.targetInputName ? 'ok' : 'warn'} />
         <Row label="直播" value={liveStatusLabel(snapshot)} tone={live ? 'ok' : 'muted'} />
         <Row label="录制" value={recordingStatusLabel(snapshot)} tone={rec ? 'ok' : 'muted'} />
         <Row label="OBS WebSocket" value={connected ? '正常' : '断开'} tone={connected ? 'ok' : 'danger'} />

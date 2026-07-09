@@ -249,7 +249,11 @@ const SourceStep: React.FC<{
                   key={`${input.inputKind}:${input.inputName}`}
                   type="button"
                   className={`onboarding-source-option ${input.inputName === draft.targetInputName ? 'active' : ''}`}
-                  onClick={() => { onUpdateDraft('targetInputName', input.inputName); setOpen(false); }}
+                  onClick={() => {
+                    onUpdateDraft('targetInputName', input.inputName);
+                    onUpdateDraft('targetInputNames', [input.inputName]);
+                    setOpen(false);
+                  }}
                 >
                   <Mic2 size={14} />
                   <span style={{ flex: 1 }}>{input.inputName}</span>

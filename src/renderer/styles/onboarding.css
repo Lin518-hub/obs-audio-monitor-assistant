@@ -12,11 +12,11 @@
   align-items: center;
   justify-content: center;
   background: linear-gradient(180deg, var(--bg-page-top) 0%, var(--bg-page-bottom) 100%);
-  animation: ob-fade-in 280ms var(--ease-out-soft);
+  animation: ob-fade-in 360ms cubic-bezier(0.16, 1, 0.3, 1);
   -webkit-app-region: drag;
   overflow: hidden;
   /* 建立合成层，避免子元素动画触发整个页面重绘 */
-  transform: translateZ(0);
+  contain: layout paint style;
 }
 
 @keyframes ob-fade-in {
@@ -135,9 +135,7 @@
 .onboarding-card {
   width: min(520px, calc(100vw - 48px));
   max-height: calc(100vh - 220px);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  background: rgba(255, 255, 255, 0.92);
   border-radius: var(--r-xl);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow-lg);
@@ -147,14 +145,13 @@
   -webkit-app-region: no-drag;
   position: relative;
   z-index: 1;
-  transform: translateZ(0);
-  will-change: transform;
-  animation: ob-card-in 400ms var(--ease-spring) both;
+  contain: layout paint;
+  animation: ob-card-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes ob-card-in {
-  0%   { opacity: 0; transform: translateY(20px) scale(0.96) translateZ(0); }
-  100% { opacity: 1; transform: translateY(0) scale(1) translateZ(0); }
+  0%   { opacity: 0; transform: translateY(18px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* 卡片内容体 — 步骤切换时触发滑入 */
@@ -168,11 +165,11 @@
 }
 
 .onboarding-card-body.step-enter {
-  animation: ob-step-in 320ms var(--ease-out-soft) both;
+  animation: ob-step-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes ob-step-in {
-  0%   { opacity: 0; transform: translateX(24px); }
+  0%   { opacity: 0; transform: translateX(18px); }
   100% { opacity: 1; transform: translateX(0); }
 }
 

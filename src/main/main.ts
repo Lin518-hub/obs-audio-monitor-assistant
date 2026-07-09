@@ -30,7 +30,7 @@ const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
 const FLOATING_WINDOW_MAX_WIDTH = 560;
 const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
-const FLOATING_WINDOW_RADIUS = 12;
+const FLOATING_WINDOW_BASE_RADIUS = 14;
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const UPDATE_INITIAL_CHECK_DELAY_MS = 12 * 1000;
 const GITHUB_OWNER = 'Lin518-hub';
@@ -64,6 +64,7 @@ let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
 const alertWindows = new Map<number, BrowserWindow>();
+const toastAlertWindows = new Map<number, BrowserWindow>();
 const preAlertWindows = new Map<number, BrowserWindow>();
 
 const gotLock = app.requestSingleInstanceLock();
@@ -106,7 +107,7 @@ async function initializeApp(): Promise<void> {
   atemMonitor = new ATEMMonitor();
   latestSnapshot = injectATEMState(monitor.getSnapshot());
 
-  void atemMonitor.setConfig(config.atemEnabled, config.atemHost).then(() => {
+  void atemMonitor.setConfig(config.atemEnabled, config.atemHost, config.atemCameraTimeLimitSeconds).then(() => {
     const merged = injectATEMState(monitor.getSnapshot());
     latestSnapshot = merged;
     broadcastSnapshot(merged);
@@ -130,8 +131,8 @@ async function initializeApp(): Promise<void> {
     const merged = injectATEMState(snapshot);
     latestSnapshot = merged;
     broadcastSnapshot(merged);
-    updateTray(snapshot);
-    syncFloatingWindow(snapshot);
+    updateTray(merged);
+    syncFloatingWindow(merged);
     if (snapshot.preAlertVisible && !snapshot.alertVisible) {
       showPreAlertWindows(snapshot);
     } else {
@@ -139,13 +140,14 @@ async function initializeApp(): Promise<void> {
     }
     if (!snapshot.alertVisible) {
       closeAlertWindows('destroy');
+      closeToastAlertWindows('destroy');
     }
   });
   monitor.on('alert', (snapshot) => {
     const merged = injectATEMState(snapshot);
     latestSnapshot = merged;
     closePreAlertWindows('destroy');
-    showAlertWindows(snapshot);
+    showAlertSurfaces(merged);
   });
 
   atemMonitor.on('stateChanged', () => {
@@ -221,8 +223,8 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'floatingWindowEnabled') || Object.hasOwn(patch, 'floatingWindowBounds')) {
       syncFloatingWindow(latestSnapshot);
     }
-    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost')) {
-      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost).then(() => {
+    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds')) {
+      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds).then(() => {
         if (latestSnapshot) {
           const merged = injectATEMState(latestSnapshot);
           latestSnapshot = merged;
@@ -254,20 +256,24 @@ function registerIpc(): void {
       ...(latestSnapshot ?? monitor.getSnapshot()).config,
       paused
     });
-    return monitor.updateConfig(nextConfig);
+    const snapshot = injectATEMState(await monitor.updateConfig(nextConfig));
+    latestSnapshot = snapshot;
+    broadcastSnapshot(snapshot);
+    updateTray(snapshot);
+    return snapshot;
   });
   ipcMain.handle('monitor:set-simulated-live', (_event, enabled: boolean) => {
-    const snapshot = monitor.setSimulatedLive(enabled);
+    const snapshot = injectATEMState(monitor.setSimulatedLive(enabled));
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
     updateTray(snapshot);
     return snapshot;
   });
   ipcMain.handle('alert:test', () => {
-    const snapshot = monitor.triggerTestAlert();
+    const snapshot = injectATEMState(monitor.triggerTestAlert());
     latestSnapshot = snapshot;
     closePreAlertWindows('destroy');
-    showAlertWindows(snapshot);
+    showAlertSurfaces(snapshot);
     broadcastSnapshot(snapshot);
     return snapshot;
   });
@@ -342,7 +348,10 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     atemProgramInput: atem.programInput,
     atemPreviewInput: atem.previewInput,
     atemInputLabels: atem.inputLabels,
-    atemInputCount: atem.inputCount
+    atemInputCount: atem.inputCount,
+    atemProgramInputStartedAt: atem.programInputStartedAt,
+    atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
+    atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit
   };
 }
 
@@ -962,21 +971,22 @@ async function setFloatingWindowVisible(visible: boolean): Promise<AppSnapshot> 
     floatingWindowEnabled: visible
   });
   const nextSnapshot = await monitor.updateConfig(nextConfig);
-  latestSnapshot = nextSnapshot;
+  latestSnapshot = injectATEMState(nextSnapshot);
 
   if (visible) {
-    showFloatingWindow(nextSnapshot);
+    showFloatingWindow(latestSnapshot);
   } else {
     closeFloatingWindow('destroy');
   }
 
-  updateTray(nextSnapshot);
-  broadcastSnapshot(nextSnapshot);
-  return nextSnapshot;
+  updateTray(latestSnapshot);
+  broadcastSnapshot(latestSnapshot);
+  return latestSnapshot;
 }
 
 async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   closeAlertWindows('destroy');
+  closeToastAlertWindows('destroy');
   closePreAlertWindows('destroy');
   closeFloatingWindow('destroy');
 
@@ -987,11 +997,11 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
 
   const nextConfig = await configStore.reset();
   const nextSnapshot = await monitor.updateConfig(nextConfig);
-  latestSnapshot = nextSnapshot;
+  latestSnapshot = injectATEMState(nextSnapshot);
 
-  updateTray(nextSnapshot);
-  broadcastSnapshot(nextSnapshot);
-  return nextSnapshot;
+  updateTray(latestSnapshot);
+  broadcastSnapshot(latestSnapshot);
+  return latestSnapshot;
 }
 
 function saveFloatingWindowBoundsFromWindow(): void {
@@ -1077,6 +1087,61 @@ function showAlertWindows(snapshot: AppSnapshot): void {
   }
 }
 
+function showAlertSurfaces(snapshot: AppSnapshot): void {
+  const mode = snapshot.config.alertReminderMode;
+  showAlertWindows(snapshot);
+
+  if (mode === 'toast' || mode === 'both') {
+    showToastAlertWindows(snapshot);
+  } else {
+    closeToastAlertWindows('destroy');
+  }
+}
+
+function showToastAlertWindows(snapshot: AppSnapshot): void {
+  closeToastAlertWindows('destroy');
+  const displays = selectAlertDisplays(snapshot.config.alertDisplayMode, snapshot.config.alertDisplayId, snapshot.displays);
+
+  for (const display of displays) {
+    const width = Math.min(480, Math.floor(display.bounds.width * 0.72));
+    const height = 168;
+    const x = display.bounds.x + Math.round((display.bounds.width - width) / 2);
+    const y = display.bounds.y + Math.round(display.bounds.height * 0.36);
+
+    const toastWindow = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      icon: appIconPath(),
+      skipTaskbar: true,
+      frame: false,
+      show: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+
+    attachWindowDiagnostics(toastWindow, `toast-alert:${display.id}`);
+    toastWindow.setAlwaysOnTop(true, 'floating');
+    toastWindow.once('ready-to-show', () => toastWindow.showInactive());
+    toastWindow.on('closed', () => {
+      toastAlertWindows.delete(display.id);
+    });
+    toastAlertWindows.set(display.id, toastWindow);
+    loadRendererSafely(toastWindow, '#toast-alert', `toast-alert:${display.id}`);
+  }
+}
+
 function showPreAlertWindows(snapshot: AppSnapshot): void {
   const displays = selectAlertDisplays(snapshot.config.alertDisplayMode, snapshot.config.alertDisplayId, snapshot.displays);
   const wantedIds = new Set(displays.map((display) => display.id));
@@ -1141,6 +1206,13 @@ function closeAlertWindows(mode: 'close' | 'destroy' = 'destroy'): void {
   alertWindows.clear();
 }
 
+function closeToastAlertWindows(mode: 'close' | 'destroy' = 'destroy'): void {
+  for (const window of toastAlertWindows.values()) {
+    safelyCloseWindow(window, mode);
+  }
+  toastAlertWindows.clear();
+}
+
 function closePreAlertWindows(mode: 'close' | 'destroy' = 'destroy'): void {
   for (const window of preAlertWindows.values()) {
     safelyCloseWindow(window, mode);
@@ -1183,6 +1255,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 
   try {
     closeAlertWindows('destroy');
+    closeToastAlertWindows('destroy');
     closePreAlertWindows('destroy');
     monitor.handleAlertAction(action);
 
@@ -1191,7 +1264,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
         const history = await historyStore.add({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           timestamp: Date.now(),
-          inputName: before.config.targetInputName || '目标音源',
+          inputName: before.activeInputName || before.config.targetInputName || '目标音源',
           silentForSeconds: before.silentForSeconds,
           action,
           status: before.status
@@ -1202,7 +1275,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
       }
     }
 
-    latestSnapshot = monitor.getSnapshot();
+    latestSnapshot = injectATEMState(monitor.getSnapshot());
     broadcastSnapshot(latestSnapshot);
     return latestSnapshot;
   } finally {
@@ -1424,7 +1497,7 @@ function applyFloatingWindowShape(): void {
   }
 
   const { width, height } = floatingWindow.getBounds();
-  const radius = Math.min(FLOATING_WINDOW_RADIUS, Math.floor(width / 2), Math.floor(height / 2));
+  const radius = Math.min(Math.round(FLOATING_WINDOW_BASE_RADIUS * (width / FLOATING_WINDOW_DEFAULT_WIDTH)), Math.floor(width / 2), Math.floor(height / 2));
   const rectangles: Rectangle[] = [];
 
   for (let y = 0; y < height; y += 1) {

@@ -6,7 +6,9 @@ import { readableInputKind } from '../../utils/status';
 interface SourcePickerProps {
   inputs: InputOption[];
   value: string;
+  values?: string[];
   onChange: (value: string) => void;
+  onChangeMany?: (value: string[]) => void;
   onRefresh: () => void;
 }
 
@@ -16,14 +18,16 @@ interface MenuPosition {
   width: number;
 }
 
-export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, onChange, onRefresh }) => {
+export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, values, onChange, onChangeMany, onRefresh }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPos, setMenuPos] = useState<MenuPosition>({ top: 0, left: 0, width: 0 });
 
-  const selected = inputs.find((input) => input.inputName === value);
+  const selectedValues = values && values.length > 0 ? values : value ? [value] : [];
+  const selected = inputs.find((input) => input.inputName === selectedValues[0]);
+  const multiSelect = Boolean(onChangeMany);
   const filtered = inputs.filter((input) =>
     input.inputName.toLowerCase().includes(query.trim().toLowerCase())
   );
@@ -88,9 +92,19 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, onCha
       >
         <span className="source-picker-icon"><Mic2 size={18} /></span>
         <span className="source-picker-body">
-          <span className="source-picker-title">{selected?.inputName || value || '选择可能有声音的 OBS 音源'}</span>
+          <span className="source-picker-title">
+            {selectedValues.length > 1
+              ? `已选择 ${selectedValues.length} 路音源`
+              : selected?.inputName || value || '选择可能有声音的 OBS 音源'}
+          </span>
           <span className="source-picker-sub">
-            {selected ? readableInputKind(selected.inputKind) : inputs.length > 0 ? `${inputs.length} 个可检测音源` : '请先连接 OBS 或刷新音源'}
+            {selectedValues.length > 1
+              ? selectedValues.join('、')
+              : selected
+                ? readableInputKind(selected.inputKind)
+                : inputs.length > 0
+                  ? `${inputs.length} 个可检测音源`
+                  : '请先连接 OBS 或刷新音源'}
           </span>
         </span>
         <ChevronDown size={18} className={open ? 'rotate' : ''} />
@@ -127,15 +141,27 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, onCha
                 <button
                   key={`${input.inputKind}:${input.inputName}`}
                   type="button"
-                  className={`source-picker-option ${input.inputName === value ? 'active' : ''}`}
-                  onClick={() => { onChange(input.inputName); setOpen(false); setQuery(''); }}
+                  className={`source-picker-option ${selectedValues.includes(input.inputName) ? 'active' : ''}`}
+                  onClick={() => {
+                    if (!multiSelect) {
+                      onChange(input.inputName);
+                      setOpen(false);
+                      setQuery('');
+                      return;
+                    }
+                    const next = selectedValues.includes(input.inputName)
+                      ? selectedValues.filter((name) => name !== input.inputName)
+                      : [...selectedValues, input.inputName];
+                    onChangeMany?.(next);
+                    onChange(next[0] ?? '');
+                  }}
                 >
                   <Mic2 size={14} />
                   <span className="source-picker-option-copy">
                     <strong>{input.inputName}</strong>
                     <em>{readableInputKind(input.inputKind)}</em>
                   </span>
-                  {input.inputName === value && <Check size={14} />}
+                  {selectedValues.includes(input.inputName) && <Check size={14} />}
                 </button>
               ))
             )}

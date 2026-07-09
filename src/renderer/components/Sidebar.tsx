@@ -1,10 +1,10 @@
 import React from 'react';
-import { Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
+import { Activity, Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
 import { APP_VERSION } from '../utils/appVersion';
 import { displayStatusText } from '../utils/status';
 import type { AppSnapshot } from '../../shared/types';
 
-export type SidebarPage = 'dashboard' | 'atem' | 'history';
+export type SidebarPage = 'dashboard' | 'monitor' | 'atem' | 'history';
 
 interface SidebarProps {
   snapshot: AppSnapshot;
@@ -16,6 +16,7 @@ interface SidebarProps {
 
 const items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[] = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+  { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' },
   { id: 'atem', label: 'ATEM 导播台', icon: Video, badge: 'BETA' },
   { id: 'history', label: '报警历史', icon: History }
 ];

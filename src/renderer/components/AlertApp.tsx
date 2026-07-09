@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, BellOff, Check } from 'lucide-react';
 import type { AlertAction, AppSnapshot } from '../../shared/types';
+import { playAlertTone } from './ToastAlertApp';
 
 export const AlertApp: React.FC = () => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
@@ -9,7 +10,12 @@ export const AlertApp: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    void window.obsGuard.getSnapshot().then((next) => { if (mounted) setSnapshot(next); });
+    void window.obsGuard.getSnapshot().then((next) => {
+      if (mounted) {
+        setSnapshot(next);
+        playAlertTone(next.config.alertSoundEnabled);
+      }
+    });
     const dispose = window.obsGuard.onSnapshot((next) => { if (mounted) setSnapshot(next); });
     return () => { mounted = false; dispose(); };
   }, []);
@@ -52,7 +58,7 @@ export const AlertApp: React.FC = () => {
       <div className="alert-icon"><AlertTriangle size={32} /></div>
       <section className="alert-copy">
         <div className="alert-kicker">音频静音提醒</div>
-        <h1>{snapshot.config.targetInputName || '目标音源'} 可能没有声音</h1>
+        <h1>{snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 可能没有声音</h1>
         <p>已连续静音 {snapshot.silentForSeconds} 秒,请确认麦克风是否静音、无线麦是否没电、声卡或 OBS 音频路由是否异常。</p>
       </section>
       <section className="alert-actions">

@@ -13,7 +13,7 @@ import './styles/windows.css';
 import './styles/dialogs.css';
 import './styles/onboarding.css';
 
-import { Cable, Download, Info, Mic2, TestTube2, Timer, Video } from 'lucide-react';
+import { Activity, BarChart3, Cable, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Video } from 'lucide-react';
 import { Sidebar, type SidebarPage } from './components/Sidebar';
 import { TopBar, type SaveLabel } from './components/TopBar';
 import { StatusBanner } from './components/StatusBanner';
@@ -30,11 +30,12 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { AlertApp } from './components/AlertApp';
 import { PreAlertApp } from './components/PreAlertApp';
 import { FloatingApp } from './components/FloatingApp';
+import { ToastAlertApp } from './components/ToastAlertApp';
 
 import { useSnapshot } from './hooks/useSnapshot';
 import { useUpdateState } from './hooks/useUpdateState';
 import { useAutoSave } from './hooks/useAutoSave';
-import { shouldShowOnboarding } from './utils/status';
+import { formatDb, shouldShowOnboarding } from './utils/status';
 import { APP_VERSION } from './utils/appVersion';
 
 import type { AppConfig, TestConnectionResult } from '../shared/types';
@@ -43,6 +44,7 @@ const root = createRoot(document.getElementById('root')!);
 
 const route =
   window.location.hash === '#alert' ? 'alert'
+    : window.location.hash === '#toast-alert' ? 'toast-alert'
     : window.location.hash === '#prealert' ? 'prealert'
     : window.location.hash === '#floating' ? 'floating'
     : 'settings';
@@ -51,12 +53,11 @@ document.body.dataset.route = route;
 document.documentElement.dataset.route = route;
 
 root.render(
-  <React.StrictMode>
-    {route === 'alert' ? <AlertApp />
-      : route === 'prealert' ? <PreAlertApp />
-      : route === 'floating' ? <FloatingApp />
-      : <SettingsApp />}
-  </React.StrictMode>
+  route === 'alert' ? <AlertApp />
+    : route === 'toast-alert' ? <ToastAlertApp />
+    : route === 'prealert' ? <PreAlertApp />
+    : route === 'floating' ? <FloatingApp />
+    : <SettingsApp />
 );
 
 // =============================================================================
@@ -184,7 +185,7 @@ function SettingsApp() {
   };
 
   const liveModeLabel = snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播';
-  const pageTitle = page === 'dashboard' ? liveModeLabel : page === 'atem' ? 'ATEM 导播台' : '报警历史';
+  const pageTitle = page === 'dashboard' ? liveModeLabel : page === 'atem' ? 'ATEM 导播台' : page === 'monitor' ? '监控面板 Beta' : '报警历史';
   const hasUpdateNotice = updateState ? ['available', 'downloaded', 'error'].includes(updateState.status) : false;
 
   // 主中栏内容(根据 page 切换)
@@ -198,7 +199,7 @@ function SettingsApp() {
                 <span>{pageTitle}</span>
               </h1>
               <p className="page-header-subtitle">
-                {snapshot.config.targetInputName || '未选择音源'} · 检测中{search ? ` · 搜索 "${search}"` : ''}
+                {snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName || '未选择音源'} · 检测中{search ? ` · 搜索 "${search}"` : ''}
               </p>
             </div>
           </div>
@@ -217,6 +218,23 @@ function SettingsApp() {
             onToggleFloating={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}
             onReconnect={() => void window.obsGuard.reconnect()}
           />
+        </>
+      )}
+
+      {page === 'monitor' && (
+        <>
+          <div className="page-header">
+            <div className="page-header-title">
+              <h1>
+                <span>监控面板</span>
+                <span className="page-title-badge">BETA</span>
+              </h1>
+              <p className="page-header-subtitle">
+                OBS 性能、全部音频输入、电平历史与静音事件
+              </p>
+            </div>
+          </div>
+          <MonitoringDashboard snapshot={snapshot} search={search} />
         </>
       )}
 
@@ -277,6 +295,9 @@ function SettingsApp() {
               {Array.from({ length: snapshot.atemInputCount }, (_, i) => i + 1).map((num) => {
                 const isProgram = num === snapshot.atemProgramInput;
                 const isPreview = num === snapshot.atemPreviewInput;
+                const label = snapshot.atemInputLabels[num] || `Input ${num}`;
+                const matchesSearch = !search.trim() || `${num} ${label}`.toLowerCase().includes(search.trim().toLowerCase());
+                if (!matchesSearch) return null;
                 return (
                   <button
                     type="button"
@@ -285,7 +306,7 @@ function SettingsApp() {
                     onClick={() => void window.obsGuard.changePreviewInput(num)}
                   >
                     <span>{num}</span>
-                    <strong>{snapshot.atemInputLabels[num] || `Input ${num}`}</strong>
+                    <strong>{label}</strong>
                     <em>{isProgram ? 'PGM' : isPreview ? 'PVW' : '选为 PVW'}</em>
                   </button>
                 );
@@ -293,6 +314,21 @@ function SettingsApp() {
               <button type="button" className="atem-auto-button" onClick={() => void window.obsGuard.autoTransition()}>
                 AUTO 切换
               </button>
+              {snapshot.atemPreviewInput > 0 && (
+                <button
+                  type="button"
+                  className="atem-hardcut-button"
+                  onClick={() => {
+                    const label = snapshot.atemInputLabels[snapshot.atemPreviewInput] || `Input ${snapshot.atemPreviewInput}`;
+                    if (snapshot.config.atemHardCutConfirm && !window.confirm(`确认硬切到 PGM ${snapshot.atemPreviewInput}（${label}）吗？`)) {
+                      return;
+                    }
+                    void window.obsGuard.changeProgramInput(snapshot.atemPreviewInput);
+                  }}
+                >
+                  Hard Cut 到 PVW
+                </button>
+              )}
             </div>
           )}
         </>
@@ -311,7 +347,7 @@ function SettingsApp() {
               </button>
             </div>
           </div>
-          <HistoryList snapshot={snapshot} onClear={() => void window.obsGuard.clearHistory()} />
+          <HistoryList snapshot={snapshot} onClear={() => void window.obsGuard.clearHistory()} search={search} />
         </>
       )}
 
@@ -391,6 +427,89 @@ const SHORTCUT_CARDS: { id: string; title: string; desc: string; icon: React.Com
   { id: 'updates', title: '软件更新', desc: '检查 GitHub 新版本', icon: Download },
   { id: 'about', title: '关于', desc: `当前 v${APP_VERSION}`, icon: Info }
 ];
+
+function MonitoringDashboard({ snapshot, search }: { snapshot: NonNullable<ReturnType<typeof useSnapshot>>; search: string }) {
+  const query = search.trim().toLowerCase();
+  const inputMonitors = snapshot.inputMonitors.filter((input) => !query || input.inputName.toLowerCase().includes(query));
+  const recentEvents = snapshot.silenceEvents.filter((entry) => !query || entry.inputName.toLowerCase().includes(query)).slice(0, 8);
+  const historyPoints = snapshot.volumeHistory.slice(-80);
+  const stats = snapshot.obsStats;
+  const skippedFrames = stats.outputSkippedFrames !== null && stats.outputTotalFrames
+    ? `${stats.outputSkippedFrames}/${stats.outputTotalFrames}`
+    : '--';
+
+  return (
+    <div className="monitor-grid">
+      <section className="monitor-card span-2">
+        <div className="monitor-card-title">
+          <span><BarChart3 size={18} /> 音量历史</span>
+          <em>最近 10 分钟</em>
+        </div>
+        <div className="volume-history-chart">
+          {historyPoints.length === 0 ? (
+            <div className="empty-block compact">暂无电平数据</div>
+          ) : historyPoints.map((point, index) => (
+            <span
+              key={`${point.inputName}-${point.timestamp}-${index}`}
+              style={{ height: `${Math.max(4, Math.min(100, ((point.levelDb ?? -90) + 90) / 90 * 100))}%` }}
+              title={`${point.inputName}: ${formatDb(point.levelDb)}`}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="monitor-card">
+        <div className="monitor-card-title">
+          <span><Gauge size={18} /> OBS 性能</span>
+          <em>GetStats</em>
+        </div>
+        <div className="stat-grid">
+          <div><span>CPU</span><strong>{stats.cpuUsage !== null ? `${stats.cpuUsage.toFixed(1)}%` : '--'}</strong></div>
+          <div><span>内存</span><strong>{stats.memoryUsageMb !== null ? `${stats.memoryUsageMb.toFixed(0)} MB` : '--'}</strong></div>
+          <div><span>FPS</span><strong>{stats.activeFps !== null ? stats.activeFps.toFixed(0) : '--'}</strong></div>
+          <div><span>丢帧</span><strong>{skippedFrames}</strong></div>
+        </div>
+      </section>
+
+      <section className="monitor-card span-2">
+        <div className="monitor-card-title">
+          <span><Mic2 size={18} /> 音频设备状态</span>
+          <em>{inputMonitors.length} 路</em>
+        </div>
+        <div className="input-monitor-list">
+          {inputMonitors.length === 0 ? (
+            <div className="empty-block compact">没有匹配的音频源</div>
+          ) : inputMonitors.map((input) => (
+            <div className={`input-monitor-row ${input.selected ? 'selected' : ''} ${input.status}`} key={input.inputName}>
+              <div>
+                <strong>{input.inputName}</strong>
+                <span>{input.selected ? input.status === 'silent' ? `静音 ${input.silentForSeconds}s` : '已加入检测' : '未加入检测'}</span>
+              </div>
+              <em>{formatDb(input.lastLevelDb)}</em>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="monitor-card">
+        <div className="monitor-card-title">
+          <span><ListChecks size={18} /> 静音事件</span>
+          <em>本次运行</em>
+        </div>
+        <div className="silence-event-list">
+          {recentEvents.length === 0 ? (
+            <div className="empty-block compact">暂无静音事件</div>
+          ) : recentEvents.map((entry) => (
+            <div className={`silence-event-row ${entry.alertTriggered ? 'alerted' : ''}`} key={entry.id}>
+              <strong>{entry.inputName}</strong>
+              <span>{new Date(entry.startedAt).toLocaleTimeString()} · {entry.recoveredAt ? `${entry.durationSeconds}s` : '进行中'}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function SettingsShortcutCards({ onPick }: { onPick: (section: string) => void }) {
   return (
