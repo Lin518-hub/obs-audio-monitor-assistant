@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
+import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
 contextBridge.exposeInMainWorld('obsGuard', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
@@ -48,5 +48,6 @@ contextBridge.exposeInMainWorld('obsGuard', {
   autoTransition: () => ipcRenderer.invoke('atem:auto-transition'),
   changeProgramInput: (input: number) => ipcRenderer.invoke('atem:change-program-input', input),
   testATEMConnection: (host: string) => ipcRenderer.invoke('atem:test-connection', host),
+  scanATEMNetwork: (host?: string) => ipcRenderer.invoke('atem:scan-network', host) as Promise<ATEMScanResult>,
   atemReconnect: () => ipcRenderer.invoke('atem:reconnect')
 });

@@ -1,10 +1,10 @@
 import React from 'react';
-import { Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon } from 'lucide-react';
+import { Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
 import { APP_VERSION } from '../utils/appVersion';
 import { displayStatusText } from '../utils/status';
 import type { AppSnapshot } from '../../shared/types';
 
-export type SidebarPage = 'dashboard' | 'history';
+export type SidebarPage = 'dashboard' | 'atem' | 'history';
 
 interface SidebarProps {
   snapshot: AppSnapshot;
@@ -14,8 +14,9 @@ interface SidebarProps {
   historyCount: number;
 }
 
-const items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+const items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[] = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+  { id: 'atem', label: 'ATEM 导播台', icon: Video, badge: 'BETA' },
   { id: 'history', label: '报警历史', icon: History }
 ];
 
@@ -42,16 +43,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, on
             >
               <span className="icon"><Icon size={18} /></span>
               <span>{item.label}</span>
+              {item.badge && <span className="badge beta">{item.badge}</span>}
               {item.id === 'history' && historyCount > 0 && <span className="badge">{historyCount}</span>}
             </button>
           );
         })}
       </nav>
 
-      <button type="button" className="sidebar-settings-pill" onClick={onOpenSettings}>
-        <SettingsIcon size={18} />
-        <span>设置</span>
-      </button>
+      <div className="sidebar-settings-card">
+        <button type="button" className="sidebar-nav-item sidebar-settings-pill" onClick={onOpenSettings}>
+          <span className="icon"><SettingsIcon size={18} /></span>
+          <span>设置</span>
+        </button>
+      </div>
 
       <div className="sidebar-footer">
         <div className="sidebar-footer-avatar" aria-hidden="true">

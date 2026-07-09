@@ -2,7 +2,7 @@
  * 集中声明 window.obsGuard API 的 TypeScript 类型。
  * 真实实现在 src/main/preload.cts,这里只做类型声明,避免每个组件重复写。
  */
-import type { AlertAction, AppConfig, AppSnapshot, ATEMTestResult, InputOption, TestConnectionResult, UpdateSnapshot } from '../shared/types';
+import type { AlertAction, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, InputOption, TestConnectionResult, UpdateSnapshot } from '../shared/types';
 
 export interface ObsGuardApi {
   getSnapshot: () => Promise<AppSnapshot>;
@@ -35,6 +35,7 @@ export interface ObsGuardApi {
   autoTransition: () => Promise<void>;
   changeProgramInput: (input: number) => Promise<void>;
   testATEMConnection: (host: string) => Promise<ATEMTestResult>;
+  scanATEMNetwork: (host?: string) => Promise<ATEMScanResult>;
   atemReconnect: () => Promise<void>;
 }
 

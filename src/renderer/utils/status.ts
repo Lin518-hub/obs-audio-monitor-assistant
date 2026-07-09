@@ -213,7 +213,7 @@ export const updateTriggerLabel = (state: UpdateSnapshot): string => {
     case 'downloading':
       return state.percent === null ? '下载更新中' : `下载 ${Math.round(state.percent)}%`;
     case 'downloaded':
-      return '重启安装更新';
+      return state.installMode === 'manual' ? '打开安装包' : '重启安装更新';
     case 'error':
       return '更新失败';
     case 'not_available':
@@ -232,7 +232,7 @@ export const updateMenuTitle = (state: UpdateSnapshot): string => {
     case 'downloading':
       return '正在下载';
     case 'downloaded':
-      return state.downloadedVersion ? `v${state.downloadedVersion} 已准备好` : '更新已准备好';
+      return state.downloadedVersion ? `v${state.downloadedVersion} 已下载` : '更新已下载';
     case 'error':
       return '更新源暂时不可用';
     case 'not_available':

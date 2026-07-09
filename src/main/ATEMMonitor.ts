@@ -1,9 +1,25 @@
 import { EventEmitter } from 'node:events';
+import { createSocket, type Socket } from 'node:dgram';
+import { networkInterfaces } from 'node:os';
 import { Atem, AtemConnectionStatus } from 'atem-connection';
 import type { AtemState } from 'atem-connection';
-import type { ATEMStateSnapshot, ATEMTestResult } from '../shared/types.js';
+import type { ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMTestResult } from '../shared/types.js';
 
 export type ATEMConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+const ATEM_PORT = 9910;
+const CONNECT_TIMEOUT_MS = 4200;
+const DISCOVERY_TIMEOUT_MS = 1600;
+const ATEM_HELLO_PACKET = Buffer.from([
+  0x10, 0x14, 0x53, 0xab, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3a,
+  0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+]);
+
+interface CandidateHost {
+  host: string;
+  interfaceName?: string;
+  network?: string;
+}
 
 interface ATEMMonitorEvents {
   stateChanged: [ATEMStateSnapshot];
@@ -70,7 +86,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     };
     this.emitState();
 
-    const atem = new Atem();
+    const atem = this.createAtem(true);
     this.atem = atem;
 
     atem.on('connected', () => {
@@ -142,14 +158,22 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   }
 
   async testConnection(host: string): Promise<ATEMTestResult> {
-    const atem = new Atem();
+    const normalizedHost = normalizeHost(host);
+    if (!normalizedHost) {
+      return {
+        ok: false,
+        message: '请输入有效的 ATEM IP 地址',
+        inputCount: 0
+      };
+    }
 
+    let atem: Atem | null = null;
     try {
-      await atem.connect(host);
+      atem = await this.connectTemporary(normalizedHost, CONNECT_TIMEOUT_MS);
     } catch (error) {
       return {
         ok: false,
-        message: error instanceof Error ? error.message : `无法连接 ATEM (${host})`,
+        message: error instanceof Error ? error.message : `无法连接 ATEM (${normalizedHost})`,
         inputCount: 0
       };
     }
@@ -177,11 +201,64 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       };
     } finally {
       try {
-        await atem.disconnect();
+        await atem.destroy();
       } catch {
         // Temporary test connection closed.
       }
     }
+  }
+
+  async scanNetwork(seedHost?: string): Promise<ATEMScanResult> {
+    const candidates = this.buildCandidateHosts(seedHost || this.host);
+    if (candidates.length === 0) {
+      return {
+        ok: false,
+        message: '没有找到可扫描的本机 IPv4 网段。请确认电脑已连接到和 ATEM 相同的局域网。',
+        scannedHosts: 0,
+        interfaces: [],
+        devices: []
+      };
+    }
+
+    let foundHosts: CandidateHost[];
+    try {
+      foundHosts = await this.probeATEMHosts(candidates, DISCOVERY_TIMEOUT_MS);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `扫描失败：${error instanceof Error ? error.message : String(error)}`,
+        scannedHosts: candidates.length,
+        interfaces: Array.from(new Set(candidates.map((candidate) => candidate.interfaceName).filter(Boolean))) as string[],
+        devices: []
+      };
+    }
+    const devices: ATEMDiscoveredDevice[] = [];
+
+    for (const candidate of foundHosts) {
+      const result = await this.testConnection(candidate.host);
+      devices.push({
+        host: candidate.host,
+        label: result.modelName ? `${result.modelName} (${candidate.host})` : `ATEM ${candidate.host}`,
+        inputCount: result.inputCount,
+        modelName: result.modelName,
+        interfaceName: candidate.interfaceName,
+        network: candidate.network,
+        message: result.message
+      });
+    }
+
+    devices.sort((a, b) => a.host.localeCompare(b.host, undefined, { numeric: true }));
+    const interfaces = Array.from(new Set(candidates.map((candidate) => candidate.interfaceName).filter(Boolean))) as string[];
+
+    return {
+      ok: devices.length > 0,
+      message: devices.length > 0
+        ? `找到 ${devices.length} 台疑似 ATEM 导播台`
+        : `已扫描 ${candidates.length} 个地址，暂未发现 ATEM。请确认导播台与电脑在同一网段，且未被防火墙拦截。`,
+      scannedHosts: candidates.length,
+      interfaces,
+      devices
+    };
   }
 
   async changePreviewInput(input: number): Promise<void> {
@@ -281,6 +358,132 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     this.emit('stateChanged', this.getSnapshot());
   }
 
+  private createAtem(trackState: boolean): Atem {
+    const atem = new Atem({ childProcessTimeout: 1000 });
+    atem.on('error', (message) => {
+      console.warn(`[ATEM] ${message}`);
+      if (!trackState) {
+        return;
+      }
+      this.connectionState = 'error';
+      this.lastState = {
+        ...this.lastState,
+        connected: false,
+        connectionState: 'error',
+        errorMessage: String(message)
+      };
+      this.emitState();
+    });
+    return atem;
+  }
+
+  private async connectTemporary(host: string, timeoutMs: number): Promise<Atem> {
+    const atem = this.createAtem(false);
+    let settled = false;
+
+    const connected = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`连接 ${host} 超时，请确认 IP 正确且设备在线`));
+      }, timeoutMs);
+
+      atem.once('connected', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      });
+
+      atem.once('disconnected', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error(`ATEM ${host} 已断开连接`));
+      });
+
+      atem.once('error', (message) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error(String(message)));
+      });
+    });
+
+    try {
+      await atem.connect(host, ATEM_PORT);
+      await connected;
+      return atem;
+    } catch (error) {
+      try {
+        await atem.destroy();
+      } catch {
+        // Temporary connection already closed.
+      }
+      throw error;
+    }
+  }
+
+  private buildCandidateHosts(seedHost?: string): CandidateHost[] {
+    const candidates = new Map<string, CandidateHost>();
+    const add = (host: string, interfaceName?: string, network?: string) => {
+      const normalized = normalizeHost(host);
+      if (!normalized || candidates.has(normalized)) return;
+      candidates.set(normalized, { host: normalized, interfaceName, network });
+    };
+
+    add(seedHost || '', '当前设置', '手动地址');
+
+    const interfaces = networkInterfaces();
+    for (const [name, entries] of Object.entries(interfaces)) {
+      for (const entry of entries ?? []) {
+        if (entry.family !== 'IPv4' || entry.internal) continue;
+        const parts = entry.address.split('.').map(Number);
+        if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) continue;
+        const prefix = `${parts[0]}.${parts[1]}.${parts[2]}`;
+        const network = `${prefix}.0/24`;
+        const label = name || entry.address;
+        const priorityHosts = [240, 1, 2, 10, 20, 50, 100, 101, 120, 200, 254];
+
+        for (const suffix of priorityHosts) {
+          add(`${prefix}.${suffix}`, label, network);
+        }
+        for (let suffix = 1; suffix <= 254; suffix++) {
+          add(`${prefix}.${suffix}`, label, network);
+        }
+      }
+    }
+
+    return Array.from(candidates.values());
+  }
+
+  private async probeATEMHosts(candidates: CandidateHost[], timeoutMs: number): Promise<CandidateHost[]> {
+    const byHost = new Map(candidates.map((candidate) => [candidate.host, candidate]));
+    const found = new Map<string, CandidateHost>();
+    const socket = createSocket('udp4');
+
+    await bindSocket(socket);
+    socket.on('error', (error) => {
+      console.warn(`[ATEM] discovery socket error: ${error.message}`);
+    });
+
+    socket.on('message', (packet, remote) => {
+      if (remote.port !== ATEM_PORT || packet.length < 12) return;
+      const candidate = byHost.get(remote.address);
+      if (candidate) {
+        found.set(remote.address, candidate);
+      }
+    });
+
+    for (const candidate of candidates) {
+      socket.send(ATEM_HELLO_PACKET, ATEM_PORT, candidate.host, () => undefined);
+    }
+
+    await delay(timeoutMs);
+    socket.close();
+    return Array.from(found.values());
+  }
+
   private emptyState(): ATEMStateSnapshot {
     return {
       connected: false,
@@ -292,4 +495,36 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       errorMessage: null
     };
   }
+}
+
+function normalizeHost(value: string): string {
+  const host = value.trim();
+  const parts = host.split('.');
+  if (parts.length !== 4) return '';
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return '';
+    const num = Number(part);
+    if (num < 0 || num > 255) return '';
+  }
+  return host;
+}
+
+function bindSocket(socket: Socket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      socket.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      socket.off('error', onError);
+      resolve();
+    };
+    socket.once('error', onError);
+    socket.once('listening', onListening);
+    socket.bind(0);
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

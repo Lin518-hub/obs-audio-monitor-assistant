@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray, type Rectangle } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -59,6 +59,7 @@ let updateState: UpdateSnapshot | null = null;
 let updateCheckInFlight: Promise<UpdateSnapshot> | null = null;
 let updateInitialTimer: NodeJS.Timeout | null = null;
 let updateCheckTimer: NodeJS.Timeout | null = null;
+let downloadedUpdateFilePath: string | null = null;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
@@ -317,6 +318,9 @@ function registerIpc(): void {
   ipcMain.handle('atem:test-connection', async (_event, host: string) => {
     return atemMonitor.testConnection(host);
   });
+  ipcMain.handle('atem:scan-network', async (_event, host?: string) => {
+    return atemMonitor.scanNetwork(host);
+  });
   ipcMain.handle('atem:reconnect', async () => {
     await atemMonitor.connect();
     const merged = injectATEMState(monitor.getSnapshot());
@@ -399,10 +403,12 @@ function initializeUpdater(): void {
   });
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     const state = getUpdateState();
+    downloadedUpdateFilePath = null;
     setUpdateState({
       status: 'available',
       availableVersion: info.version ?? null,
       downloadedVersion: null,
+      downloadedFilePath: null,
       percent: null,
       errorMessage: null,
       lastCheckedAt: Date.now(),
@@ -411,10 +417,12 @@ function initializeUpdater(): void {
   });
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     const state = getUpdateState();
+    downloadedUpdateFilePath = null;
     setUpdateState({
       status: 'not_available',
       availableVersion: info.version ?? null,
       downloadedVersion: null,
+      downloadedFilePath: null,
       percent: null,
       errorMessage: null,
       lastCheckedAt: Date.now(),
@@ -431,13 +439,18 @@ function initializeUpdater(): void {
   });
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
     const version = info.version ?? getUpdateState().availableVersion;
+    const manualInstall = usesManualMacInstall();
     setUpdateState({
       status: 'downloaded',
       availableVersion: version,
       downloadedVersion: version,
+      downloadedFilePath: downloadedUpdateFilePath,
+      installMode: manualInstall ? 'manual' : 'auto',
       percent: 100,
       errorMessage: null,
-      message: version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装'
+      message: manualInstall
+        ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
+        : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
     });
   });
   autoUpdater.on('error', (error: Error) => {
@@ -478,6 +491,8 @@ function createInitialUpdateState(): UpdateSnapshot {
     currentVersion: app.getVersion(),
     availableVersion: null,
     downloadedVersion: null,
+    downloadedFilePath: null,
+    installMode: usesManualMacInstall() ? 'manual' : 'auto',
     percent: null,
     message: isUpdaterSupported() ? '可检查更新' : '打包安装后可检查更新',
     lastCheckedAt: null,
@@ -487,6 +502,10 @@ function createInitialUpdateState(): UpdateSnapshot {
 
 function isUpdaterSupported(): boolean {
   return app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin');
+}
+
+function usesManualMacInstall(): boolean {
+  return process.platform === 'darwin';
 }
 
 function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
@@ -529,13 +548,14 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
     const candidates = resolveUpdateCandidates(currentUpdateConfig());
     if (candidates.length === 0) {
       const source = resolveConfiguredUpdateSource();
-      return setUpdateState({
-        status: 'error',
-        source: source.id,
-        sourceLabel: source.label,
-        sourceUrl: source.url,
-        attemptedSources: [],
-        percent: null,
+    return setUpdateState({
+      status: 'error',
+      source: source.id,
+      sourceLabel: source.label,
+      sourceUrl: source.url,
+      attemptedSources: [],
+      downloadedFilePath: null,
+      percent: null,
         errorMessage: '阿里云镜像源尚未配置',
         lastCheckedAt: Date.now(),
         message: '请先填写阿里云 OSS/CDN 镜像地址，或切换到 GitHub / GitHub 加速源'
@@ -567,6 +587,7 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
           setUpdateState({
             status: 'not_available',
             availableVersion: version,
+            downloadedFilePath: null,
             lastCheckedAt: Date.now(),
             message: `${candidate.label} 已确认当前为最新版本`
           });
@@ -614,12 +635,16 @@ function currentUpdateConfig(): AppConfig {
 
 function refreshUpdateSourceState(config: AppConfig): void {
   const source = resolveConfiguredUpdateSource(config);
+  downloadedUpdateFilePath = null;
   setUpdateState({
     status: isUpdaterSupported() ? 'idle' : 'unsupported',
     source: source.id,
     sourceLabel: source.label,
     sourceUrl: source.url,
     attemptedSources: [],
+    availableVersion: null,
+    downloadedVersion: null,
+    downloadedFilePath: null,
     percent: null,
     errorMessage: null,
     message: isUpdaterSupported() ? `更新源已切换为 ${source.label}` : '打包安装后可检查更新'
@@ -728,7 +753,18 @@ async function downloadUpdate(): Promise<UpdateSnapshot> {
       errorMessage: null,
       message: '正在下载更新...'
     });
-    await autoUpdater.downloadUpdate();
+    const downloadedFiles = await autoUpdater.downloadUpdate();
+    downloadedUpdateFilePath = pickDownloadedUpdateFile(downloadedFiles);
+    if (getUpdateState().status === 'downloaded') {
+      const version = getUpdateState().downloadedVersion ?? getUpdateState().availableVersion;
+      setUpdateState({
+        downloadedFilePath: downloadedUpdateFilePath,
+        installMode: usesManualMacInstall() ? 'manual' : 'auto',
+        message: usesManualMacInstall()
+          ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
+          : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
+      });
+    }
     return getUpdateState();
   } catch (error) {
     const errorMessage = formatUpdateError(error);
@@ -748,6 +784,22 @@ function installDownloadedUpdate(): UpdateSnapshot {
     return current;
   }
 
+  if (usesManualMacInstall()) {
+    const filePath = downloadedUpdateFilePath ?? current.downloadedFilePath;
+    if (filePath) {
+      shell.showItemInFolder(filePath);
+      return setUpdateState({
+        message: '已在 Finder 中显示安装包。请解压后将新版 App 拖入“应用程序”并替换旧版本。'
+      });
+    }
+
+    return setUpdateState({
+      status: 'error',
+      errorMessage: '找不到已下载的更新包，请重新下载',
+      message: '找不到已下载的更新包，请重新下载'
+    });
+  }
+
   isQuitting = true;
   setImmediate(() => {
     autoUpdater.quitAndInstall(false, true);
@@ -755,8 +807,21 @@ function installDownloadedUpdate(): UpdateSnapshot {
   return current;
 }
 
+function pickDownloadedUpdateFile(paths: string[] | string | null | undefined): string | null {
+  const list = Array.isArray(paths) ? paths : typeof paths === 'string' ? [paths] : [];
+  if (list.length === 0) {
+    return null;
+  }
+
+  return list.find((item) => /\.(zip|dmg|exe|msi)$/i.test(item)) ?? list[0] ?? null;
+}
+
 function formatUpdateError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
+  if (/code signature|did not pass validation|ShipIt|签名/i.test(raw)) {
+    return 'macOS 自动替换需要签名安装包。当前版本已改为下载后手动打开安装包，请重新下载新版。';
+  }
+
   if (/github|api\.github|release|latest\.yml/i.test(raw)) {
     return '无法连接 GitHub 更新源，请稍后重试或手动下载新版安装包';
   }
@@ -1433,7 +1498,7 @@ function updateTrayLabel(): string {
     case 'downloading':
       return state.percent === null ? '正在下载更新...' : `正在下载更新 ${Math.round(state.percent)}%`;
     case 'downloaded':
-      return '重启并安装更新';
+      return state.installMode === 'manual' ? '打开已下载的安装包' : '重启并安装更新';
     case 'error':
       return '检查更新失败，重试';
     case 'unsupported':

@@ -74,7 +74,10 @@ export class ConfigStore {
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       updateSource: updateSourceValue(merged.updateSource),
-      aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl)
+      aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
+      atemEnabled: booleanValue(merged.atemEnabled, DEFAULT_CONFIG.atemEnabled),
+      atemHost: stringValue(merged.atemHost, DEFAULT_CONFIG.atemHost).trim() || DEFAULT_CONFIG.atemHost,
+      atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal)
     };
   }
 

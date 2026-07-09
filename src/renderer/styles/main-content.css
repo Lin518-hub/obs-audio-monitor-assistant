@@ -38,6 +38,18 @@
   color: var(--text-muted);
   font-size: 13px;
 }
+.page-title-badge {
+  display:inline-flex;
+  align-items:center;
+  height:24px;
+  padding:0 10px;
+  border-radius:var(--r-pill);
+  background:var(--blue-soft);
+  color:var(--blue-text);
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:0.08em;
+}
 .page-header-actions { display: flex; align-items: center; gap: var(--s-2); }
 
 .btn-primary {
@@ -112,6 +124,138 @@
 }
 .input:focus { border-color: var(--green-400); box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12); }
 .input::placeholder { color: var(--text-faint); }
+
+/* ====== ATEM Beta ====== */
+.atem-workbench {
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:var(--s-4);
+}
+.atem-stage-card,
+.atem-status-card {
+  min-height:160px;
+  padding:var(--s-5);
+  border-radius:var(--r-xl);
+  border:1px solid var(--glass-border);
+  background:var(--glass-bg);
+  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow:var(--glass-shadow);
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  overflow:hidden;
+}
+.atem-stage-card span,
+.atem-status-card span {
+  color:var(--text-muted);
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+}
+.atem-stage-card strong {
+  color:var(--text-primary);
+  font-size:64px;
+  line-height:0.95;
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+}
+.atem-stage-card em,
+.atem-status-card em {
+  color:var(--text-secondary);
+  font-size:13px;
+  font-style:normal;
+  line-height:1.45;
+}
+.atem-stage-card.program {
+  background:linear-gradient(135deg, var(--red-soft), var(--glass-bg-strong));
+  border-color:rgba(185, 28, 28, 0.18);
+}
+.atem-stage-card.preview {
+  background:linear-gradient(135deg, var(--green-100), var(--glass-bg-strong));
+  border-color:var(--event-green-border);
+}
+.atem-status-card strong {
+  color:var(--text-primary);
+  font-size:24px;
+  font-weight:900;
+}
+.atem-input-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(128px, 1fr));
+  gap:var(--s-3);
+}
+.atem-input-button,
+.atem-auto-button {
+  min-height:92px;
+  padding:var(--s-3);
+  border-radius:var(--r-lg);
+  border:1px solid var(--glass-border);
+  background:var(--glass-bg);
+  color:var(--text-primary);
+  text-align:left;
+  box-shadow:var(--glass-shadow);
+  transition:transform 220ms var(--ease-spring-soft), border-color 180ms var(--ease-out-soft), background 180ms var(--ease-out-soft);
+}
+.atem-input-button:hover,
+.atem-auto-button:hover {
+  transform:translateY(-2px);
+  border-color:var(--green-300);
+  background:var(--glass-bg-strong);
+}
+.atem-input-button span {
+  display:inline-grid;
+  place-items:center;
+  width:26px;
+  height:26px;
+  border-radius:var(--r-sm);
+  background:var(--green-100);
+  color:var(--green-700);
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+}
+.atem-input-button strong {
+  display:block;
+  margin-top:10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:13px;
+}
+.atem-input-button em {
+  display:block;
+  margin-top:3px;
+  color:var(--text-muted);
+  font-size:11.5px;
+  font-style:normal;
+}
+.atem-input-button.program {
+  background:var(--red-soft);
+  border-color:rgba(185, 28, 28, 0.22);
+}
+.atem-input-button.program span {
+  background:#FEE2E2;
+  color:var(--red-text);
+}
+.atem-input-button.preview {
+  background:var(--green-50);
+  border-color:var(--event-green-border);
+}
+.atem-auto-button {
+  display:grid;
+  place-items:center;
+  text-align:center;
+  background:linear-gradient(135deg, var(--green-500), var(--green-700));
+  color:var(--neutral-0);
+  font-weight:900;
+  font-size:16px;
+  border-color:transparent;
+}
+
+@media (max-width: 900px) {
+  .atem-workbench { grid-template-columns:1fr; }
+}
 
 /* ====== 状态横幅(参考图里的事件块风格) ====== */
 .status-banner {

@@ -67,6 +67,7 @@ export type UpdateStatus =
   | 'error';
 
 export type UpdateSource = 'auto' | 'github' | 'gh_proxy' | 'ghproxy_net' | 'aliyun';
+export type UpdateInstallMode = 'auto' | 'manual';
 
 export interface UpdateSnapshot {
   status: UpdateStatus;
@@ -77,6 +78,8 @@ export interface UpdateSnapshot {
   currentVersion: string;
   availableVersion: string | null;
   downloadedVersion: string | null;
+  downloadedFilePath: string | null;
+  installMode: UpdateInstallMode;
   percent: number | null;
   message: string;
   lastCheckedAt: number | null;
@@ -100,6 +103,26 @@ export interface ATEMTestResult {
   message: string;
   inputCount: number;
   modelName?: string;
+}
+
+/** ATEM 局域网发现设备 (beta) */
+export interface ATEMDiscoveredDevice {
+  host: string;
+  label: string;
+  inputCount: number;
+  modelName?: string;
+  interfaceName?: string;
+  network?: string;
+  message: string;
+}
+
+/** ATEM 局域网扫描结果 (beta) */
+export interface ATEMScanResult {
+  ok: boolean;
+  message: string;
+  scannedHosts: number;
+  interfaces: string[];
+  devices: ATEMDiscoveredDevice[];
 }
 
 export interface AppConfig {

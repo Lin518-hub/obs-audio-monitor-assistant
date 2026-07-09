@@ -211,7 +211,7 @@
 .settings-field-label { font-size:11.5px; font-weight:700; color:var(--text-secondary); letter-spacing:0.04em; text-transform:uppercase; }
 .settings-field-row { display:flex; gap:var(--s-3); }
 .settings-field-row .settings-field { flex:1; min-width:0; }
-.settings-inline-row { display:flex; align-items:center; gap:8px; }
+.settings-inline-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .settings-inline-row-main { flex:1; min-width:0; }
 .settings-hint { padding:10px 14px; border-radius:var(--r-md); font-size:12px; line-height:1.5; background:var(--green-50); color:var(--green-700); border:1px solid var(--green-200); }
 .settings-hint.warn { background:var(--yellow-soft); color:var(--yellow-text); border-color:var(--event-yellow-border); }
@@ -377,6 +377,62 @@
 .atem-status-dot.connected { background:var(--green-500); }
 .atem-status-dot.connecting { background:var(--yellow-text); animation:pulse-soft 1.2s ease-in-out infinite; }
 .atem-status-dot.error { background:var(--red-text); }
+.atem-scan-meta {
+  color:var(--text-muted);
+  font-weight:600;
+}
+.atem-discovery-list {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:8px;
+}
+.atem-device-card {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--s-3);
+  padding:12px;
+  border-radius:var(--r-md);
+  background:var(--glass-bg-soft);
+  border:1px solid var(--glass-border);
+  text-align:left;
+  transition:border-color 180ms var(--ease-out-soft), background 180ms var(--ease-out-soft), transform 180ms var(--ease-out-soft), box-shadow 180ms var(--ease-out-soft);
+}
+.atem-device-card:hover {
+  transform:translateY(-1px);
+  background:var(--glass-bg);
+  border-color:var(--green-300);
+}
+.atem-device-card.active {
+  background:var(--green-50);
+  border-color:var(--event-green-border);
+  box-shadow:0 0 0 3px rgba(34, 197, 94, 0.10);
+}
+.atem-device-card span { min-width:0; }
+.atem-device-card strong {
+  display:block;
+  color:var(--text-primary);
+  font-size:12.5px;
+  font-weight:800;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.atem-device-card em {
+  display:block;
+  margin-top:3px;
+  color:var(--text-muted);
+  font-size:11.5px;
+  font-style:normal;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.atem-device-card b {
+  flex-shrink:0;
+  color:var(--green-700);
+  font-size:12px;
+}
 .atem-input-list {
   display:flex;
   flex-wrap:wrap;
@@ -422,6 +478,7 @@
   .settings-inline-row,
   .atem-status-hint { flex-direction:column; align-items:stretch; }
   .update-source-grid,
+  .atem-discovery-list,
   .diagnostics-grid { grid-template-columns:1fr; }
   .about-row { align-items:flex-start; gap:var(--s-2); flex-direction:column; }
   .about-row>strong { text-align:left; }

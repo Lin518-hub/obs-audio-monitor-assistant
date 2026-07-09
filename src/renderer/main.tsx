@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './ipc';
@@ -74,9 +74,6 @@ function SettingsApp() {
   const [showManual, setShowManual] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
-  const [developerMode, setDeveloperMode] = useState(false);
-  const aboutClickCount = useRef(0);
-  const aboutClickTimer = useRef<NodeJS.Timeout | null>(null);
 
   const { saveState, scheduleSave, flushSave } = useAutoSave();
 
@@ -90,9 +87,9 @@ function SettingsApp() {
     setSearch('');
   }, [page]);
 
-  // ATEM 非全局快捷键：数字键 1-9 选 Preview，Enter 执行 AUTO（仅开发者模式）
+  // ATEM Beta 应用内快捷键：ATEM 页面中数字键 1-9 选 Preview，Enter 执行 AUTO。
   useEffect(() => {
-    if (!developerMode || !snapshot || !snapshot.config.atemEnabled || snapshot.config.atemHotkeyGlobal) return;
+    if (page !== 'atem' || !snapshot || !snapshot.config.atemEnabled || snapshot.config.atemHotkeyGlobal) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // 忽略输入框内的按键
@@ -111,7 +108,7 @@ function SettingsApp() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [snapshot, developerMode]);
+  }, [snapshot, page]);
 
   const updateDraft = useCallback(
     <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
@@ -159,8 +156,6 @@ function SettingsApp() {
     } catch { /* ignore */ }
   }, []);
 
-  // 开发者模式：点击 5 次"关于"解锁实验功能
-
   if (!snapshot || !draft) {
     return <div className="boot-screen">正在启动 OBS 音频检测助手…</div>;
   }
@@ -189,7 +184,7 @@ function SettingsApp() {
   };
 
   const liveModeLabel = snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播';
-  const pageTitle = page === 'dashboard' ? liveModeLabel : '报警历史';
+  const pageTitle = page === 'dashboard' ? liveModeLabel : page === 'atem' ? 'ATEM 导播台' : '报警历史';
   const hasUpdateNotice = updateState ? ['available', 'downloaded', 'error'].includes(updateState.status) : false;
 
   // 主中栏内容(根据 page 切换)
@@ -222,42 +217,82 @@ function SettingsApp() {
             onToggleFloating={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}
             onReconnect={() => void window.obsGuard.reconnect()}
           />
+        </>
+      )}
 
-          {/* ATEM 导播台状态 — 仅开发者模式可见 */}
-          {developerMode && snapshot.config.atemEnabled && (
-            <div className="event-list">
-              <div className="event-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                  <div className="event-time tone-blue">
-                    <Video size={18} />
-                  </div>
-                  <div className="event-body">
-                    <div className="event-title">ATEM 导播台</div>
-                    <div className="event-meta">
-                      {snapshot.atemConnected
-                        ? `PGM: ${snapshot.atemProgramInput}  ·  PVW: ${snapshot.atemPreviewInput}`
-                        : '未连接 — 请在设置中配置 ATEM IP'}
-                    </div>
-                  </div>
-                </div>
-                {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, width: '100%' }}>
-                    {Array.from({ length: Math.min(snapshot.atemInputCount, 8) }, (_, i) => i + 1).map((num) => {
-                      const isProgram = num === snapshot.atemProgramInput;
-                      const isPreview = num === snapshot.atemPreviewInput;
-                      return (
-                        <span key={num} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 8px', borderRadius: 10, fontSize: 11.5, fontWeight: 600,
-                          background: isProgram ? 'var(--red-soft)' : isPreview ? 'var(--green-50)' : 'var(--neutral-100)',
-                          color: isProgram ? 'var(--red-text)' : isPreview ? 'var(--green-700)' : 'var(--text-secondary)',
-                          border: isProgram ? '1px solid rgba(239,68,68,0.3)' : '1px solid var(--glass-border)' }}
-                        >
-                          {num}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+      {page === 'atem' && (
+        <>
+          <div className="page-header">
+            <div className="page-header-title">
+              <h1>
+                <span>ATEM 导播台</span>
+                <span className="page-title-badge">BETA</span>
+              </h1>
+              <p className="page-header-subtitle">
+                显示当前 PGM / PVW 机位，并支持数字键选择预览机位
+              </p>
+            </div>
+            <div className="page-header-actions">
+              <button type="button" className="btn-secondary" onClick={() => openSettings('atem')}>
+                配置 ATEM
+              </button>
+              <button type="button" className="btn-primary" onClick={() => void window.obsGuard.atemReconnect()} disabled={!snapshot.config.atemEnabled}>
+                重连导播台
+              </button>
+            </div>
+          </div>
+
+          <div className={`atem-workbench ${snapshot.atemConnected ? 'connected' : ''}`}>
+            <div className="atem-stage-card program">
+              <span>PGM 播出</span>
+              <strong>{snapshot.atemProgramInput || '--'}</strong>
+              <em>{snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取到播出机位'}</em>
+            </div>
+            <div className="atem-stage-card preview">
+              <span>PVW 预览</span>
+              <strong>{snapshot.atemPreviewInput || '--'}</strong>
+              <em>{snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取到预览机位'}</em>
+            </div>
+            <div className="atem-status-card">
+              <span>连接状态</span>
+              <strong>{snapshot.config.atemEnabled ? (snapshot.atemConnected ? '已连接' : snapshot.atemConnectionState === 'connecting' ? '连接中' : '未连接') : '未启用'}</strong>
+              <em>{snapshot.config.atemEnabled ? `地址 ${snapshot.config.atemHost}` : '请先在设置中启用 ATEM Beta'}</em>
+            </div>
+          </div>
+
+          {!snapshot.config.atemEnabled && (
+            <div className="settings-hint warn">
+              ATEM Beta 默认不连接硬件。点击“配置 ATEM”后开启连接，并使用“查找导播台”扫描同网段设备。
+            </div>
+          )}
+
+          {snapshot.config.atemEnabled && !snapshot.atemConnected && (
+            <div className="settings-hint warn">
+              暂未连接 ATEM。请确认导播台和电脑在同一局域网，或进入设置使用“查找导播台”选择设备 IP。
+            </div>
+          )}
+
+          {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
+            <div className="atem-input-grid">
+              {Array.from({ length: snapshot.atemInputCount }, (_, i) => i + 1).map((num) => {
+                const isProgram = num === snapshot.atemProgramInput;
+                const isPreview = num === snapshot.atemPreviewInput;
+                return (
+                  <button
+                    type="button"
+                    key={num}
+                    className={`atem-input-button ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
+                    onClick={() => void window.obsGuard.changePreviewInput(num)}
+                  >
+                    <span>{num}</span>
+                    <strong>{snapshot.atemInputLabels[num] || `Input ${num}`}</strong>
+                    <em>{isProgram ? 'PGM' : isPreview ? 'PVW' : '选为 PVW'}</em>
+                  </button>
+                );
+              })}
+              <button type="button" className="atem-auto-button" onClick={() => void window.obsGuard.autoTransition()}>
+                AUTO 切换
+              </button>
             </div>
           )}
         </>
@@ -296,7 +331,7 @@ function SettingsApp() {
       />
       <section className="app-main-content">
         <TopBar
-          searchPlaceholder={page === 'history' ? '搜索报警记录…' : '搜索音源、历史记录…'}
+          searchPlaceholder={page === 'history' ? '搜索报警记录…' : page === 'atem' ? '搜索 ATEM 机位…' : '搜索音源、历史记录…'}
           onSearchChange={setSearch}
           saveLabel={saveLabel}
           onNotifications={() => openSettings('updates')}

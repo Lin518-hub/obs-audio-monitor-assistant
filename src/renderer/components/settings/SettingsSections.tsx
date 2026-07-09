@@ -20,7 +20,7 @@ import {
   Trash2,
   Video
 } from 'lucide-react';
-import type { AppConfig, AppSnapshot, ATEMTestResult, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
+import type { AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
 import { snapshotTargetName } from '../../utils/status';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
 import { SourcePicker } from './SourcePicker';
@@ -82,7 +82,9 @@ export const ATEMSection: React.FC<{
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, snapshot, onChange }) => {
   const [testing, setTesting] = React.useState(false);
+  const [scanning, setScanning] = React.useState(false);
   const [testResult, setTestResult] = React.useState<ATEMTestResult | null>(null);
+  const [scanResult, setScanResult] = React.useState<ATEMScanResult | null>(null);
 
   const handleTestConnection = React.useCallback(async () => {
     if (!draft.atemHost) return;
@@ -93,6 +95,17 @@ export const ATEMSection: React.FC<{
       setTestResult(result);
     } finally {
       setTesting(false);
+    }
+  }, [draft.atemHost]);
+
+  const handleScanNetwork = React.useCallback(async () => {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const result = await window.obsGuard.scanATEMNetwork(draft.atemHost);
+      setScanResult(result);
+    } finally {
+      setScanning(false);
     }
   }, [draft.atemHost]);
 
@@ -142,12 +155,57 @@ export const ATEMSection: React.FC<{
                 <RefreshCw size={14} className={testing ? 'spin' : ''} />
                 {testing ? '检测中…' : '检测连接'}
               </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void handleScanNetwork()}
+                disabled={scanning}
+              >
+                <Route size={14} className={scanning ? 'spin' : ''} />
+                {scanning ? '查找中…' : '查找导播台'}
+              </button>
             </div>
           </div>
 
           {testResult && (
             <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>
               {testResult.message}
+            </div>
+          )}
+
+          {(scanning || scanResult) && (
+            <div className={`diagnostic-result ${scanResult?.ok ? 'ok' : scanning ? 'pending' : 'bad'}`}>
+              {scanning ? '正在扫描本机局域网中的 ATEM 导播台…' : scanResult?.message}
+              {scanResult && (
+                <span className="atem-scan-meta"> 已扫描 {scanResult.scannedHosts} 个地址{scanResult.interfaces.length > 0 ? ` · ${scanResult.interfaces.join(' / ')}` : ''}</span>
+              )}
+            </div>
+          )}
+
+          {scanResult && scanResult.devices.length > 0 && (
+            <div className="atem-discovery-list">
+              {scanResult.devices.map((device) => (
+                <button
+                  type="button"
+                  key={device.host}
+                  className={`atem-device-card ${device.host === draft.atemHost ? 'active' : ''}`}
+                  onClick={() => {
+                    onChange('atemHost', device.host);
+                    setTestResult({
+                      ok: true,
+                      message: device.message,
+                      inputCount: device.inputCount,
+                      modelName: device.modelName
+                    });
+                  }}
+                >
+                  <span>
+                    <strong>{device.label}</strong>
+                    <em>{device.network || '局域网'}{device.interfaceName ? ` · ${device.interfaceName}` : ''}</em>
+                  </span>
+                  <b>{device.inputCount || '--'} 路</b>
+                </button>
+              ))}
             </div>
           )}
 
@@ -484,7 +542,9 @@ const updateTitle = (state: UpdateSnapshot) => {
   switch (state.status) {
     case 'available': return state.availableVersion ? `发现 v${state.availableVersion}` : '发现新版本';
     case 'downloading': return '正在下载更新';
-    case 'downloaded': return state.downloadedVersion ? `v${state.downloadedVersion} 已准备好` : '更新已准备好';
+    case 'downloaded': return state.downloadedVersion
+      ? `v${state.downloadedVersion} 已下载`
+      : '更新已下载';
     case 'error': return '更新源暂时不可用';
     case 'not_available': return '当前为最新版本';
     case 'checking': return '正在检查更新';
@@ -540,7 +600,7 @@ export const UpdatesSection: React.FC<{
           )}
           {canInstall && (
             <button type="button" className="btn-primary" onClick={onInstall}>
-              <Power size={14} /> 重启安装
+              <Power size={14} /> {updateState.installMode === 'manual' ? '打开安装包' : '重启安装'}
             </button>
           )}
         </div>
