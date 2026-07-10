@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Mic2, RefreshCw, Search } from 'lucide-react';
 import type { InputOption } from '../../../shared/types';
 import { readableInputKind } from '../../utils/status';
@@ -16,6 +17,7 @@ interface MenuPosition {
   top: number;
   left: number;
   width: number;
+  maxHeight: number;
 }
 
 export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, values, onChange, onChangeMany, onRefresh }) => {
@@ -23,7 +25,7 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
   const [query, setQuery] = useState('');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [menuPos, setMenuPos] = useState<MenuPosition>({ top: 0, left: 0, width: 0 });
+  const [menuPos, setMenuPos] = useState<MenuPosition>({ top: 0, left: 0, width: 0, maxHeight: 320 });
 
   const selectedValues = values && values.length > 0 ? values : value ? [value] : [];
   const selected = inputs.find((input) => input.inputName === selectedValues[0]);
@@ -32,15 +34,22 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
     input.inputName.toLowerCase().includes(query.trim().toLowerCase())
   );
 
-  // 计算菜单的 fixed 坐标(跳出 settings-content 的裁剪上下文)
+  // 计算菜单的 viewport 坐标；菜单通过 portal 挂到 body，避免被设置弹窗裁切。
   const computePos = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
+    const margin = 14;
+    const preferredHeight = 344;
+    const below = window.innerHeight - rect.bottom - margin;
+    const above = rect.top - margin;
+    const shouldOpenAbove = below < 240 && above > below;
+    const maxHeight = Math.max(220, Math.min(preferredHeight, shouldOpenAbove ? above : below));
     setMenuPos({
-      top: rect.bottom + 6,
+      top: shouldOpenAbove ? Math.max(margin, rect.top - maxHeight - 8) : rect.bottom + 8,
       left: rect.left,
-      width: rect.width
+      width: rect.width,
+      maxHeight
     });
   }, []);
 
@@ -110,7 +119,7 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
         <ChevronDown size={18} className={open ? 'rotate' : ''} />
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
           ref={menuRef}
           className="source-picker-menu"
@@ -118,7 +127,8 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
             position: 'fixed',
             top: `${menuPos.top}px`,
             left: `${menuPos.left}px`,
-            width: `${menuPos.width}px`
+            width: `${menuPos.width}px`,
+            maxHeight: `${menuPos.maxHeight}px`
           }}
         >
           <div className="source-picker-search">
@@ -170,7 +180,8 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
             <RefreshCw size={13} />
             重新读取 OBS 音源
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

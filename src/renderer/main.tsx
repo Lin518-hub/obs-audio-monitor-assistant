@@ -432,7 +432,6 @@ function MonitoringDashboard({ snapshot, search }: { snapshot: NonNullable<Retur
   const query = search.trim().toLowerCase();
   const inputMonitors = snapshot.inputMonitors.filter((input) => !query || input.inputName.toLowerCase().includes(query));
   const recentEvents = snapshot.silenceEvents.filter((entry) => !query || entry.inputName.toLowerCase().includes(query)).slice(0, 8);
-  const historyPoints = snapshot.volumeHistory.slice(-80);
   const stats = snapshot.obsStats;
   const skippedFrames = stats.outputSkippedFrames !== null && stats.outputTotalFrames
     ? `${stats.outputSkippedFrames}/${stats.outputTotalFrames}`
@@ -445,17 +444,7 @@ function MonitoringDashboard({ snapshot, search }: { snapshot: NonNullable<Retur
           <span><BarChart3 size={18} /> 音量历史</span>
           <em>最近 10 分钟</em>
         </div>
-        <div className="volume-history-chart">
-          {historyPoints.length === 0 ? (
-            <div className="empty-block compact">暂无电平数据</div>
-          ) : historyPoints.map((point, index) => (
-            <span
-              key={`${point.inputName}-${point.timestamp}-${index}`}
-              style={{ height: `${Math.max(4, Math.min(100, ((point.levelDb ?? -90) + 90) / 90 * 100))}%` }}
-              title={`${point.inputName}: ${formatDb(point.levelDb)}`}
-            />
-          ))}
-        </div>
+        <VolumeHistoryPanel snapshot={snapshot} query={query} />
       </section>
 
       <section className="monitor-card">
@@ -507,6 +496,140 @@ function MonitoringDashboard({ snapshot, search }: { snapshot: NonNullable<Retur
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+function VolumeHistoryPanel({ snapshot, query }: { snapshot: NonNullable<ReturnType<typeof useSnapshot>>; query: string }) {
+  const selectedNames = snapshot.config.targetInputNames.length > 0
+    ? snapshot.config.targetInputNames
+    : snapshot.config.targetInputName
+      ? [snapshot.config.targetInputName]
+      : [];
+  const selectedSet = new Set(selectedNames);
+  const selectedMonitors = snapshot.inputMonitors.filter((input) => input.selected);
+  const normalCount = selectedMonitors.filter((input) => input.status === 'normal').length;
+  const silentCount = selectedMonitors.filter((input) => input.status === 'silent').length;
+  const missingCount = selectedMonitors.filter((input) => input.status === 'missing_meter').length;
+  const earliestSilent = [...selectedMonitors]
+    .filter((input) => input.status === 'silent')
+    .sort((a, b) => (a.secondsUntilAlert ?? Number.MAX_SAFE_INTEGER) - (b.secondsUntilAlert ?? Number.MAX_SAFE_INTEGER))[0];
+  const sourceNames = selectedNames.length > 0 ? selectedNames : Array.from(new Set(snapshot.volumeHistory.map((point) => point.inputName)));
+  const visibleNames = sourceNames
+    .filter((name) => !query || name.toLowerCase().includes(query))
+    .slice(0, 6);
+  const historyPoints = snapshot.volumeHistory
+    .filter((point) => visibleNames.includes(point.inputName))
+    .slice(-900);
+
+  if (historyPoints.length === 0) {
+    return (
+      <div className="volume-history-empty">
+        <strong>暂无可绘制的音量数据</strong>
+        <span>连接 OBS、选择音源并开始直播或模拟开播后，这里会显示每一路音源的电平走势。</span>
+      </div>
+    );
+  }
+
+  const minTime = Math.min(...historyPoints.map((point) => point.timestamp));
+  const maxTime = Math.max(...historyPoints.map((point) => point.timestamp));
+  const span = Math.max(1, maxTime - minTime);
+  const width = 720;
+  const height = 180;
+  const left = 34;
+  const right = 18;
+  const top = 16;
+  const bottom = 26;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const colors = ['#16A34A', '#2563EB', '#F59E0B', '#DC2626', '#7C3AED', '#0891B2'];
+  const yFromDb = (levelDb: number | null) => {
+    const safeDb = Math.max(-90, Math.min(0, levelDb ?? -90));
+    return top + (1 - (safeDb + 90) / 90) * plotHeight;
+  };
+  const xFromTime = (timestamp: number) => left + ((timestamp - minTime) / span) * plotWidth;
+  const series = visibleNames
+    .map((name, index) => {
+      const points = historyPoints.filter((point) => point.inputName === name).slice(-180);
+      const path = points.map((point, pointIndex) => {
+        const x = xFromTime(point.timestamp).toFixed(1);
+        const y = yFromDb(point.levelDb).toFixed(1);
+        return `${pointIndex === 0 ? 'M' : 'L'} ${x} ${y}`;
+      }).join(' ');
+      const area = points.length > 0
+        ? `${path} L ${xFromTime(points[points.length - 1].timestamp).toFixed(1)} ${top + plotHeight} L ${xFromTime(points[0].timestamp).toFixed(1)} ${top + plotHeight} Z`
+        : '';
+      const latest = points[points.length - 1]?.levelDb ?? null;
+      return { name, color: colors[index % colors.length], points, path, area, latest };
+    })
+    .filter((item) => item.points.length > 0);
+
+  return (
+    <div className="volume-history-panel">
+      <div className="multi-source-rule">
+        <div>
+          <strong>{selectedNames.length > 1 ? `${selectedNames.length} 路独立守护` : selectedNames.length === 1 ? '单路独立守护' : '尚未选择音源'}</strong>
+          <span>{selectedNames.length > 0 ? '每一路单独计时，不做平均；任意一路连续静音超时都会报警。' : '请先在设置里选择需要守护的麦克风、声卡或主混音。'}</span>
+        </div>
+        <div className="multi-source-counts">
+          <span className="ok">正常 {normalCount}</span>
+          <span className="warn">静音 {silentCount}</span>
+          <span>无数据 {missingCount}</span>
+        </div>
+      </div>
+
+      {earliestSilent && (
+        <div className="multi-source-alert-note">
+          当前按 <strong>{earliestSilent.inputName}</strong> 计算报警，{earliestSilent.secondsUntilAlert ?? 0}s 后触发。
+        </div>
+      )}
+
+      <div className="volume-history-chart">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="音量历史折线图" preserveAspectRatio="none">
+          <defs>
+            {series.map((item, index) => (
+              <linearGradient id={`volume-area-${index}`} key={item.name} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={item.color} stopOpacity="0.22" />
+                <stop offset="100%" stopColor={item.color} stopOpacity="0.02" />
+              </linearGradient>
+            ))}
+          </defs>
+          {[-90, -60, -30, 0].map((db) => (
+            <g key={db}>
+              <line x1={left} x2={width - right} y1={yFromDb(db)} y2={yFromDb(db)} className="volume-grid-line" />
+              <text x={10} y={yFromDb(db) + 4} className="volume-grid-label">{db}</text>
+            </g>
+          ))}
+          {series.map((item, index) => (
+            <g key={item.name}>
+              <path d={item.area} fill={`url(#volume-area-${index})`} />
+              <path d={item.path} fill="none" stroke={item.color} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+              {item.points.length > 0 && (
+                <circle
+                  cx={xFromTime(item.points[item.points.length - 1].timestamp)}
+                  cy={yFromDb(item.latest)}
+                  r="4.2"
+                  fill={item.color}
+                  className="volume-latest-dot"
+                />
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <div className="volume-history-legend">
+        {series.map((item) => {
+          const watched = selectedSet.has(item.name);
+          return (
+            <span key={item.name} className={watched ? 'watched' : ''}>
+              <i style={{ background: item.color }} />
+              <b>{item.name}</b>
+              <em>{formatDb(item.latest)}</em>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
