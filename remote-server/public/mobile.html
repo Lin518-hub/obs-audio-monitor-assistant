@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#eaf6ee">
+  <title>直播远程监看</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="mobile-page">
+  <div id="mobile-app" class="mobile-app">
+    <header class="mobile-header">
+      <div class="brand-mark">声</div>
+      <div><strong>直播远程监看</strong><span id="device-subtitle">正在连接服务</span></div>
+      <span id="online-chip" class="status-chip offline">离线</span>
+    </header>
+
+    <main>
+      <section id="pair-view" class="auth-shell hidden">
+        <article class="auth-card">
+          <span class="eyebrow">首次访问申请</span>
+          <h1>连接直播间</h1>
+          <p>填写直播间名称后提交申请。当前浏览器会记住控制设备名称，管理员审批后才能查看状态和操作导播台。</p>
+          <label>直播间名称<input id="room-name" maxlength="60" autocomplete="organization" placeholder="例如：品牌 A 一号直播间"></label>
+          <label>控制设备名称<input id="client-name" maxlength="60" autocomplete="nickname" placeholder="例如：导播手机"></label>
+          <button id="request-access" class="primary touch-button">提交访问申请</button>
+          <p id="pair-error" class="form-error"></p>
+        </article>
+      </section>
+
+      <section id="pending-view" class="auth-shell hidden">
+        <article class="auth-card pending-card">
+          <div class="pending-pulse"><i></i></div>
+          <span class="eyebrow">等待管理员审批</span>
+          <h1 id="pending-room">访问申请已提交</h1>
+          <p>请保持此页面打开。审批通过后会自动进入远程监控面板。</p>
+          <button id="cancel-request" class="secondary touch-button">返回修改</button>
+        </article>
+      </section>
+
+      <section id="dashboard-view" class="hidden">
+        <div class="mobile-tabs" role="tablist">
+          <button data-tab="monitor" class="active">音频与机位</button>
+          <button data-tab="atem">导播切换</button>
+        </div>
+
+        <div id="monitor-tab" class="tab-panel">
+          <div class="mobile-grid">
+            <article class="mobile-card audio-card">
+              <header><span>音频守护</span><b id="audio-state-chip" class="state-pill">等待数据</b></header>
+              <div class="metric-row"><div><small id="audio-input">未选择音源</small><strong id="audio-status">--</strong></div><b id="audio-db">-- dB</b></div>
+              <div class="level-track"><i id="audio-level"></i><span id="audio-threshold"></span></div>
+              <footer><span id="audio-hint">等待电脑发送状态</span><em id="audio-silence">--</em></footer>
+            </article>
+
+            <article class="mobile-card camera-card">
+              <header><span>当前播出机位</span><b id="camera-state-chip" class="state-pill">等待数据</b></header>
+              <div class="camera-main"><div><small id="camera-number">PGM --</small><strong id="camera-name">未读取机位</strong></div><b id="camera-time">00:00</b></div>
+              <div class="time-track"><i id="camera-progress"></i></div>
+              <footer><span id="camera-hint">等待 ATEM 连接</span><em id="preview-summary">PVW --</em></footer>
+            </article>
+          </div>
+          <article class="mobile-card compact-card">
+            <header><span>OBS 运行状态</span><b id="obs-live" class="state-pill">未连接</b></header>
+            <div class="stats-row"><span><b id="obs-fps">--</b>FPS</span><span><b id="obs-cpu">--</b>CPU</span><span><b id="obs-bitrate">--</b>kbps</span></div>
+          </article>
+        </div>
+
+        <div id="atem-tab" class="tab-panel hidden">
+          <article class="mobile-card atem-control-card">
+            <header><span>选择预览信号</span><b id="atem-connection" class="state-pill">未连接</b></header>
+            <p class="safe-tip">点击机位只会进入 PVW，不会直接改变正在播出的画面。</p>
+            <div id="atem-inputs" class="touch-input-grid"></div>
+          </article>
+          <div class="program-strip"><span>PGM <b id="program-strip">--</b></span><span>PVW <b id="preview-strip">--</b></span></div>
+          <button id="auto-transition" class="auto-button touch-button" disabled>AUTO 切换</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="confirm-sheet" class="sheet-backdrop hidden">
+    <section class="confirm-sheet">
+      <i class="sheet-handle"></i>
+      <span class="eyebrow">切台确认</span>
+      <h2>执行 AUTO 切换？</h2>
+      <p id="confirm-copy">预览画面将切换到正在播出。</p>
+      <div class="sheet-actions"><button id="cancel-auto" class="secondary touch-button">取消</button><button id="confirm-auto" class="danger touch-button">确认切换</button></div>
+    </section>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/assets/mobile.js" defer></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "obs-audio-monitor-assistant",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "OBS audio monitor assistant for livestream operators, focused on silent microphone alerts during live commerce and production workflows.",
   "author": "OBS 音频检测助手",
   "license": "UNLICENSED",
@@ -26,15 +26,19 @@
     "electron-updater": "^6.8.9",
     "lucide-react": "^1.21.0",
     "obs-websocket-js": "^5.0.8",
+    "qrcode": "^1.5.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.3",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/ws": "^8.18.1",
     "concurrently": "^9.2.0",
-    "electron": "^36.4.0",
+    "electron": "^43.1.0",
     "electron-builder": "^26.0.12",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",

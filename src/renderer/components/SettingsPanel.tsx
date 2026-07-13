@@ -6,6 +6,7 @@ import {
   Info,
   Mic2,
   Monitor,
+  Smartphone,
   SlidersHorizontal,
   TestTube2,
   Video,
@@ -15,10 +16,10 @@ import type { AppConfig, AppSnapshot, TestConnectionResult, UpdateSnapshot } fro
 import { snapshotTargetName } from '../utils/status';
 import {
   AboutSection, ATEMSection, AudioSourceSection, ConnectionSection, DiagnosticsSection,
-  DisplaySection, HistorySection, RulesSection, SystemSection, UpdatesSection
+  DisplaySection, HistorySection, RemoteAccessSection, RulesSection, SystemSection, UpdatesSection
 } from './settings/SettingsSections';
 
-type SectionId = 'connection' | 'atem' | 'monitor' | 'window' | 'diagnostics' | 'updates' | 'history' | 'about';
+type SectionId = 'connection' | 'atem' | 'remote' | 'monitor' | 'window' | 'diagnostics' | 'updates' | 'history' | 'about';
 
 interface SettingsPanelProps {
   open: boolean;
@@ -51,6 +52,7 @@ interface TabItem {
 const tabs: TabItem[] = [
   { id: 'connection', label: 'OBS 连接', description: 'WebSocket', icon: Cable, group: '连接', visible: () => true },
   { id: 'atem', label: 'ATEM Beta', description: '导播台 / 机位', icon: Video, group: '连接', visible: () => true },
+  { id: 'remote', label: '手机远程', description: '扫码 / 审批', icon: Smartphone, group: '连接', visible: () => true },
   { id: 'monitor', label: '检测与报警', description: '音源 / 时长 / 阈值', icon: Mic2, group: '检测提醒', visible: () => true },
   { id: 'window', label: '窗口与后台', description: '浮窗 / 多屏 / 自启', icon: Monitor, group: '检测提醒', visible: () => true },
   { id: 'diagnostics', label: '诊断测试', description: '测试 / 维护', icon: TestTube2, group: '维护', visible: () => true },
@@ -71,6 +73,7 @@ const sectionForFocus = (focus?: string | null): SectionId => {
       return 'window';
     case 'diagnostics':
     case 'atem':
+    case 'remote':
     case 'updates':
     case 'history':
     case 'about':
@@ -158,6 +161,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
           <div className="settings-body">
             {active === 'connection' && <ConnectionSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
             {active === 'atem' && <ATEMSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
+            {active === 'remote' && <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />}
             {active === 'monitor' && (
               <>
                 <AudioSourceSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />

@@ -13,14 +13,17 @@ import {
   Monitor,
   Play,
   Power,
+  QrCode,
   RefreshCw,
   Route,
   TestTube2,
   Timer,
   Trash2,
   Video,
-  Volume2
+  Volume2,
+  Wifi
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import type { AlertSoundPreset, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, FloatingWindowMode, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
 import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
@@ -498,6 +501,7 @@ export const ATEMSection: React.FC<{
               id="atem-hotkey-global"
               title="全局切台快捷键"
               description="Num1–8 只选择 PVW，Enter 执行 AUTO 切换；开启后在其他软件中按 Enter 也会触发，请在直播前确认"
+              tone="danger"
               checked={draft.atemHotkeyGlobal}
               onChange={(v) => onChange('atemHotkeyGlobal', v)}
             />
@@ -744,6 +748,72 @@ export const SystemSection: React.FC<{
   </Section>
 );
 
+export const RemoteAccessSection: React.FC<{
+  draft: AppConfig;
+  snapshot: AppSnapshot;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+}> = ({ draft, snapshot, onChange }) => {
+  const [qrDataUrl, setQrDataUrl] = React.useState('');
+  const [copyLabel, setCopyLabel] = React.useState('复制扫码链接');
+
+  React.useEffect(() => {
+    let active = true;
+    if (!snapshot.remoteAccessPairUrl) {
+      setQrDataUrl('');
+      return () => { active = false; };
+    }
+    void QRCode.toDataURL(snapshot.remoteAccessPairUrl, {
+      width: 320, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#0F172A', light: '#FFFFFF' }
+    }).then((url) => { if (active) setQrDataUrl(url); });
+    return () => { active = false; };
+  }, [snapshot.remoteAccessPairUrl]);
+
+  const status = snapshot.remoteAccessConnected
+    ? { label: '远程服务已连接', tone: 'ok' }
+    : snapshot.remoteAccessConnectionState === 'connecting'
+      ? { label: '正在连接远程服务', tone: 'pending' }
+      : snapshot.remoteAccessErrorMessage
+        ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
+        : { label: '远程访问未启用', tone: 'idle' };
+
+  const copyPairUrl = async () => {
+    if (!snapshot.remoteAccessPairUrl) return;
+    await navigator.clipboard.writeText(snapshot.remoteAccessPairUrl);
+    setCopyLabel('已复制');
+    window.setTimeout(() => setCopyLabel('复制扫码链接'), 1500);
+  };
+
+  return (
+    <Section id="settings-remote" icon={QrCode} title="手机远程访问" description="扫码申请、移动监看和安全切台">
+      <ToggleRow
+        id="remote-access-enabled"
+        title="启用手机扫码访问"
+        description="电脑主动连接远程服务；手机必须经过管理员审批后才能查看或操作"
+        checked={draft.remoteAccessEnabled}
+        onChange={(value) => onChange('remoteAccessEnabled', value)}
+      />
+      <div className="settings-field">
+        <label className="settings-field-label" htmlFor="remote-server-url">远程服务地址</label>
+        <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="http://192.168.110.111:8088" />
+      </div>
+      <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
+      <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
+      <div className="remote-access-grid">
+        <div className="remote-qr-card">
+          {qrDataUrl ? <img src={qrDataUrl} alt="手机远程访问二维码" /> : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
+        </div>
+        <div className="remote-access-copy">
+          <strong>首次扫码需要审批</strong>
+          <p>手机输入直播间名称并提交申请，管理员在统一后台批准后，该浏览器才会进入监控面板。</p>
+          <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
+          <code>{snapshot.remoteAccessPairUrl || `${draft.remoteServerUrl}/pair/等待连接`}</code>
+        </div>
+      </div>
+      <div className="settings-hint warn">远程切台属于高风险操作。移动端仅允许选择 PVW 和确认后的 AUTO，不开放远程 Hard Cut；请只在可信局域网中启用。</div>
+    </Section>
+  );
+};
+
 // ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{
   snapshot: AppSnapshot;
@@ -947,6 +1017,7 @@ export const UpdatesSection: React.FC<{
         <div className="update-source-grid">
           {[
             { value: 'auto', title: '自动选择', desc: draft.aliyunUpdateBaseUrl ? '阿里云优先，失败后切换加速源和 GitHub' : '加速源优先，失败后切换 GitHub', icon: <Route size={16} /> },
+            { value: 'lan', title: '内部服务器', desc: '使用手机远程服务中的更新目录', icon: <Wifi size={16} /> },
             { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
             { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },
             { value: 'ghproxy_net', title: 'ghproxy.net', desc: '备用公共加速代理', icon: <Download size={16} /> },

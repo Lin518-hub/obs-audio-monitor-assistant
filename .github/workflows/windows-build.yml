@@ -10,6 +10,27 @@ permissions:
   contents: write
 
 jobs:
+  remote-server-tests:
+    name: Remote Server Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: remote-server/package-lock.json
+
+      - name: Install remote server dependencies
+        run: npm --prefix remote-server ci
+
+      - name: Test approval and command isolation
+        run: npm --prefix remote-server test
+
   windows:
     name: Windows Build
     runs-on: windows-latest
@@ -80,6 +101,7 @@ jobs:
     name: Publish Release
     runs-on: ubuntu-latest
     needs:
+      - remote-server-tests
       - windows
       - mac
     if: github.ref == 'refs/heads/main'

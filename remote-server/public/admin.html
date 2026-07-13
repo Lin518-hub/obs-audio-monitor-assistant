@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#eaf6ee">
+  <title>远程访问管理</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="admin-page">
+  <section id="admin-login" class="auth-shell">
+    <article class="auth-card admin-login-card">
+      <div class="brand-mark">管</div>
+      <span class="eyebrow">OBS 音频检测助手</span>
+      <h1>远程访问管理</h1>
+      <p>审批移动端访问、查看电脑在线状态，并管理内部更新文件。</p>
+      <label>管理员密码<input id="admin-password" type="password" autocomplete="current-password" placeholder="输入部署时设置的管理员密码"></label>
+      <button id="admin-login-button" class="primary touch-button">登录管理后台</button>
+      <p id="admin-login-error" class="form-error"></p>
+    </article>
+  </section>
+
+  <div id="admin-dashboard" class="admin-shell hidden">
+    <aside class="admin-sidebar">
+      <div class="admin-brand"><div class="brand-mark">声</div><div><strong>远程访问服务</strong><span>管理控制台</span></div></div>
+      <nav><button data-admin-tab="requests" class="active">访问审批 <b id="pending-count">0</b></button><button data-admin-tab="devices">电脑设备</button><button data-admin-tab="approvals">访问白名单</button><button data-admin-tab="updates">软件更新</button></nav>
+      <footer><i></i> 服务运行中</footer>
+    </aside>
+    <main class="admin-content">
+      <header><div><span class="eyebrow">统一管理</span><h1 id="admin-title">访问审批</h1></div><button id="refresh-admin" class="secondary touch-button">刷新</button></header>
+      <section id="requests-panel" class="admin-panel"><div id="request-list" class="admin-list"></div></section>
+      <section id="devices-panel" class="admin-panel hidden"><div id="device-list" class="admin-list"></div></section>
+      <section id="approvals-panel" class="admin-panel hidden"><div id="approval-list" class="admin-list"></div></section>
+      <section id="updates-panel" class="admin-panel hidden">
+        <article class="upload-card"><div><h2>内部更新文件</h2><p>上传安装包、blockmap 与 latest.yml。桌面端可将更新地址设置为本服务器的 /updates/。</p></div><label class="file-button">选择文件<input id="update-files" type="file" multiple></label></article>
+        <div id="upload-progress" class="upload-progress hidden"><i></i><span>正在上传</span></div>
+        <div id="update-list" class="admin-list"></div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

@@ -132,7 +132,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemInputCount: 0,
       atemProgramInputStartedAt: null,
       atemProgramInputElapsedSeconds: 0,
-      atemProgramInputOverLimit: false
+      atemProgramInputOverLimit: false,
+      remoteAccessConnectionState: 'disabled',
+      remoteAccessConnected: false,
+      remoteAccessPairUrl: null,
+      remoteAccessErrorMessage: null,
+      remoteAccessLastConnectedAt: null
     };
   }
 

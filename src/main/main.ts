@@ -7,6 +7,7 @@ import { getDisplays } from './display.js';
 import { HistoryStore } from './historyStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
+import { RemoteBridge, type RemoteCommand } from './RemoteBridge.js';
 import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +56,7 @@ let configStore: ConfigStore;
 let historyStore: HistoryStore;
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
+let remoteBridge: RemoteBridge;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
@@ -104,6 +106,8 @@ async function initializeApp(): Promise<void> {
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
   let config = await configStore.load();
+  // Persist generated remote UUID/secret and one-time config migrations.
+  config = await configStore.save(config);
   const systemAutoLaunchEnabled = getAutoLaunchEnabled();
   if (systemAutoLaunchEnabled && !config.autoLaunch) {
     config = await configStore.save({ ...config, autoLaunch: true });
@@ -115,7 +119,19 @@ async function initializeApp(): Promise<void> {
   monitor.setHistory(history);
 
   atemMonitor = new ATEMMonitor();
+  remoteBridge = new RemoteBridge();
   latestSnapshot = injectATEMState(monitor.getSnapshot());
+
+  remoteBridge.on('stateChanged', () => {
+    if (!latestSnapshot) return;
+    latestSnapshot = injectATEMState(latestSnapshot);
+    broadcastSnapshot(latestSnapshot);
+  });
+  remoteBridge.on('command', (command) => {
+    void handleRemoteCommand(command);
+  });
+  remoteBridge.updateSnapshot(latestSnapshot);
+  void remoteBridge.configure(config);
 
   void atemMonitor.setConfig(config.atemEnabled, config.atemHost, config.atemCameraTimeLimitSeconds).then(() => {
     const merged = injectATEMState(monitor.getSnapshot());
@@ -140,9 +156,10 @@ async function initializeApp(): Promise<void> {
   monitor.on('snapshot', (snapshot) => {
     const incoming = injectATEMState(snapshot);
     latestSnapshot = preserveSnapshotHistory(incoming);
-    broadcastSnapshot(incoming);
-    updateTray(incoming);
-    syncFloatingWindow(incoming);
+    broadcastSnapshot(latestSnapshot);
+    remoteBridge.updateSnapshot(latestSnapshot);
+    updateTray(latestSnapshot);
+    syncFloatingWindow(latestSnapshot);
     if (snapshot.preAlertVisible && !snapshot.alertVisible) {
       showPreAlertWindows(snapshot);
     } else {
@@ -166,6 +183,7 @@ async function initializeApp(): Promise<void> {
       const merged = injectATEMState(latestSnapshot);
       latestSnapshot = merged;
       broadcastSnapshot(merged);
+      remoteBridge.updateSnapshot(merged);
     }
   });
 
@@ -188,6 +206,7 @@ app.on('before-quit', () => {
   }
   void monitor?.stop();
   void atemMonitor?.stop();
+  void remoteBridge?.stop();
   closeAlertWindows('destroy');
   closeAlertBackdropWindows('destroy');
   closeToastAlertWindows('destroy');
@@ -221,12 +240,17 @@ async function applyAutoLaunch(enabled: boolean): Promise<void> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('snapshot:get', () => latestSnapshot ?? monitor.getSnapshot());
+  ipcMain.handle('snapshot:get', () => rendererSnapshot(latestSnapshot ?? monitor.getSnapshot()));
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
     const previous = (latestSnapshot ?? monitor.getSnapshot()).config;
+    const protectedPatch = {
+      ...patch,
+      remoteDeviceUuid: previous.remoteDeviceUuid,
+      remoteDeviceSecret: previous.remoteDeviceSecret
+    };
     const nextConfig = await configStore.save({
       ...previous,
-      ...patch
+      ...protectedPatch
     });
     if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
       await applyAutoLaunch(nextConfig.autoLaunch);
@@ -259,7 +283,10 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'atemHotkeyGlobal')) {
       syncATEMHotkeys();
     }
-    if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl')) {
+    if (Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'remoteServerUrl')) {
+      void remoteBridge.configure(nextConfig);
+    }
+    if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl') || Object.hasOwn(patch, 'remoteServerUrl')) {
       refreshUpdateSourceState(nextConfig);
     }
     return latestSnapshot;
@@ -361,23 +388,56 @@ function registerIpc(): void {
 // Merge ATEM state into an AppSnapshot
 function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
   const atem = atemMonitor?.getSnapshot();
-  if (!atem) {
-    return snapshot;
-  }
+  const remote = remoteBridge?.getSnapshot();
   return {
     ...snapshot,
-    atemConnected: atem.connected,
-    atemConnectionState: atem.connectionState,
-    atemModelName: atem.modelName,
-    atemProgramInput: atem.programInput,
-    atemPreviewInput: atem.previewInput,
-    atemInputIds: atem.inputIds,
-    atemInputLabels: atem.inputLabels,
-    atemInputCount: atem.inputCount,
-    atemProgramInputStartedAt: atem.programInputStartedAt,
-    atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
-    atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit
+    ...(atem ? {
+      atemConnected: atem.connected,
+      atemConnectionState: atem.connectionState,
+      atemModelName: atem.modelName,
+      atemProgramInput: atem.programInput,
+      atemPreviewInput: atem.previewInput,
+      atemInputIds: atem.inputIds,
+      atemInputLabels: atem.inputLabels,
+      atemInputCount: atem.inputCount,
+      atemProgramInputStartedAt: atem.programInputStartedAt,
+      atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
+      atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit
+    } : {}),
+    ...(remote ? {
+      remoteAccessConnectionState: remote.connectionState,
+      remoteAccessConnected: remote.connected,
+      remoteAccessPairUrl: remote.pairUrl,
+      remoteAccessErrorMessage: remote.errorMessage,
+      remoteAccessLastConnectedAt: remote.lastConnectedAt
+    } : {})
   };
+}
+
+async function handleRemoteCommand(command: RemoteCommand): Promise<void> {
+  const snapshot = latestSnapshot;
+  if (!snapshot?.config.remoteAccessEnabled) {
+    remoteBridge.sendCommandResult(command.id, false, '电脑未启用远程访问');
+    return;
+  }
+  try {
+    if (command.command === 'atem.preview') {
+      const input = Number(command.payload.input);
+      if (!Number.isInteger(input) || !snapshot.atemInputIds.includes(input)) throw new Error('目标信号源不可用');
+      await atemMonitor.changePreviewInput(input);
+      remoteBridge.sendCommandResult(command.id, true, '已选入 PVW');
+      return;
+    }
+    if (command.command === 'atem.auto') {
+      if (!snapshot.atemConnected || snapshot.atemPreviewInput <= 0) throw new Error('ATEM 未连接或没有 PVW 信号');
+      await atemMonitor.autoTransition();
+      remoteBridge.sendCommandResult(command.id, true, 'AUTO 切换已执行');
+      return;
+    }
+    remoteBridge.sendCommandResult(command.id, false, '不支持的远程操作');
+  } catch (error) {
+    remoteBridge.sendCommandResult(command.id, false, error instanceof Error ? error.message : '远程操作失败');
+  }
 }
 
 function preserveSnapshotHistory(snapshot: AppSnapshot): AppSnapshot {
@@ -716,7 +776,7 @@ function resolveConfiguredUpdateSource(config = currentUpdateConfig()): UpdateSo
   if (config.updateSource === 'auto') {
     return {
       id: 'auto',
-      label: config.aliyunUpdateBaseUrl ? '自动选择（阿里云优先）' : '自动选择（GitHub 加速优先）',
+      label: '自动选择（内部服务器优先）',
       url: null
     };
   }
@@ -735,7 +795,12 @@ function resolveUpdateCandidates(config: AppConfig): UpdateCandidate[] {
 
 function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): UpdateCandidate[] {
   const aliyunUrl = normalizeUpdateBaseUrl(config.aliyunUpdateBaseUrl);
+  const lanUrl = normalizeUpdateBaseUrl(`${config.remoteServerUrl}/updates`);
   const candidates: UpdateCandidate[] = [];
+
+  if ((config.updateSource === 'lan' || includeFallbacks) && lanUrl) {
+    candidates.push(genericUpdateCandidate('lan', '直播间内部更新服务器', lanUrl));
+  }
 
   if ((config.updateSource === 'aliyun' || includeFallbacks) && aliyunUrl) {
     candidates.push(genericUpdateCandidate('aliyun', '阿里云 OSS/CDN 镜像', aliyunUrl));
@@ -775,7 +840,8 @@ function updateSourceLabel(source: UpdateSource): string {
     github: 'GitHub Releases',
     gh_proxy: 'GitHub 加速源 gh-proxy.com',
     ghproxy_net: 'GitHub 加速源 ghproxy.net',
-    aliyun: '阿里云 OSS/CDN 镜像'
+    aliyun: '阿里云 OSS/CDN 镜像',
+    lan: '直播间内部更新服务器'
   };
 
   return labels[source];
@@ -908,7 +974,8 @@ function createSettingsWindow(): void {
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -971,7 +1038,8 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -1056,6 +1124,10 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   const nextConfig = await configStore.reset();
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
+  await remoteBridge.configure(nextConfig);
+  await atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds);
+  latestSnapshot = injectATEMState(monitor.getSnapshot());
+  syncATEMHotkeys();
 
   updateTray(latestSnapshot);
   broadcastSnapshot(latestSnapshot);
@@ -1111,7 +1183,8 @@ function showAlertWindows(snapshot: AppSnapshot): void {
       webPreferences: {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: true
       }
     });
 
@@ -1182,7 +1255,8 @@ function showAlertBackdropWindows(snapshot: AppSnapshot): void {
       webPreferences: {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: true
       }
     });
 
@@ -1227,7 +1301,8 @@ function showToastAlertWindows(snapshot: AppSnapshot): void {
       webPreferences: {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: true
       }
     });
 
@@ -1283,7 +1358,8 @@ function showPreAlertWindows(snapshot: AppSnapshot): void {
       webPreferences: {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: true
       }
     });
 
@@ -1488,9 +1564,20 @@ function loadRendererSafely(window: BrowserWindow, hash: string, label: string):
 }
 
 function broadcastSnapshot(snapshot: AppSnapshot): void {
+  const safeSnapshot = rendererSnapshot(snapshot);
   BrowserWindow.getAllWindows().forEach((window) => {
-    sendToWindow(window, 'snapshot', snapshot);
+    sendToWindow(window, 'snapshot', safeSnapshot);
   });
+}
+
+function rendererSnapshot(snapshot: AppSnapshot): AppSnapshot {
+  return {
+    ...snapshot,
+    config: {
+      ...snapshot.config,
+      remoteDeviceSecret: ''
+    }
+  };
 }
 
 function broadcastUpdateState(): void {
@@ -1521,6 +1608,10 @@ function sendToWindow(window: BrowserWindow, channel: string, payload: unknown):
 }
 
 function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url !== window.webContents.getURL()) event.preventDefault();
+  });
   window.webContents.on('did-finish-load', () => {
     rendererUnavailable.delete(window);
     const timer = rendererReloadTimers.get(window);

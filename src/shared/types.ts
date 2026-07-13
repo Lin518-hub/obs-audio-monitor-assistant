@@ -15,6 +15,7 @@ export type AlertDisplayMode = 'primary' | 'display_id' | 'all';
 export type AlertReminderMode = 'classic' | 'fullscreen';
 export type AlertSoundPreset = 'clear' | 'strong' | 'low' | 'soft';
 export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
+export type RemoteAccessConnectionState = 'disabled' | 'connecting' | 'connected' | 'error';
 
 export type AlertAction = 'acknowledge' | 'snooze_10m' | 'ignore_once';
 
@@ -108,7 +109,7 @@ export type UpdateStatus =
   | 'downloaded'
   | 'error';
 
-export type UpdateSource = 'auto' | 'github' | 'gh_proxy' | 'ghproxy_net' | 'aliyun';
+export type UpdateSource = 'auto' | 'github' | 'gh_proxy' | 'ghproxy_net' | 'aliyun' | 'lan';
 export type UpdateInstallMode = 'auto' | 'manual';
 
 export interface UpdateSnapshot {
@@ -172,6 +173,14 @@ export interface ATEMScanResult {
   devices: ATEMDiscoveredDevice[];
 }
 
+export interface RemoteAccessSnapshot {
+  connectionState: RemoteAccessConnectionState;
+  connected: boolean;
+  pairUrl: string | null;
+  errorMessage: string | null;
+  lastConnectedAt: number | null;
+}
+
 export interface AppConfig {
   obsHost: string;
   obsPort: number;
@@ -200,6 +209,10 @@ export interface AppConfig {
     atem: boolean;
     obsStats: boolean;
   };
+  remoteAccessEnabled: boolean;
+  remoteServerUrl: string;
+  remoteDeviceUuid: string;
+  remoteDeviceSecret: string;
   autoLaunch: boolean;
   updateSource: UpdateSource;
   aliyunUpdateBaseUrl: string;
@@ -266,6 +279,11 @@ export interface AppSnapshot {
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
+  remoteAccessConnectionState: RemoteAccessConnectionState;
+  remoteAccessConnected: boolean;
+  remoteAccessPairUrl: string | null;
+  remoteAccessErrorMessage: string | null;
+  remoteAccessLastConnectedAt: number | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -296,6 +314,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     atem: false,
     obsStats: false
   },
+  remoteAccessEnabled: false,
+  remoteServerUrl: 'http://192.168.110.111:8088',
+  remoteDeviceUuid: '',
+  remoteDeviceSecret: '',
   autoLaunch: false,
   updateSource: 'auto',
   aliyunUpdateBaseUrl: '',

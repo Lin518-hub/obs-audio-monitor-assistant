@@ -54,10 +54,11 @@ interface ToggleRowProps {
   title: string;
   description?: string;
   id?: string;
+  tone?: 'default' | 'danger';
 }
 
-export const ToggleRow: React.FC<ToggleRowProps> = ({ checked, onChange, title, description, id }) => (
-  <label className={`toggle-row ${checked ? 'on' : ''}`} htmlFor={id}>
+export const ToggleRow: React.FC<ToggleRowProps> = ({ checked, onChange, title, description, id, tone = 'default' }) => (
+  <label className={`toggle-row ${checked ? 'on' : ''} ${tone === 'danger' ? 'danger' : ''}`} htmlFor={id}>
     <div className="toggle-row-body">
       <span className="toggle-row-title">{title}</span>
       {description && <span className="toggle-row-sub">{description}</span>}

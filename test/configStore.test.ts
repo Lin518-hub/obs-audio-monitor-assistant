@@ -108,8 +108,15 @@ describe('ConfigStore', () => {
       }
     });
 
+    const beforeReset = await store.load();
     const reset = await store.reset();
 
-    expect(reset).toEqual(DEFAULT_CONFIG);
+    expect(reset).toEqual({
+      ...DEFAULT_CONFIG,
+      remoteDeviceUuid: beforeReset.remoteDeviceUuid,
+      remoteDeviceSecret: beforeReset.remoteDeviceSecret
+    });
+    expect(reset.remoteDeviceUuid).toMatch(/^[0-9a-f-]{20,64}$/i);
+    expect(reset.remoteDeviceSecret).toMatch(/^[0-9a-f]{64,128}$/i);
   });
 });

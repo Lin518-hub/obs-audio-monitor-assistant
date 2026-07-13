@@ -1,4 +1,5 @@
 import { app, safeStorage } from 'electron';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
@@ -47,10 +48,13 @@ export class ConfigStore {
   }
 
   async reset(): Promise<AppConfig> {
+    const current = await this.load();
     return this.save({
       ...DEFAULT_CONFIG,
       alertPositions: {},
-      floatingWindowBounds: null
+      floatingWindowBounds: null,
+      remoteDeviceUuid: current.remoteDeviceUuid,
+      remoteDeviceSecret: current.remoteDeviceSecret
     });
   }
 
@@ -69,6 +73,8 @@ export class ConfigStore {
         : [];
 
     const floatingWindowModules = floatingWindowModulesValue(merged.floatingWindowModules);
+    const remoteDeviceUuid = uuidValue(merged.remoteDeviceUuid) || randomUUID();
+    const remoteDeviceSecret = secretValue(merged.remoteDeviceSecret) || randomBytes(32).toString('hex');
 
     return {
       ...merged,
@@ -95,6 +101,10 @@ export class ConfigStore {
       floatingWindowMode: floatingWindowModeValue(merged.floatingWindowMode, floatingWindowModules),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       floatingWindowModules,
+      remoteAccessEnabled: booleanValue(merged.remoteAccessEnabled, DEFAULT_CONFIG.remoteAccessEnabled),
+      remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
+      remoteDeviceUuid,
+      remoteDeviceSecret,
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       updateSource: updateSourceValue(merged.updateSource),
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
@@ -205,7 +215,7 @@ function floatingWindowModeValue(value: unknown, modules: AppConfig['floatingWin
 }
 
 function updateSourceValue(value: unknown): UpdateSource {
-  return value === 'auto' || value === 'github' || value === 'gh_proxy' || value === 'ghproxy_net' || value === 'aliyun'
+  return value === 'auto' || value === 'github' || value === 'gh_proxy' || value === 'ghproxy_net' || value === 'aliyun' || value === 'lan'
     ? value
     : DEFAULT_CONFIG.updateSource;
 }
@@ -217,6 +227,28 @@ function normalizeUpdateBaseUrl(value: unknown): string {
   }
 
   return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
+function uuidValue(value: unknown): string {
+  const raw = stringValue(value, '').trim();
+  return /^[0-9a-f-]{20,64}$/i.test(raw) ? raw : '';
+}
+
+function secretValue(value: unknown): string {
+  const raw = stringValue(value, '').trim();
+  return /^[0-9a-f]{64,128}$/i.test(raw) ? raw : '';
+}
+
+function serverUrlValue(value: unknown): string {
+  try {
+    const url = new URL(stringValue(value, DEFAULT_CONFIG.remoteServerUrl).trim());
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return DEFAULT_CONFIG.remoteServerUrl;
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return DEFAULT_CONFIG.remoteServerUrl;
+  }
 }
 
 function alertPositionsValue(value: unknown): Record<string, AlertPosition> {
