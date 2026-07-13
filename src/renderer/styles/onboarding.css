@@ -218,7 +218,7 @@
 .onboarding-welcome-blur h2 {
   font-size: 28px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   color: var(--text-primary);
   margin-bottom: var(--s-2);
 }
@@ -280,7 +280,7 @@
 .onboarding-step-title {
   font-size: 20px;
   font-weight: 800;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--text-primary);
   display: flex;
   align-items: center;
@@ -316,7 +316,7 @@
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .onboarding-input {
@@ -570,7 +570,7 @@
 }
 
 .onboarding-complete h2 {
-  font-size: 24px; font-weight: 800; letter-spacing: -0.01em;
+  font-size: 24px; font-weight: 800; letter-spacing: 0;
   color: var(--text-primary);
 }
 

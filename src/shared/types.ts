@@ -62,6 +62,17 @@ export interface SilenceEventEntry {
   alertTriggered: boolean;
 }
 
+export interface ATEMSwitchHistoryEntry {
+  id: string;
+  switchedAt: number;
+  fromInputId: number;
+  fromInputLabel: string;
+  toInputId: number;
+  toInputLabel: string;
+  startedAt: number;
+  durationSeconds: number;
+}
+
 export interface InputMonitorSnapshot {
   inputName: string;
   inputKind: string;
@@ -71,6 +82,12 @@ export interface InputMonitorSnapshot {
   silentForSeconds: number;
   secondsUntilAlert: number | null;
   status: 'normal' | 'silent' | 'missing_meter' | 'not_selected';
+}
+
+export interface AudioMeterFrame {
+  timestamp: number;
+  activeInputName: string;
+  levelDb: number | null;
 }
 
 export interface VolumeHistoryPoint {
@@ -253,6 +270,7 @@ export interface AppSnapshot {
   simulatedLive: boolean;
   activeInputName: string;
   lastLevelDb: number | null;
+  audioSpeaking: boolean;
   silentForSeconds: number;
   secondsUntilAlert: number | null;
   alertVisible: boolean;
@@ -279,6 +297,7 @@ export interface AppSnapshot {
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
+  atemSwitchHistory: ATEMSwitchHistoryEntry[];
   remoteAccessConnectionState: RemoteAccessConnectionState;
   remoteAccessConnected: boolean;
   remoteAccessPairUrl: string | null;
@@ -315,7 +334,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     obsStats: false
   },
   remoteAccessEnabled: false,
-  remoteServerUrl: 'http://192.168.110.111:8088',
+  remoteServerUrl: 'https://obs.huaweilive.top:8088',
   remoteDeviceUuid: '',
   remoteDeviceSecret: '',
   autoLaunch: false,
@@ -327,5 +346,5 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 300
+  atemCameraTimeLimitSeconds: 600
 };

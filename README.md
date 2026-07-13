@@ -20,6 +20,16 @@ OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源
 - Mac 用户下载 `OBS-Audio-Monitor-Assistant-*-arm64.zip`，解压后运行其中的 `.app`。当前仅支持 Apple Silicon Mac，不支持 Intel x86 Mac。
 - macOS 版本尚未进行 Apple Developer 签名和公证。若系统提示“文件已损坏”或无法打开，通常是 Gatekeeper 隔离标记导致，可在终端执行 `sudo xattr -cr /Applications/OBS\ 音频检测助手.app` 后再打开。正式商用分发建议配置 Apple Developer ID 签名与 notarization。
 
+## V3.1.0 版本说明
+
+- 优化 OBS 音频电平采样与界面刷新链路，区分实时峰值和峰值保持数据，降低电平条跳变、延迟和误判。
+- 音频检测采用快速响应、平滑回落和阈值迟滞，短促噪声不再直接重置静音计时。
+- 重做“音频与机位”小浮窗，将音频状态、实时电平、当前 PGM 机位和停留时间整合为统一视图。
+- 修复 ATEM 指令失败时界面仍显示成功、初次连接状态未及时刷新及机位输入显示不完整等问题。
+- 优化首次引导渲染，避免高频音频状态刷新触发整套引导界面重复计算。
+- 加固手机远程监看与切台：完善首次无状态页面、断线重连、权限撤销、操作超时和重复操作保护。
+- 加固 Docker 服务的数据落盘、访问频率限制、WebSocket 心跳、连接清理和停止过程。
+
 ## 主要功能
 
 - **OBS WebSocket 连接**
@@ -71,7 +81,8 @@ OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源
   - 支持通过局域网连接 Blackmagic ATEM 导播台。
   - 可显示当前 PGM / PVW 机位和输入通道名称。
   - 支持扫描同网段疑似 ATEM 设备，并选择设备 IP。
-  - 支持当前 PGM 机位停留时间记录，默认 5 分钟后在小浮窗中提示。
+  - 支持当前 PGM 机位停留计时，默认 10 分钟后在小浮窗中提示。
+  - 本地记录每次 PGM 切换的来源、目标机位、切换时间和上一机位停留时长。
   - 支持 Preview、AUTO Transition 与带确认保护的 Hard Cut。
   - 该功能仍处于 Beta 阶段，默认不启用硬件连接。
 

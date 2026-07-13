@@ -8,7 +8,7 @@ export const dbLevelPercent = (levelDb: number | null): number => {
   if (levelDb === null) {
     return 0;
   }
-  return Math.max(0, Math.min(100, ((levelDb + 90) / 90) * 100));
+  return Math.max(0, Math.min(100, ((levelDb + 90) / 85) * 100));
 };
 
 export const thresholdPercent = (thresholdDb: number): number => {
@@ -26,11 +26,14 @@ export const secondsUntilVisibleAlert = (snapshot: AppSnapshot): number => {
   return Math.max(0, snapshot.config.silenceDurationSeconds - displayedSilenceSeconds(snapshot));
 };
 
-export const audioStateKind = (snapshot: AppSnapshot): 'normal' | 'silent' | 'other' => {
+export const audioStateKind = (snapshot: AppSnapshot): 'normal' | 'confirming' | 'silent' | 'other' => {
   if (snapshot.readinessReason !== 'ready') {
     return 'other';
   }
-  return displayedSilenceSeconds(snapshot) === 0 ? 'normal' : 'silent';
+  if (snapshot.audioSpeaking) {
+    return 'normal';
+  }
+  return displayedSilenceSeconds(snapshot) === 0 ? 'confirming' : 'silent';
 };
 
 // =====================================================================
@@ -61,6 +64,9 @@ export const displayStatusText = (snapshot: AppSnapshot): string => {
   if (audioStateKind(snapshot) === 'silent') {
     return '静音计时中';
   }
+  if (audioStateKind(snapshot) === 'confirming') {
+    return '检测中';
+  }
   return statusText(snapshot.status);
 };
 
@@ -70,6 +76,9 @@ export const silenceMetricText = (snapshot: AppSnapshot): string => {
   }
   if (audioStateKind(snapshot) === 'silent') {
     return `${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告`;
+  }
+  if (audioStateKind(snapshot) === 'confirming') {
+    return '正在讲话';
   }
   return statusText(snapshot.status);
 };
@@ -139,6 +148,9 @@ export const floatingHint = (snapshot: AppSnapshot): string => {
   if (audioStateKind(snapshot) === 'silent') {
     return `${secondsUntilVisibleAlert(snapshot)}s 后弹窗警告`;
   }
+  if (audioStateKind(snapshot) === 'confirming') {
+    return '音频正常';
+  }
   return readinessText(snapshot);
 };
 
@@ -150,6 +162,8 @@ const readinessReasonText: Record<string, (s: AppSnapshot) => string> = {
   ready: (s) =>
     audioStateKind(s) === 'normal'
       ? '检测中，正在讲话，音频正常。'
+      : audioStateKind(s) === 'confirming'
+        ? '检测中，音频正常。'
       : `静音计时中，已静音 ${displayedSilenceSeconds(s)} 秒，${secondsUntilVisibleAlert(s)}s 后弹窗警告。`,
   obs_disconnected: () => 'OBS 未连接，请确认 OBS 已打开且 WebSocket 已启用。',
   obs_connecting: () => '正在连接 OBS WebSocket。',
@@ -173,6 +187,8 @@ const readinessActionTextMap: Record<string, (s: AppSnapshot) => string> = {
   ready: (s) =>
     audioStateKind(s) === 'normal'
       ? '音频正常，继续检测。'
+      : audioStateKind(s) === 'confirming'
+        ? '音频正常，继续检测。'
       : `${secondsUntilVisibleAlert(s)}s 后弹窗警告，请确认主播是否真的没有讲话。`,
   obs_disconnected: () => '下一步：打开 OBS，并确认 WebSocket 服务已启用。',
   obs_connecting: () => '正在自动连接，必要时点击"重连 OBS"。',
@@ -196,7 +212,8 @@ export const safetyTitle = (snapshot: AppSnapshot): string => {
     return '正在报警';
   }
   if (snapshot.readinessReason === 'ready') {
-    return audioStateKind(snapshot) === 'normal' ? '正在讲话' : '静音计时中';
+    const state = audioStateKind(snapshot);
+    return state === 'normal' || state === 'confirming' ? '正在讲话' : '静音计时中';
   }
   return '尚未进入检测';
 };

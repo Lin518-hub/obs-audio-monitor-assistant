@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
+import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
 contextBridge.exposeInMainWorld('obsGuard', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld('obsGuard', {
       ipcRenderer.off('snapshot', listener);
     };
   },
+  onMeter: (callback: (frame: AudioMeterFrame) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, frame: AudioMeterFrame) => callback(frame);
+    ipcRenderer.on('meter:update', listener);
+
+    return () => {
+      ipcRenderer.off('meter:update', listener);
+    };
+  },
   onUpdateState: (callback: (snapshot: UpdateSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: UpdateSnapshot) => callback(snapshot);
     ipcRenderer.on('update:state', listener);
@@ -44,6 +52,7 @@ contextBridge.exposeInMainWorld('obsGuard', {
   },
   /** ATEM 导播台 API (beta) */
   getATEMState: () => ipcRenderer.invoke('atem:get-state'),
+  clearATEMHistory: () => ipcRenderer.invoke('atem:history-clear') as Promise<ATEMSwitchHistoryEntry[]>,
   changePreviewInput: (input: number) => ipcRenderer.invoke('atem:change-preview-input', input),
   autoTransition: () => ipcRenderer.invoke('atem:auto-transition'),
   changeProgramInput: (input: number) => ipcRenderer.invoke('atem:change-program-input', input),

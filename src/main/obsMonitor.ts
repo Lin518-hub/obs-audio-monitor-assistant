@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import OBSWebSocket, { EventSubscription } from 'obs-websocket-js';
-import { isSilent, maxInputLevelDb } from '../shared/audio.js';
+import { maxInputLevelDb, smoothMeterLevel } from '../shared/audio.js';
 import { isProbablyAudibleInputKind } from '../shared/inputKinds.js';
 import {
   deriveStatus,
@@ -9,7 +9,6 @@ import {
   preAlertRemainingSeconds,
   reducePreAlertDismiss,
   reduceAlertAction,
-  reduceAudioLevel,
   reduceOutputState,
   secondsUntilAlert,
   silentForSeconds,
@@ -17,6 +16,7 @@ import {
 } from '../shared/silenceState.js';
 import type {
   AlertAction,
+  AudioMeterFrame,
   AlertHistoryEntry,
   AppConfig,
   AppSnapshot,
@@ -33,12 +33,16 @@ const METER_STALE_MS = 5000;
 const VOLUME_HISTORY_RETENTION_MS = 10 * 60 * 1000;
 const VOLUME_HISTORY_SAMPLE_MS = 500;
 const METER_SNAPSHOT_THROTTLE_MS = 250;
+const METER_FRAME_INTERVAL_MS = 40;
 const VOLUME_HISTORY_BROADCAST_MS = 1000;
 const MAX_SILENCE_EVENTS = 100;
+const AUDIBLE_CONFIRM_MS = 120;
+const THRESHOLD_HYSTERESIS_DB = 1.5;
 
 interface MonitorEvents {
   snapshot: [AppSnapshot];
   alert: [AppSnapshot];
+  meter: [AudioMeterFrame];
 }
 
 type OBSInputVolumeMetersEvent = {
@@ -52,10 +56,13 @@ interface PerInputMonitorState {
   inputName: string;
   inputKind: string;
   lastLevelDb: number | null;
+  rawLevelDb: number | null;
   lastMeterAt: number | null;
   silentSince: number | null;
   activeEventId: string | null;
   alertTriggered: boolean;
+  lastAboveThresholdAt: number | null;
+  aboveThresholdSince: number | null;
 }
 
 export class OBSMonitor extends EventEmitter<MonitorEvents> {
@@ -69,6 +76,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private tickTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private meterSnapshotTimer: NodeJS.Timeout | null = null;
+  private pendingMeterSnapshotAt: number | null = null;
+  private lastMeterSnapshotAt = 0;
+  private meterFrameTimer: NodeJS.Timeout | null = null;
+  private pendingMeterFrame: AudioMeterFrame | null = null;
+  private lastMeterFrameAt = 0;
   private testAlertRestore: { state: MonitorRuntimeState; errorMessage: string | null; inputs: InputOption[]; lastTargetMeterAt: number | null } | null = null;
   private history: AlertHistoryEntry[] = [];
   private silenceEvents: SilenceEventEntry[] = [];
@@ -106,6 +118,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       simulatedLive: this.simulatedLive,
       activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
       lastLevelDb: this.state.lastLevelDb,
+      audioSpeaking: this.isAudioSpeaking(now),
       silentForSeconds: silentForSeconds(this.state, now),
       secondsUntilAlert: secondsUntilAlert(this.state, this.config, now),
       alertVisible: this.state.alertVisible,
@@ -133,6 +146,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemProgramInputStartedAt: null,
       atemProgramInputElapsedSeconds: 0,
       atemProgramInputOverLimit: false,
+      atemSwitchHistory: [],
       remoteAccessConnectionState: 'disabled',
       remoteAccessConnected: false,
       remoteAccessPairUrl: null,
@@ -178,6 +192,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         alertVisible: false,
         preAlertDismissedSilentSince: null
       };
+    }
+
+    if (previous.silenceThresholdDb !== this.config.silenceThresholdDb) {
+      for (const state of this.inputStates.values()) {
+        state.aboveThresholdSince = null;
+      }
     }
 
     const connectionChanged =
@@ -548,12 +568,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
       sawTarget = true;
       const state = this.ensureInputState(name, inputMeta.get(name) ?? '');
-      const levelDb = maxInputLevelDb(item.inputLevelsMul);
-      this.updateInputLevel(state, levelDb, now);
+      const rawLevelDb = maxInputLevelDb(item.inputLevelsMul);
+      this.updateInputLevel(state, rawLevelDb, now);
       const lastHistoryAt = this.volumeHistoryLastAt.get(name) ?? 0;
       if (now - lastHistoryAt >= VOLUME_HISTORY_SAMPLE_MS) {
         this.volumeHistoryLastAt.set(name, now);
-        this.volumeHistory.push({ timestamp: now, inputName: name, levelDb });
+        this.volumeHistory.push({ timestamp: now, inputName: name, levelDb: state.lastLevelDb });
       }
     }
 
@@ -569,6 +589,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     }
 
     this.emitMeterSnapshot(now);
+    this.queueMeterFrame(now);
   }
 
   private markDisconnected(message: string): void {
@@ -658,6 +679,13 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       clearTimeout(this.meterSnapshotTimer);
       this.meterSnapshotTimer = null;
     }
+    this.pendingMeterSnapshotAt = null;
+
+    if (this.meterFrameTimer) {
+      clearTimeout(this.meterFrameTimer);
+      this.meterFrameTimer = null;
+    }
+    this.pendingMeterFrame = null;
 
     this.clearReconnect();
   }
@@ -674,25 +702,20 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private emitMeterSnapshot(now: number): void {
-    if (this.meterSnapshotTimer) {
-      return;
-    }
+    this.pendingMeterSnapshotAt = now;
+    if (this.meterSnapshotTimer) return;
 
-    const emitCurrent = (timestamp: number) => {
-      const includeHistory = timestamp - this.lastVolumeHistoryBroadcastAt >= VOLUME_HISTORY_BROADCAST_MS;
-      if (includeHistory) {
-        this.lastVolumeHistoryBroadcastAt = timestamp;
-      }
-      this.emitSnapshot(timestamp, includeHistory);
-    };
-
-    emitCurrent(now);
+    const waitMs = Math.max(0, METER_SNAPSHOT_THROTTLE_MS - (now - this.lastMeterSnapshotAt));
     this.meterSnapshotTimer = setTimeout(() => {
       this.meterSnapshotTimer = null;
-      if (this.state.connected) {
-        emitCurrent(Date.now());
-      }
-    }, METER_SNAPSHOT_THROTTLE_MS);
+      const timestamp = this.pendingMeterSnapshotAt ?? Date.now();
+      this.pendingMeterSnapshotAt = null;
+      if (!this.state.connected) return;
+      this.lastMeterSnapshotAt = Date.now();
+      const includeHistory = timestamp - this.lastVolumeHistoryBroadcastAt >= VOLUME_HISTORY_BROADCAST_MS;
+      if (includeHistory) this.lastVolumeHistoryBroadcastAt = timestamp;
+      this.emitSnapshot(timestamp, includeHistory);
+    }, waitMs);
   }
 
   private getReadinessReason(now: number): ReadinessReason {
@@ -753,21 +776,33 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       inputName,
       inputKind,
       lastLevelDb: null,
+      rawLevelDb: null,
       lastMeterAt: null,
       silentSince: null,
       activeEventId: null,
-      alertTriggered: false
+      alertTriggered: false,
+      lastAboveThresholdAt: null,
+      aboveThresholdSince: null
     };
     this.inputStates.set(inputName, state);
     return state;
   }
 
   private updateInputLevel(state: PerInputMonitorState, levelDb: number, now: number): void {
-    state.lastLevelDb = levelDb;
+    const previousMeterAt = state.lastMeterAt;
+    state.rawLevelDb = levelDb;
+    state.lastLevelDb = smoothMeterLevel(state.lastLevelDb, levelDb, previousMeterAt === null ? 50 : now - previousMeterAt);
     state.lastMeterAt = now;
     this.lastTargetMeterAt = Math.max(this.lastTargetMeterAt ?? 0, now);
 
-    if (!isSilent(levelDb, this.config.silenceThresholdDb)) {
+    const wasConfirmedSpeaking = state.silentSince === null && state.lastAboveThresholdAt !== null;
+    const audibleThreshold = this.config.silenceThresholdDb + (wasConfirmedSpeaking ? -THRESHOLD_HYSTERESIS_DB : THRESHOLD_HYSTERESIS_DB);
+    if (levelDb > audibleThreshold) {
+      state.aboveThresholdSince ??= now;
+      if (!wasConfirmedSpeaking && now - state.aboveThresholdSince < AUDIBLE_CONFIRM_MS) {
+        return;
+      }
+      state.lastAboveThresholdAt = now;
       if (state.silentSince !== null) {
         this.finishSilenceEvent(state, now);
       }
@@ -777,6 +812,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return;
     }
 
+    state.aboveThresholdSince = null;
     if (state.silentSince === null) {
       state.silentSince = now;
       state.alertTriggered = false;
@@ -882,6 +918,17 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     });
   }
 
+  private isAudioSpeaking(now: number): boolean {
+    const state = this.inputStates.get(this.activeInputName);
+    if (!state || state.lastAboveThresholdAt === null) {
+      return false;
+    }
+
+    // Keep the last confirmed speaking state through short breaths, but never
+    // establish it unless the input actually crossed the configured threshold.
+    return now - state.lastAboveThresholdAt < 3000;
+  }
+
   private clearSilentInputStates(): void {
     const now = Date.now();
     for (const state of this.inputStates.values()) {
@@ -891,7 +938,28 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       state.silentSince = null;
       state.activeEventId = null;
       state.alertTriggered = false;
+      state.lastAboveThresholdAt = null;
+      state.aboveThresholdSince = null;
     }
+  }
+
+  private queueMeterFrame(now: number): void {
+    this.pendingMeterFrame = {
+      timestamp: now,
+      activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
+      levelDb: this.state.lastLevelDb
+    };
+    if (this.meterFrameTimer) return;
+
+    const waitMs = Math.max(0, METER_FRAME_INTERVAL_MS - (now - this.lastMeterFrameAt));
+    this.meterFrameTimer = setTimeout(() => {
+      this.meterFrameTimer = null;
+      const frame = this.pendingMeterFrame;
+      this.pendingMeterFrame = null;
+      if (!frame) return;
+      this.lastMeterFrameAt = Date.now();
+      this.emit('meter', frame);
+    }, waitMs);
   }
 
   private startSilenceEvent(state: PerInputMonitorState, now: number): string {

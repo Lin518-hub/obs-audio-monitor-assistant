@@ -2,6 +2,7 @@ services:
   obs-audio-remote:
     build: .
     container_name: obs-audio-remote
+    init: true
     restart: unless-stopped
     env_file:
       - .env
@@ -10,6 +11,7 @@ services:
     volumes:
       - ./data:/data
       - ./updates:/updates
+      - ./tls:/run/tls:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -17,6 +19,13 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 128
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8088/health"]
       interval: 20s

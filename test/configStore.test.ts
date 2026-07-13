@@ -81,7 +81,7 @@ describe('ConfigStore', () => {
     expect(reloaded.silenceDurationSeconds).toBe(300);
   });
 
-  it('migrates the legacy three-minute ATEM default and preserves the combined floating mode', async () => {
+  it('migrates legacy ATEM defaults to ten minutes and preserves the combined floating mode', async () => {
     const store = new ConfigStore();
     await store.save({
       ...DEFAULT_CONFIG,
@@ -92,7 +92,13 @@ describe('ConfigStore', () => {
     const reloaded = await new ConfigStore().load();
 
     expect(reloaded.floatingWindowMode).toBe('audio_atem');
-    expect(reloaded.atemCameraTimeLimitSeconds).toBe(300);
+    expect(reloaded.atemCameraTimeLimitSeconds).toBe(600);
+
+    await store.save({
+      ...DEFAULT_CONFIG,
+      atemCameraTimeLimitSeconds: 300
+    });
+    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
   });
 
   it('restores defaults and marks the guide as unseen', async () => {
@@ -118,5 +124,19 @@ describe('ConfigStore', () => {
     });
     expect(reset.remoteDeviceUuid).toMatch(/^[0-9a-f-]{20,64}$/i);
     expect(reset.remoteDeviceSecret).toMatch(/^[0-9a-f]{64,128}$/i);
+  });
+
+  it('serializes concurrent patches without losing an earlier setting', async () => {
+    const store = new ConfigStore();
+    await store.save(DEFAULT_CONFIG);
+
+    await Promise.all([
+      store.update({ silenceDurationSeconds: 240 }),
+      store.update({ silenceThresholdDb: -48 })
+    ]);
+
+    const reloaded = await new ConfigStore().load();
+    expect(reloaded.silenceDurationSeconds).toBe(240);
+    expect(reloaded.silenceThresholdDb).toBe(-48);
   });
 });

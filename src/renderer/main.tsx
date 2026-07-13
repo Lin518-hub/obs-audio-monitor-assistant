@@ -13,7 +13,7 @@ import './styles/windows.css';
 import './styles/dialogs.css';
 import './styles/onboarding.css';
 
-import { Activity, BarChart3, Cable, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Video } from 'lucide-react';
+import { Activity, ArrowRight, BarChart3, Cable, Clock3, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Trash2, Video } from 'lucide-react';
 import { Sidebar, type SidebarPage } from './components/Sidebar';
 import { TopBar, type SaveLabel } from './components/TopBar';
 import { StatusBanner } from './components/StatusBanner';
@@ -141,10 +141,14 @@ function SettingsApp() {
       const num = parseInt(e.key, 10);
       if (num >= 1 && num <= 8 && snapshot.atemInputIds.includes(num)) {
         e.preventDefault();
-        void window.obsGuard.changePreviewInput(num);
+        void window.obsGuard.changePreviewInput(num).catch((error) => {
+          console.error('[ATEM] preview shortcut failed', error);
+        });
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        void window.obsGuard.autoTransition();
+        void window.obsGuard.autoTransition().catch((error) => {
+          console.error('[ATEM] AUTO shortcut failed', error);
+        });
       }
     };
 
@@ -185,6 +189,12 @@ function SettingsApp() {
 
   const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
   const downloadUpdate = useCallback(async () => { await window.obsGuard.downloadUpdate(); }, []);
+  const completeOnboarding = useCallback(() => {
+    void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION });
+  }, [flushSave]);
+  const refreshOnboardingInputs = useCallback(() => {
+    void window.obsGuard.refreshInputs();
+  }, []);
 
   const resetToFactoryDefaults = useCallback(async () => {
     const confirmed = window.confirm('确定恢复出厂设置吗?这会清空本地设置和报警历史,并重新打开新手引导。');
@@ -209,11 +219,9 @@ function SettingsApp() {
         draft={draft}
         snapshot={snapshot}
         onUpdateDraft={updateDraft}
-        onComplete={() => {
-          void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION });
-        }}
-        onTestConnection={() => void testConnection()}
-        onRefreshInputs={() => void window.obsGuard.refreshInputs()}
+        onComplete={completeOnboarding}
+        onTestConnection={testConnection}
+        onRefreshInputs={refreshOnboardingInputs}
         testResult={testResult}
         testingConnection={testingConnection}
       />
@@ -377,6 +385,7 @@ function ATEMConsole({
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   onOpenSettings: () => void;
 }) {
+  const [operation, setOperation] = useState<{ tone: 'pending' | 'ok' | 'bad'; text: string } | null>(null);
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
   const limit = Math.max(10, draft.atemCameraTimeLimitSeconds);
   const remaining = Math.max(0, limit - elapsed);
@@ -390,6 +399,9 @@ function ATEMConsole({
   });
   const programLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取播出信号';
   const previewLabel = snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取预览信号';
+  const visibleSwitchHistory = snapshot.atemSwitchHistory
+    .filter((entry) => !query || `${entry.fromInputId} ${entry.fromInputLabel} ${entry.toInputId} ${entry.toInputLabel}`.toLowerCase().includes(query))
+    .slice(0, 30);
 
   const openATEMFloating = () => {
     onChange('floatingWindowMode', 'audio_atem');
@@ -397,10 +409,20 @@ function ATEMConsole({
     onChange('floatingWindowEnabled', true);
   };
 
-  const hardCut = () => {
+  const runATEMAction = async (pendingText: string, successText: string, action: () => Promise<void>) => {
+    setOperation({ tone: 'pending', text: pendingText });
+    try {
+      await action();
+      setOperation({ tone: 'ok', text: successText });
+    } catch (error) {
+      setOperation({ tone: 'bad', text: error instanceof Error ? error.message : 'ATEM 操作失败' });
+    }
+  };
+
+  const hardCut = async () => {
     if (snapshot.atemPreviewInput <= 0) return;
     if (draft.atemHardCutConfirm && !window.confirm(`确认硬切到 ${previewLabel} 吗？`)) return;
-    void window.obsGuard.changeProgramInput(snapshot.atemPreviewInput);
+    await runATEMAction('正在执行硬切…', `已硬切到 ${previewLabel}`, () => window.obsGuard.changeProgramInput(snapshot.atemPreviewInput));
   };
 
   return (
@@ -413,7 +435,12 @@ function ATEMConsole({
         <div className="page-header-actions">
           <button type="button" className="btn-secondary" onClick={onOpenSettings}>连接设置</button>
           <button type="button" className="btn-secondary" onClick={openATEMFloating}>打开机位小窗</button>
-          <button type="button" className="btn-primary atem-reconnect-button" onClick={() => void window.obsGuard.atemReconnect()} disabled={!draft.atemEnabled}>重新连接</button>
+          <button
+            type="button"
+            className="btn-primary atem-reconnect-button"
+            onClick={() => void runATEMAction('正在重新连接 ATEM…', 'ATEM 重连请求已完成', () => window.obsGuard.atemReconnect())}
+            disabled={!draft.atemEnabled || operation?.tone === 'pending'}
+          >重新连接</button>
         </div>
       </div>
 
@@ -446,6 +473,7 @@ function ATEMConsole({
         <span><i />{snapshot.atemConnected ? `${snapshot.atemModelName || 'ATEM'} 已连接 · ${draft.atemHost}` : draft.atemEnabled ? 'ATEM 尚未连接，请检查 IP 和网络' : 'ATEM 功能未开启'}</span>
         <b>{snapshot.atemConnected && snapshot.atemInputCount === 0 ? '正在同步信号…' : `${snapshot.atemInputCount} 路常用信号`}</b>
       </div>
+      {operation && <div className={`atem-operation-banner ${operation.tone}`}>{operation.text}</div>}
 
       <section className="atem-source-panel">
         <header>
@@ -462,8 +490,8 @@ function ATEMConsole({
                 type="button"
                 key={inputId}
                 className={`atem-source-button ${isProgram ? 'program' : ''} ${isPreview ? 'preview' : ''}`}
-                onClick={() => void window.obsGuard.changePreviewInput(inputId)}
-                disabled={!snapshot.atemConnected}
+                onClick={() => void runATEMAction(`正在选择 ${label}…`, `${label} 已选入 PVW`, () => window.obsGuard.changePreviewInput(inputId))}
+                disabled={!snapshot.atemConnected || operation?.tone === 'pending'}
               >
                 <span>{inputId >= 1 && inputId <= 8 ? `CAM ${inputId}` : label}</span>
                 <strong>{label}</strong>
@@ -483,8 +511,59 @@ function ATEMConsole({
       <section className="atem-transition-panel">
         <div><strong>执行切换</strong><span>先选择 PVW，再执行 AUTO 或 Hard Cut</span></div>
         <div className="atem-transition-actions">
-          <button type="button" className="atem-auto-button" onClick={() => void window.obsGuard.autoTransition()} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0}>AUTO 柔切</button>
-          <button type="button" className="atem-hardcut-button" onClick={hardCut} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0}>Hard Cut 硬切</button>
+          <button
+            type="button"
+            className="atem-auto-button"
+            onClick={() => void runATEMAction('正在执行 AUTO 切换…', `已切换到 ${previewLabel}`, () => window.obsGuard.autoTransition())}
+            disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0 || operation?.tone === 'pending'}
+          >AUTO 柔切</button>
+          <button type="button" className="atem-hardcut-button" onClick={() => void hardCut()} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0 || operation?.tone === 'pending'}>Hard Cut 硬切</button>
+        </div>
+      </section>
+
+      <section className="atem-history-panel">
+        <header>
+          <div>
+            <strong><Clock3 size={17} /> 机位切换记录</strong>
+            <span>记录每次 PGM 切换方向与上一机位的实际停留时长</span>
+          </div>
+          <button
+            type="button"
+            className="atem-history-clear"
+            disabled={snapshot.atemSwitchHistory.length === 0}
+            onClick={() => {
+              if (window.confirm('确定清空全部机位切换记录吗？')) {
+                void window.obsGuard.clearATEMHistory();
+              }
+            }}
+          >
+            <Trash2 size={14} /> 清空
+          </button>
+        </header>
+
+        <div className="atem-history-current">
+          <span>当前播出</span>
+          <strong>PGM {snapshot.atemProgramInput || '--'} · {programLabel}</strong>
+          <em>已停留 {formatATEMTime(elapsed)}</em>
+        </div>
+
+        <div className="atem-history-list">
+          {visibleSwitchHistory.map((entry) => (
+            <article className="atem-history-row" key={entry.id}>
+              <time>{formatATEMSwitchDate(entry.switchedAt)}</time>
+              <div className="atem-history-route">
+                <span><b>{entry.fromInputLabel}</b><em>PGM {entry.fromInputId}</em></span>
+                <ArrowRight size={16} />
+                <span><b>{entry.toInputLabel}</b><em>PGM {entry.toInputId}</em></span>
+              </div>
+              <strong>停留 {formatATEMDuration(entry.durationSeconds)}</strong>
+            </article>
+          ))}
+          {visibleSwitchHistory.length === 0 && (
+            <div className="atem-history-empty">
+              {query && snapshot.atemSwitchHistory.length > 0 ? '没有符合搜索条件的切换记录' : '完成第一次 PGM 机位切换后，这里会自动生成记录。'}
+            </div>
+          )}
         </div>
       </section>
     </>
@@ -495,6 +574,27 @@ function formatATEMTime(seconds: number): string {
   const safe = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safe / 60);
   return `${String(minutes).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
+}
+
+function formatATEMDuration(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remainder = safe % 60;
+  if (hours > 0) return `${hours}小时 ${minutes}分 ${remainder}秒`;
+  if (minutes > 0) return `${minutes}分 ${remainder}秒`;
+  return `${remainder}秒`;
+}
+
+function formatATEMSwitchDate(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(timestamp);
 }
 
 // =============================================================================

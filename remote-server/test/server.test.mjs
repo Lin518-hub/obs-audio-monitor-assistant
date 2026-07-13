@@ -108,6 +108,14 @@ test('requires approval before a mobile browser receives access', async () => {
   await new Promise((resolve) => setTimeout(resolve, 30));
   mobile.clear();
   secondMobile.clear();
+
+  desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: -18.25 } }));
+  const [meter, secondMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
+  assert.equal(meter.type, 'meter');
+  assert.equal(meter.meter.activeInputName, 'Mic');
+  assert.equal(meter.meter.levelDb, -18.25);
+  assert.equal(secondMeter.type, 'meter');
+
   mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: {} }));
   const commandResult = await mobile.next();
   assert.equal(commandResult.id, 'client-command-1');

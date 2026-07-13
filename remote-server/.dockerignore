@@ -1,5 +1,6 @@
 data
 updates
 .env
+tls
 node_modules
 npm-debug.log

@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { hostname } from 'node:os';
 import WebSocket from 'ws';
-import type { AppConfig, AppSnapshot, RemoteAccessSnapshot } from '../shared/types.js';
+import type { AppConfig, AppSnapshot, AudioMeterFrame, RemoteAccessSnapshot } from '../shared/types.js';
 
 export interface RemoteCommand {
   id: string;
@@ -16,13 +16,23 @@ interface RemoteBridgeEvents {
 }
 
 const SEND_INTERVAL_MS = 400;
+const METER_SEND_INTERVAL_MS = 80;
+export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
+export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
+const LAN_CONNECT_TIMEOUT_MS = 2500;
+const PUBLIC_CONNECT_TIMEOUT_MS = 8000;
 
 export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private socket: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private sendTimer: NodeJS.Timeout | null = null;
+  private meterSendTimer: NodeJS.Timeout | null = null;
+  private socketConnectTimer: NodeJS.Timeout | null = null;
+  private latestMeterFrame: AudioMeterFrame | null = null;
   private latestSnapshot: AppSnapshot | null = null;
   private enabled = false;
+  private configuredServerUrl = '';
+  private serverCandidates: string[] = [];
   private serverUrl = '';
   private uuid = '';
   private secret = '';
@@ -41,9 +51,11 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   async configure(config: AppConfig): Promise<void> {
     const normalizedUrl = normalizeServerUrl(config.remoteServerUrl);
-    const changed = this.enabled !== config.remoteAccessEnabled || this.serverUrl !== normalizedUrl || this.uuid !== config.remoteDeviceUuid || this.secret !== config.remoteDeviceSecret;
+    const changed = this.enabled !== config.remoteAccessEnabled || this.configuredServerUrl !== normalizedUrl || this.uuid !== config.remoteDeviceUuid || this.secret !== config.remoteDeviceSecret;
     this.enabled = config.remoteAccessEnabled;
-    this.serverUrl = normalizedUrl;
+    this.configuredServerUrl = normalizedUrl;
+    this.serverCandidates = remoteServerCandidates(normalizedUrl);
+    this.serverUrl = this.serverCandidates[0] ?? '';
     this.uuid = config.remoteDeviceUuid;
     this.secret = config.remoteDeviceSecret;
     if (!changed) return;
@@ -66,6 +78,17 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     }, SEND_INTERVAL_MS);
   }
 
+  updateMeter(frame: AudioMeterFrame): void {
+    this.latestMeterFrame = frame;
+    if (!this.enabled || !this.socket || this.socket.readyState !== WebSocket.OPEN || this.meterSendTimer) return;
+    this.meterSendTimer = setTimeout(() => {
+      this.meterSendTimer = null;
+      if (this.latestMeterFrame) {
+        this.send({ type: 'meter', meter: this.latestMeterFrame });
+      }
+    }, METER_SEND_INTERVAL_MS);
+  }
+
   sendCommandResult(id: string, ok: boolean, message: string): void {
     this.send({ type: 'command-result', id, ok, message });
   }
@@ -79,28 +102,36 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   private async connect(generation: number): Promise<void> {
     if (!this.enabled || generation !== this.generation) return;
-    if (!this.serverUrl || !this.uuid || this.secret.length < 32) {
+    if (this.serverCandidates.length === 0 || !this.uuid || this.secret.length < 32) {
       this.setState({ connectionState: 'error', connected: false, errorMessage: '远程访问配置无效' });
       return;
     }
     this.setState({ connectionState: 'connecting', connected: false, errorMessage: null });
-    try {
-      const response = await fetch(`${this.serverUrl}/api/devices/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid: this.uuid, secret: this.secret, label: hostname() }),
-        signal: AbortSignal.timeout(8000)
-      });
-      const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
-      if (!response.ok || !body.device?.pairUrl) throw new Error(body.error || `服务器返回 ${response.status}`);
+    let lastError: unknown = null;
+    for (const candidate of this.serverCandidates) {
       if (!this.enabled || generation !== this.generation) return;
-      this.state.pairUrl = body.device.pairUrl;
-      this.openSocket(generation);
-    } catch (error) {
-      if (!this.enabled || generation !== this.generation) return;
-      this.setState({ connectionState: 'error', connected: false, errorMessage: friendlyError(error) });
-      this.scheduleReconnect(generation);
+      try {
+        const response = await fetch(`${candidate}/api/devices/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: this.uuid, secret: this.secret, label: hostname() }),
+          signal: AbortSignal.timeout(candidate === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS)
+        });
+        const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
+        if (!response.ok || !body.device?.pairUrl) throw new Error(body.error || `服务器返回 ${response.status}`);
+        if (!this.enabled || generation !== this.generation) return;
+        this.serverUrl = candidate;
+        this.state.pairUrl = body.device.pairUrl;
+        this.openSocket(generation);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
     }
+
+    if (!this.enabled || generation !== this.generation) return;
+    this.setState({ connectionState: 'error', connected: false, errorMessage: friendlyError(lastError) });
+    this.scheduleReconnect(generation);
   }
 
   private openSocket(generation: number): void {
@@ -110,8 +141,13 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     wsUrl.search = new URLSearchParams({ uuid: this.uuid, secret: this.secret }).toString();
     const socket = new WebSocket(wsUrl);
     this.socket = socket;
+    this.socketConnectTimer = setTimeout(() => {
+      if (socket === this.socket && socket.readyState !== WebSocket.OPEN) socket.terminate();
+    }, this.serverUrl === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS);
     socket.on('open', () => {
       if (socket !== this.socket || generation !== this.generation) return;
+      if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
+      this.socketConnectTimer = null;
       this.setState({ connectionState: 'connected', connected: true, errorMessage: null, lastConnectedAt: Date.now() });
       this.sendState();
     });
@@ -130,6 +166,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     });
     socket.on('close', () => {
       if (socket !== this.socket || generation !== this.generation) return;
+      if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
+      this.socketConnectTimer = null;
       this.socket = null;
       this.setState({ connectionState: 'error', connected: false, errorMessage: '远程服务连接已断开，正在重试' });
       this.scheduleReconnect(generation);
@@ -164,8 +202,12 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.sendTimer) clearTimeout(this.sendTimer);
+    if (this.meterSendTimer) clearTimeout(this.meterSendTimer);
+    if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
     this.reconnectTimer = null;
     this.sendTimer = null;
+    this.meterSendTimer = null;
+    this.socketConnectTimer = null;
   }
 
   private closeSocket(): void {
@@ -191,6 +233,15 @@ function normalizeServerUrl(value: string): string {
   }
 }
 
+export function remoteServerCandidates(configuredUrl: string): string[] {
+  const normalized = normalizeServerUrl(configuredUrl);
+  if (!normalized) return [];
+  if (normalized === LAN_REMOTE_SERVER_URL || normalized === PUBLIC_REMOTE_SERVER_URL) {
+    return [LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL];
+  }
+  return [normalized];
+}
+
 function friendlyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/timeout/i.test(message)) return '连接远程服务超时';
@@ -209,15 +260,16 @@ function remoteTelemetry(snapshot: AppSnapshot) {
       inputName: snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName,
       levelDb: level, thresholdDb: snapshot.config.silenceThresholdDb,
       silentForSeconds: snapshot.silentForSeconds,
-      display: snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`,
-      hint: snapshot.silentForSeconds < 3 ? '音频正常' : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`
+      display: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`,
+      hint: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '音频正常' : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`
     },
     atem: {
       connected: snapshot.atemConnected, programInput: snapshot.atemProgramInput, previewInput: snapshot.atemPreviewInput,
       inputIds: snapshot.atemInputIds, inputLabels: snapshot.atemInputLabels,
       elapsedSeconds: snapshot.atemProgramInputElapsedSeconds,
       limitSeconds: snapshot.config.atemCameraTimeLimitSeconds,
-      overLimit: snapshot.atemProgramInputOverLimit
+      overLimit: snapshot.atemProgramInputOverLimit,
+      recentSwitches: snapshot.atemSwitchHistory.slice(0, 20)
     },
     obs: {
       connected: snapshot.connected, streaming: snapshot.streaming, recording: snapshot.recording,

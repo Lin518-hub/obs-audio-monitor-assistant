@@ -9,12 +9,17 @@ export function multiplierToDb(multiplier: number): number {
 }
 
 export function maxInputLevelDb(levels: number[][]): number {
-  const flat = levels.flat().filter((value) => Number.isFinite(value));
-  if (flat.length === 0) {
+  // OBS reports [magnitude, peak, peak-hold] for each channel. Peak-hold is
+  // intentionally excluded: it lingers after speech and would postpone the
+  // start of silence detection even though the live signal has already ended.
+  const livePeaks = levels
+    .map((channel) => channel[1] ?? channel[0])
+    .filter((value) => Number.isFinite(value));
+  if (livePeaks.length === 0) {
     return MIN_DB;
   }
 
-  return multiplierToDb(Math.max(...flat));
+  return multiplierToDb(Math.max(...livePeaks));
 }
 
 export function isSilent(levelDb: number | null, thresholdDb: number): boolean {
@@ -23,4 +28,15 @@ export function isSilent(levelDb: number | null, thresholdDb: number): boolean {
   }
 
   return levelDb <= thresholdDb;
+}
+
+export function smoothMeterLevel(previousDb: number | null, nextDb: number, elapsedMs: number): number {
+  if (previousDb === null || !Number.isFinite(previousDb)) {
+    return Math.max(MIN_DB, nextDb);
+  }
+
+  const safeElapsed = Math.max(1, Math.min(250, elapsedMs));
+  const timeConstantMs = nextDb > previousDb ? 45 : 170;
+  const alpha = 1 - Math.exp(-safeElapsed / timeConstantMs);
+  return Math.max(MIN_DB, previousDb + (nextDb - previousDb) * alpha);
 }

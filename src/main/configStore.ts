@@ -10,6 +10,8 @@ interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
 
 export class ConfigStore {
   private readonly path = join(app.getPath('userData'), 'config.json');
+  private currentConfig: AppConfig | null = null;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   async load(): Promise<AppConfig> {
     try {
@@ -21,34 +23,34 @@ export class ConfigStore {
         obsPassword: this.decryptPassword(parsed.obsPasswordEncrypted)
       };
 
-      // 180 seconds was the previous built-in default. Move untouched legacy
-      // installations to the new five-minute default while preserving every
-      // other custom duration.
-      if (parsed.atemCameraTimeLimitSeconds === 180) {
+      // Move the two previous built-in defaults to the new ten-minute value.
+      // Other custom durations remain untouched.
+      if (parsed.atemCameraTimeLimitSeconds === 180 || parsed.atemCameraTimeLimitSeconds === 300) {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
 
-      return this.normalize(config);
+      this.currentConfig = this.normalize(config);
+      return this.currentConfig;
     } catch {
-      return DEFAULT_CONFIG;
+      this.currentConfig = this.normalize(DEFAULT_CONFIG);
+      return this.currentConfig;
     }
   }
 
-  async save(config: AppConfig): Promise<AppConfig> {
-    const normalized = this.normalize(config);
-    const persisted: PersistedConfig = {
-      ...normalized,
-      obsPasswordEncrypted: this.encryptPassword(normalized.obsPassword)
-    };
-    delete (persisted as Partial<AppConfig>).obsPassword;
+  save(config: AppConfig): Promise<AppConfig> {
+    return this.enqueueWrite(() => config);
+  }
 
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
-    return normalized;
+  update(patch: Partial<AppConfig> | ((current: AppConfig) => Partial<AppConfig>)): Promise<AppConfig> {
+    return this.enqueueWrite(() => {
+      const current = this.currentConfig ?? DEFAULT_CONFIG;
+      const resolvedPatch = typeof patch === 'function' ? patch(current) : patch;
+      return { ...current, ...resolvedPatch };
+    });
   }
 
   async reset(): Promise<AppConfig> {
-    const current = await this.load();
+    const current = this.currentConfig ?? await this.load();
     return this.save({
       ...DEFAULT_CONFIG,
       alertPositions: {},
@@ -56,6 +58,24 @@ export class ConfigStore {
       remoteDeviceUuid: current.remoteDeviceUuid,
       remoteDeviceSecret: current.remoteDeviceSecret
     });
+  }
+
+  private enqueueWrite(resolveConfig: () => AppConfig): Promise<AppConfig> {
+    const operation = this.writeQueue.catch(() => undefined).then(async () => {
+      const normalized = this.normalize(resolveConfig());
+      const persisted: PersistedConfig = {
+        ...normalized,
+        obsPasswordEncrypted: this.encryptPassword(normalized.obsPassword)
+      };
+      delete (persisted as Partial<AppConfig>).obsPassword;
+
+      await mkdir(dirname(this.path), { recursive: true });
+      await writeFile(this.path, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
+      this.currentConfig = normalized;
+      return normalized;
+    });
+    this.writeQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   private normalize(config: AppConfig): AppConfig {

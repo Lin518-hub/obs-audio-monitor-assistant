@@ -5,15 +5,16 @@ import { dirname, join } from 'node:path';
 import { ConfigStore } from './configStore.js';
 import { getDisplays } from './display.js';
 import { HistoryStore } from './historyStore.js';
+import { ATEMHistoryStore } from './atemHistoryStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
-import { RemoteBridge, type RemoteCommand } from './RemoteBridge.js';
-import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { RemoteBridge, remoteServerCandidates, type RemoteCommand } from './RemoteBridge.js';
+import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const isDev = !app.isPackaged;
-const shouldUseDevServer = isDev && process.env.npm_lifecycle_event !== 'start';
+const shouldUseDevServer = isDev && process.env.npm_lifecycle_event === 'dev';
 const rendererUrl = 'http://127.0.0.1:5173';
 const appIconPngPath = join(__dirname, '../../../build/icon.png');
 const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
@@ -33,6 +34,7 @@ const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 238;
 const FLOATING_MULTI_DEFAULT_WIDTH = 460;
 const FLOATING_MULTI_DEFAULT_HEIGHT = 300;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
+const FLOATING_MULTI_MIN_WIDTH = 380;
 const FLOATING_WINDOW_MAX_WIDTH = 640;
 const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
 const FLOATING_WINDOW_BASE_RADIUS = 14;
@@ -54,6 +56,8 @@ if (process.platform === 'win32') {
 
 let configStore: ConfigStore;
 let historyStore: HistoryStore;
+let atemHistoryStore: ATEMHistoryStore;
+let atemSwitchHistory: ATEMSwitchHistoryEntry[] = [];
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
 let remoteBridge: RemoteBridge;
@@ -105,6 +109,7 @@ async function initializeApp(): Promise<void> {
   }
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
+  atemHistoryStore = new ATEMHistoryStore();
   let config = await configStore.load();
   // Persist generated remote UUID/secret and one-time config migrations.
   config = await configStore.save(config);
@@ -115,6 +120,7 @@ async function initializeApp(): Promise<void> {
     await applyAutoLaunch(true);
   }
   const history = await historyStore.load();
+  atemSwitchHistory = await atemHistoryStore.load();
   monitor = new OBSMonitor(config, getDisplays());
   monitor.setHistory(history);
 
@@ -171,6 +177,10 @@ async function initializeApp(): Promise<void> {
       closeToastAlertWindows('destroy');
     }
   });
+  monitor.on('meter', (frame) => {
+    broadcastMeterFrame(frame);
+    remoteBridge.updateMeter(frame);
+  });
   monitor.on('alert', (snapshot) => {
     const merged = injectATEMState(snapshot);
     latestSnapshot = merged;
@@ -185,6 +195,17 @@ async function initializeApp(): Promise<void> {
       broadcastSnapshot(merged);
       remoteBridge.updateSnapshot(merged);
     }
+  });
+  atemMonitor.on('switchRecorded', (entry) => {
+    void atemHistoryStore.add(entry).then((history) => {
+      atemSwitchHistory = history;
+      if (!latestSnapshot) return;
+      latestSnapshot = injectATEMState(latestSnapshot);
+      broadcastSnapshot(latestSnapshot);
+      remoteBridge.updateSnapshot(latestSnapshot);
+    }).catch((error) => {
+      console.error(`[atem-history] failed to save switch: ${error instanceof Error ? error.message : String(error)}`);
+    });
   });
 
   await monitor.start();
@@ -248,10 +269,7 @@ function registerIpc(): void {
       remoteDeviceUuid: previous.remoteDeviceUuid,
       remoteDeviceSecret: previous.remoteDeviceSecret
     };
-    const nextConfig = await configStore.save({
-      ...previous,
-      ...protectedPatch
-    });
+    const nextConfig = await configStore.update(protectedPatch);
     if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
       await applyAutoLaunch(nextConfig.autoLaunch);
     }
@@ -302,10 +320,7 @@ function registerIpc(): void {
     return monitor.testConnection(config);
   });
   ipcMain.handle('monitor:set-paused', async (_event, paused: boolean) => {
-    const nextConfig = await configStore.save({
-      ...(latestSnapshot ?? monitor.getSnapshot()).config,
-      paused
-    });
+    const nextConfig = await configStore.update({ paused });
     const snapshot = injectATEMState(await monitor.updateConfig(nextConfig));
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
@@ -362,6 +377,14 @@ function registerIpc(): void {
   ipcMain.handle('update:download', () => downloadUpdate());
   ipcMain.handle('update:install', () => installDownloadedUpdate());
   ipcMain.handle('atem:get-state', () => atemMonitor.getSnapshot());
+  ipcMain.handle('atem:history-clear', async () => {
+    atemSwitchHistory = await atemHistoryStore.clear();
+    const merged = injectATEMState(latestSnapshot ?? monitor.getSnapshot());
+    latestSnapshot = merged;
+    broadcastSnapshot(merged);
+    remoteBridge.updateSnapshot(merged);
+    return atemSwitchHistory;
+  });
   ipcMain.handle('atem:change-preview-input', async (_event, input: number) => {
     await atemMonitor.changePreviewInput(input);
   });
@@ -402,7 +425,8 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemInputCount: atem.inputCount,
       atemProgramInputStartedAt: atem.programInputStartedAt,
       atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
-      atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit
+      atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit,
+      atemSwitchHistory
     } : {}),
     ...(remote ? {
       remoteAccessConnectionState: remote.connectionState,
@@ -423,6 +447,7 @@ async function handleRemoteCommand(command: RemoteCommand): Promise<void> {
   try {
     if (command.command === 'atem.preview') {
       const input = Number(command.payload.input);
+      if (!snapshot.atemConnected) throw new Error('ATEM 当前未连接');
       if (!Number.isInteger(input) || !snapshot.atemInputIds.includes(input)) throw new Error('目标信号源不可用');
       await atemMonitor.changePreviewInput(input);
       remoteBridge.sendCommandResult(command.id, true, '已选入 PVW');
@@ -468,7 +493,9 @@ function registerATEMHotkeys(): void {
     try {
       globalShortcut.register(accelerator, () => {
         if (latestSnapshot?.atemInputIds.includes(i)) {
-          void atem.changePreviewInput(i);
+          void atem.changePreviewInput(i).catch((error) => {
+            console.error(`[ATEM] global preview shortcut failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
         }
       });
     } catch (error) {
@@ -480,7 +507,9 @@ function registerATEMHotkeys(): void {
     const registered = globalShortcut.register('Enter', () => {
       const snapshot = latestSnapshot;
       if (snapshot?.atemConnected && snapshot.atemPreviewInput > 0) {
-        void atem.autoTransition();
+        void atem.autoTransition().catch((error) => {
+          console.error(`[ATEM] global AUTO shortcut failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
     });
     if (!registered) {
@@ -795,11 +824,21 @@ function resolveUpdateCandidates(config: AppConfig): UpdateCandidate[] {
 
 function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): UpdateCandidate[] {
   const aliyunUrl = normalizeUpdateBaseUrl(config.aliyunUpdateBaseUrl);
-  const lanUrl = normalizeUpdateBaseUrl(`${config.remoteServerUrl}/updates`);
+  const internalUpdateUrls = remoteServerCandidates(config.remoteServerUrl)
+    .map((serverUrl) => normalizeUpdateBaseUrl(`${serverUrl}/updates`))
+    .filter(Boolean);
   const candidates: UpdateCandidate[] = [];
 
-  if ((config.updateSource === 'lan' || includeFallbacks) && lanUrl) {
-    candidates.push(genericUpdateCandidate('lan', '直播间内部更新服务器', lanUrl));
+  if (config.updateSource === 'lan' || includeFallbacks) {
+    for (const [index, updateUrl] of internalUpdateUrls.entries()) {
+      candidates.push(genericUpdateCandidate(
+        'lan',
+        internalUpdateUrls.length > 1
+          ? `直播间内部更新服务器（${index === 0 ? '局域网' : '公网'}）`
+          : '直播间内部更新服务器',
+        updateUrl
+      ));
+    }
   }
 
   if ((config.updateSource === 'aliyun' || includeFallbacks) && aliyunUrl) {
@@ -1013,14 +1052,15 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
 
   const bounds = resolveFloatingWindowBounds(snapshot);
   const mode = snapshot.config.floatingWindowMode;
+  const minWidth = floatingWindowMinWidthForMode(mode);
   const fixedAspectRatio = floatingWindowAspectRatio(mode);
   floatingWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
-    minWidth: FLOATING_WINDOW_MIN_WIDTH,
-    minHeight: floatingWindowHeightForMode(mode, FLOATING_WINDOW_MIN_WIDTH, snapshot.config.floatingWindowModules),
+    minWidth,
+    minHeight: floatingWindowHeightForMode(mode, minWidth, snapshot.config.floatingWindowModules),
     maxWidth: FLOATING_WINDOW_MAX_WIDTH,
     maxHeight: fixedAspectRatio ? floatingWindowHeightForMode(mode, FLOATING_WINDOW_MAX_WIDTH, snapshot.config.floatingWindowModules) : 520,
     resizable: true,
@@ -1091,10 +1131,7 @@ function syncFloatingWindow(snapshot: AppSnapshot): void {
 
 async function setFloatingWindowVisible(visible: boolean): Promise<AppSnapshot> {
   const snapshot = latestSnapshot ?? monitor.getSnapshot();
-  const nextConfig = await configStore.save({
-    ...snapshot.config,
-    floatingWindowEnabled: visible
-  });
+  const nextConfig = await configStore.update({ floatingWindowEnabled: visible });
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
 
@@ -1117,6 +1154,7 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   closeFloatingWindow('destroy');
 
   await historyStore.clear();
+  atemSwitchHistory = await atemHistoryStore.clear();
   monitor.setHistory([]);
   monitor.resetTransientState();
   await applyAutoLaunch(false);
@@ -1149,10 +1187,7 @@ async function saveFloatingWindowBounds(bounds: WindowBounds): Promise<void> {
     return;
   }
 
-  const nextConfig = await configStore.save({
-    ...snapshot.config,
-    floatingWindowBounds: bounds
-  });
+  const nextConfig = await configStore.update({ floatingWindowBounds: bounds });
   await monitor.updateConfig(nextConfig);
 }
 
@@ -1525,7 +1560,7 @@ function updateTray(snapshot: AppSnapshot): void {
         label: snapshot.config.paused ? '恢复检测' : '暂停检测',
         click: () => {
           void (async () => {
-            const nextConfig = await configStore.save({ ...snapshot.config, paused: !snapshot.config.paused });
+            const nextConfig = await configStore.update({ paused: !snapshot.config.paused });
             await monitor.updateConfig(nextConfig);
           })();
         }
@@ -1567,6 +1602,12 @@ function broadcastSnapshot(snapshot: AppSnapshot): void {
   const safeSnapshot = rendererSnapshot(snapshot);
   BrowserWindow.getAllWindows().forEach((window) => {
     sendToWindow(window, 'snapshot', safeSnapshot);
+  });
+}
+
+function broadcastMeterFrame(frame: AudioMeterFrame): void {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    sendToWindow(window, 'meter:update', frame);
   });
 }
 
@@ -1655,13 +1696,12 @@ async function saveAlertPosition(displayId: number, position: { x: number; y: nu
     return;
   }
 
-  const nextConfig = await configStore.save({
-    ...snapshot.config,
+  const nextConfig = await configStore.update((current) => ({
     alertPositions: {
-      ...snapshot.config.alertPositions,
+      ...current.alertPositions,
       [String(displayId)]: position
     }
-  });
+  }));
   await monitor.updateConfig(nextConfig);
 }
 
@@ -1695,8 +1735,9 @@ function resolveFloatingWindowBounds(snapshot: AppSnapshot): WindowBounds {
     : mode === 'audio_atem'
       ? FLOATING_AUDIO_ATEM_DEFAULT_WIDTH
       : FLOATING_MULTI_DEFAULT_WIDTH;
+  const minWidth = floatingWindowMinWidthForMode(mode);
   const width = saved
-    ? clamp(mode === 'multifunction' ? Math.max(saved.width, 380) : saved.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH)
+    ? clamp(saved.width, minWidth, FLOATING_WINDOW_MAX_WIDTH)
     : defaultWidth;
   const height = mode !== 'multifunction'
     ? floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules)
@@ -1753,6 +1794,10 @@ function countFloatingModules(modules: AppConfig['floatingWindowModules']): numb
   return Number(modules.audio) + Number(modules.atem) + Number(modules.obsStats);
 }
 
+function floatingWindowMinWidthForMode(mode: AppConfig['floatingWindowMode']): number {
+  return mode === 'multifunction' ? FLOATING_MULTI_MIN_WIDTH : FLOATING_WINDOW_MIN_WIDTH;
+}
+
 function floatingWindowAspectRatio(mode: AppConfig['floatingWindowMode']): number | null {
   if (mode === 'audio') return FLOATING_WINDOW_ASPECT_RATIO;
   if (mode === 'audio_atem') return FLOATING_AUDIO_ATEM_DEFAULT_WIDTH / FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT;
@@ -1766,15 +1811,16 @@ function configureFloatingWindowForMode(snapshot: AppSnapshot): void {
 
   const mode = snapshot.config.floatingWindowMode;
   const bounds = floatingWindow.getBounds();
-  const width = clamp(mode === 'multifunction' ? Math.max(bounds.width, 380) : bounds.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH);
-  const minHeight = floatingWindowHeightForMode(mode, FLOATING_WINDOW_MIN_WIDTH, snapshot.config.floatingWindowModules);
+  const minWidth = floatingWindowMinWidthForMode(mode);
+  const width = clamp(bounds.width, minWidth, FLOATING_WINDOW_MAX_WIDTH);
+  const minHeight = floatingWindowHeightForMode(mode, minWidth, snapshot.config.floatingWindowModules);
   const fixedAspectRatio = floatingWindowAspectRatio(mode);
   const maxHeight = fixedAspectRatio ? floatingWindowHeightForMode(mode, FLOATING_WINDOW_MAX_WIDTH, snapshot.config.floatingWindowModules) : 520;
   const height = fixedAspectRatio
     ? floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules)
     : clamp(floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules), minHeight, maxHeight);
 
-  floatingWindow.setMinimumSize(FLOATING_WINDOW_MIN_WIDTH, minHeight);
+  floatingWindow.setMinimumSize(minWidth, minHeight);
   floatingWindow.setMaximumSize(FLOATING_WINDOW_MAX_WIDTH, maxHeight);
   try {
     floatingWindow.setAspectRatio(fixedAspectRatio ?? 0);

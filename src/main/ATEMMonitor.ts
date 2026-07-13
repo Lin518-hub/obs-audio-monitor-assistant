@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os';
 import { promisify } from 'node:util';
 import { Atem, AtemConnectionStatus, Enums } from 'atem-connection';
 import type { AtemState } from 'atem-connection';
-import type { ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMTestResult } from '../shared/types.js';
+import type { ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMSwitchHistoryEntry, ATEMTestResult } from '../shared/types.js';
 
 export type ATEMConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -29,6 +29,7 @@ interface CandidateHost {
 
 interface ATEMMonitorEvents {
   stateChanged: [ATEMStateSnapshot];
+  switchRecorded: [ATEMSwitchHistoryEntry];
 }
 
 export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
@@ -41,7 +42,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private connectionState: ATEMConnectionState = 'disconnected';
   private connectionGeneration = 0;
   private programInputStartedAt: number | null = null;
-  private cameraTimeLimitSeconds = 300;
+  private cameraTimeLimitSeconds = 600;
 
   get enabledState(): boolean {
     return this.enabled;
@@ -67,7 +68,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     };
   }
 
-  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 300): Promise<ATEMStateSnapshot> {
+  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 600): Promise<ATEMStateSnapshot> {
     const normalizedHost = normalizeHost(host);
     const hostChanged = this.host !== normalizedHost;
     const enabledChanged = this.enabled !== enabled;
@@ -374,41 +375,45 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   }
 
   async changePreviewInput(input: number): Promise<void> {
-    if (!this.atem || this.atem.status !== AtemConnectionStatus.CONNECTED) {
-      console.warn('[ATEM] cannot change preview: not connected');
-      return;
+    const atem = this.requireConnected('选择预览信号');
+    if (!Number.isInteger(input) || input <= 0 || !this.lastState.inputIds.includes(input)) {
+      throw new Error('目标预览信号不可用');
     }
 
     try {
-      await this.atem.changePreviewInput(input);
+      await atem.changePreviewInput(input);
     } catch (error) {
-      console.error(`[ATEM] changePreviewInput failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[ATEM] changePreviewInput failed: ${message}`);
+      throw new Error(`选择 PVW 失败：${message}`);
     }
   }
 
   async changeProgramInput(input: number): Promise<void> {
-    if (!this.atem || this.atem.status !== AtemConnectionStatus.CONNECTED) {
-      console.warn('[ATEM] cannot change program: not connected');
-      return;
+    const atem = this.requireConnected('执行硬切');
+    if (!Number.isInteger(input) || input <= 0 || !this.lastState.inputIds.includes(input)) {
+      throw new Error('目标播出信号不可用');
     }
 
     try {
-      await this.atem.changeProgramInput(input);
+      await atem.changeProgramInput(input);
     } catch (error) {
-      console.error(`[ATEM] changeProgramInput failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[ATEM] changeProgramInput failed: ${message}`);
+      throw new Error(`硬切失败：${message}`);
     }
   }
 
   async autoTransition(): Promise<void> {
-    if (!this.atem || this.atem.status !== AtemConnectionStatus.CONNECTED) {
-      console.warn('[ATEM] cannot auto transition: not connected');
-      return;
-    }
+    const atem = this.requireConnected('执行 AUTO 切换');
+    if (this.lastState.previewInput <= 0) throw new Error('当前没有可切换的 PVW 信号');
 
     try {
-      await this.atem.autoTransition();
+      await atem.autoTransition();
     } catch (error) {
-      console.error(`[ATEM] autoTransition failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[ATEM] autoTransition failed: ${message}`);
+      throw new Error(`AUTO 切换失败：${message}`);
     }
   }
 
@@ -423,13 +428,28 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
 
     const { inputIds, inputLabels } = usableATEMInputs(state);
 
+    const now = Date.now();
+    const previousProgramInput = this.lastState.programInput;
+    if (programInput > 0 && previousProgramInput > 0 && programInput !== previousProgramInput && this.programInputStartedAt !== null) {
+      this.emit('switchRecorded', {
+        id: `${now}-${previousProgramInput}-${programInput}-${Math.random().toString(36).slice(2, 8)}`,
+        switchedAt: now,
+        fromInputId: previousProgramInput,
+        fromInputLabel: this.lastState.inputLabels[previousProgramInput] || `Input ${previousProgramInput}`,
+        toInputId: programInput,
+        toInputLabel: inputLabels[programInput] || `Input ${programInput}`,
+        startedAt: this.programInputStartedAt,
+        durationSeconds: Math.max(0, Math.floor((now - this.programInputStartedAt) / 1000))
+      });
+    }
+
     if (programInput <= 0) {
       // 0 means that no usable PGM input is active. It must not start a
       // camera timer, otherwise an idle switcher can eventually be reported
       // as an over-time camera.
       this.programInputStartedAt = null;
     } else if (programInput !== this.lastState.programInput || this.programInputStartedAt === null) {
-      this.programInputStartedAt = Date.now();
+      this.programInputStartedAt = now;
     }
 
     this.connectionState = 'connected';
@@ -444,10 +464,10 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       inputCount: inputIds.length,
       programInputStartedAt: this.programInputStartedAt,
       programInputElapsedSeconds: this.programInputStartedAt
-        ? Math.max(0, Math.floor((Date.now() - this.programInputStartedAt) / 1000))
+        ? Math.max(0, Math.floor((now - this.programInputStartedAt) / 1000))
         : 0,
       programInputOverLimit: this.programInputStartedAt
-        ? Date.now() - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
+        ? now - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
         : false,
       errorMessage: null
     };
@@ -491,6 +511,13 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
 
   private emitState(): void {
     this.emit('stateChanged', this.getSnapshot());
+  }
+
+  private requireConnected(action: string): Atem {
+    if (!this.atem || this.atem.status !== AtemConnectionStatus.CONNECTED || !this.lastState.connected) {
+      throw new Error(`ATEM 未连接，无法${action}`);
+    }
+    return this.atem;
   }
 
   private createAtem(trackState: boolean): Atem {

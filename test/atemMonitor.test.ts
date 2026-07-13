@@ -50,6 +50,9 @@ const atemMock = vi.hoisted(() => {
 
     async disconnect(): Promise<void> {}
     async destroy(): Promise<void> {}
+    async changePreviewInput(): Promise<void> {}
+    async changeProgramInput(): Promise<void> {}
+    async autoTransition(): Promise<void> {}
   }
 
   return {
@@ -117,6 +120,13 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
+  it('rejects switching commands when ATEM is disconnected', async () => {
+    const monitor = new ATEMMonitor();
+
+    await expect(monitor.changePreviewInput(1)).rejects.toThrow('ATEM 未连接');
+    await expect(monitor.autoTransition()).rejects.toThrow('ATEM 未连接');
+  });
+
   it('does not start a camera timer when no PGM input is active', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
@@ -130,6 +140,27 @@ describe('ATEMMonitor connection lifecycle', () => {
       programInputElapsedSeconds: 0,
       programInputOverLimit: false
     });
+    await monitor.stop();
+  });
+
+  it('records the previous camera duration and the destination on a PGM switch', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    const updateState = (monitor as unknown as { updateStateFromATEM: (next: unknown) => void }).updateStateFromATEM.bind(monitor);
+    const internals = monitor as unknown as { programInputStartedAt: number | null };
+    internals.programInputStartedAt = Date.now() - 125_000;
+    const records: Array<{ fromInputId: number; toInputId: number; durationSeconds: number }> = [];
+    monitor.on('switchRecorded', (entry) => records.push(entry));
+
+    updateState({ ...atemMock.state, video: { mixEffects: [{ programInput: 2, previewInput: 1 }] } });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      fromInputId: 1,
+      toInputId: 2,
+      durationSeconds: 125
+    });
+    expect(monitor.getSnapshot().programInputStartedAt).not.toBeNull();
     await monitor.stop();
   });
 

@@ -1,4 +1,5 @@
 .env
 data/
 updates/
+tls/
 node_modules/

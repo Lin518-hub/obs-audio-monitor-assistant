@@ -75,7 +75,7 @@
   justify-content: space-between;
   gap: var(--s-2);
 }
-.guide-card-head h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; color: var(--text-primary); }
+.guide-card-head h2 { font-size: 18px; font-weight: 800; letter-spacing: 0; color: var(--text-primary); }
 .guide-card-body {
   flex: 1;
   min-height: 0;
@@ -115,7 +115,7 @@
   animation: slide-in-up 280ms ease;
 }
 .manual-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
-.manual-head h2 { font-size: 22px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em; }
+.manual-head h2 { font-size: 22px; font-weight: 800; color: var(--text-primary); letter-spacing: 0; }
 .manual-sections {
   display: flex;
   flex-direction: column;

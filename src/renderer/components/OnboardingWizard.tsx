@@ -494,7 +494,7 @@ const StepContent: React.FC<{
 // =============================================================================
 // OnboardingWizard 主组件
 // =============================================================================
-export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
+const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
   const { draft, snapshot, onUpdateDraft, onComplete, onTestConnection, onRefreshInputs, testResult, testingConnection } = props;
 
   const [stepIndex, setStepIndex] = useState(0);
@@ -555,3 +555,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
     </div>
   );
 };
+
+export const OnboardingWizard = memo(OnboardingWizardComponent, (previous, next) => (
+  previous.draft === next.draft &&
+  previous.snapshot.connected === next.snapshot.connected &&
+  previous.snapshot.inputs === next.snapshot.inputs &&
+  previous.onUpdateDraft === next.onUpdateDraft &&
+  previous.onComplete === next.onComplete &&
+  previous.onTestConnection === next.onTestConnection &&
+  previous.onRefreshInputs === next.onRefreshInputs &&
+  previous.testResult === next.testResult &&
+  previous.testingConnection === next.testingConnection
+));

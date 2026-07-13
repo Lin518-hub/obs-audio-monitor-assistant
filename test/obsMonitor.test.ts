@@ -56,4 +56,38 @@ describe('OBSMonitor test alert', () => {
 
     await monitor.stop();
   });
+
+  it('only establishes speaking after the meter crosses the configured threshold', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const internals = monitor as unknown as {
+      state: { connected: boolean; streaming: boolean };
+      ensureInputState: (name: string, kind: string) => unknown;
+      updateInputLevel: (state: unknown, levelDb: number, now: number) => void;
+      recomputeAggregateState: (now: number) => void;
+    };
+    const input = internals.ensureInputState('Mic', 'wasapi_input_capture');
+    internals.state.connected = true;
+    internals.state.streaming = true;
+    const now = Date.now();
+
+    internals.updateInputLevel(input, -70, now);
+    internals.recomputeAggregateState(now);
+    expect(monitor.getSnapshot(now).audioSpeaking).toBe(false);
+
+    internals.updateInputLevel(input, -30, now + 1000);
+    internals.recomputeAggregateState(now + 1000);
+    expect(monitor.getSnapshot(now + 1000).audioSpeaking).toBe(false);
+
+    internals.updateInputLevel(input, -30, now + 1130);
+    internals.recomputeAggregateState(now + 1130);
+    expect(monitor.getSnapshot(now + 1130).audioSpeaking).toBe(true);
+
+    internals.updateInputLevel(input, -70, now + 1500);
+    internals.recomputeAggregateState(now + 1500);
+    expect(monitor.getSnapshot(now + 1500).audioSpeaking).toBe(true);
+
+    internals.recomputeAggregateState(now + 4500);
+    expect(monitor.getSnapshot(now + 4500).audioSpeaking).toBe(false);
+    await monitor.stop();
+  });
 });

@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let overview = { devices:[], requests:[], approvals:[] }, activeTab = 'requests', pollTimer;
 const toast = (message) => { $('toast').textContent=message;$('toast').classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').classList.add('hidden'),2600); };
-const api = async (path, options={}) => { const response=await fetch(path,options);const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||'请求失败');return body; };
+const api = async (path, options={}) => { const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);try{const response=await fetch(path,{...options,signal:controller.signal});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||'请求失败');return body;}catch(error){if(error.name==='AbortError')throw new Error('服务器响应超时');throw error;}finally{clearTimeout(timer);} };
 const fmt = (ts) => ts ? new Date(ts).toLocaleString() : '--';
 const size = (bytes) => bytes>1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.ceil(bytes/1024)} KB`;
 

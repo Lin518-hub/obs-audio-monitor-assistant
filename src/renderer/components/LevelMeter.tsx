@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Activity, Mic2 } from 'lucide-react';
 import type { AppConfig, AppSnapshot } from '../../shared/types';
+import { useAudioMeter } from '../hooks/useAudioMeter';
 import { audioStateKind, dbLevelPercent, displayedSilenceSeconds, formatDb, secondsUntilVisibleAlert, snapshotTargetName, thresholdPercent } from '../utils/status';
 
 interface LevelMeterProps {
@@ -17,7 +18,9 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
   const pointerIdRef = useRef<number | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const level = dbLevelPercent(snapshot.lastLevelDb);
+  const meter = useAudioMeter(snapshot);
+  const levelDb = meter.activeInputName === snapshot.activeInputName ? meter.levelDb : snapshot.lastLevelDb;
+  const level = dbLevelPercent(levelDb);
   const threshold = thresholdPercent(draft.silenceThresholdDb);
   const state = audioStateKind(snapshot);
   const silent = displayedSilenceSeconds(snapshot);
@@ -69,7 +72,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
         </h2>
         <div className={`level-meter-state state-${state}`}>
           <Activity size={14} />
-          {state === 'normal' ? '正在讲话' : state === 'silent' ? `${silent}s 静音` : '未在检测'}
+          {state === 'normal' || state === 'confirming' ? '正在讲话' : state === 'silent' ? `${silent}s 静音` : '未在检测'}
         </div>
       </header>
 
@@ -78,7 +81,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
           <Mic2 size={14} />
           {targetName}
         </span>
-        <strong className={`level-meter-value level-${state}`}>{formatDb(snapshot.lastLevelDb)}</strong>
+        <strong className={`level-meter-value level-${state}`}>{formatDb(levelDb)}</strong>
       </div>
 
       <div
@@ -94,7 +97,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
         aria-valuemax={MAX_DB}
         aria-valuenow={Math.round(draft.silenceThresholdDb)}
       >
-        <div className="level-meter-fill" style={{ width: `${level}%` }} />
+        <div className="level-meter-fill" style={{ transform: `scaleX(${level / 100})` }} />
         <div className="level-meter-threshold" style={{ left: `${threshold}%` }}>
           <div className="level-meter-threshold-line" />
           <div className="level-meter-threshold-label">{Math.round(draft.silenceThresholdDb)} dB</div>
@@ -115,7 +118,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
               <span>距报警</span>
               <strong>{remaining}s</strong>
             </>
-          ) : state === 'normal' ? (
+          ) : state === 'normal' || state === 'confirming' ? (
             <span className="level-meter-remaining-ok">音频正常</span>
           ) : (
             <span className="level-meter-remaining-wait">等待直播 / 录制</span>

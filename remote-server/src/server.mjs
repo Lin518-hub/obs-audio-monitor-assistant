@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
+import { createServer as createNetServer } from 'node:net';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -13,6 +15,8 @@ const dataDir = resolve(process.env.DATA_DIR || '/data');
 const updateDir = resolve(process.env.UPDATE_DIR || '/updates');
 const dataFile = join(dataDir, 'remote-state.json');
 const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`).replace(/\/$/, '');
+const tlsCertFile = process.env.TLS_CERT_FILE ? resolve(process.env.TLS_CERT_FILE) : '';
+const tlsKeyFile = process.env.TLS_KEY_FILE ? resolve(process.env.TLS_KEY_FILE) : '';
 const adminPassword = String(process.env.ADMIN_PASSWORD || '');
 if (adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters');
 
@@ -26,6 +30,8 @@ const mobileSockets = new Map();
 const pendingCommands = new Map();
 const adminSessions = new Map();
 const loginAttempts = new Map();
+const requestLimits = new Map();
+let saveQueue = Promise.resolve();
 
 async function loadData() {
   try {
@@ -40,10 +46,16 @@ async function loadData() {
   }
 }
 
-async function saveData() {
-  const temporary = `${dataFile}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, dataFile);
+function saveData() {
+  pruneStoredData();
+  const serialized = `${JSON.stringify(data, null, 2)}\n`;
+  const operation = saveQueue.catch(() => undefined).then(async () => {
+    const temporary = `${dataFile}.tmp-${process.pid}-${token(4)}`;
+    await writeFile(temporary, serialized, { mode: 0o600 });
+    await rename(temporary, dataFile);
+  });
+  saveQueue = operation;
+  return operation;
 }
 
 const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
@@ -56,6 +68,40 @@ const safeEqual = (left, right) => {
 const now = () => Date.now();
 const cleanText = (value, max = 80) => String(value || '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, max);
 const cleanUuid = (value) => /^[0-9a-f-]{20,64}$/i.test(String(value || '')) ? String(value) : '';
+
+function pruneStoredData() {
+  const current = now();
+  const pendingCutoff = current - 24 * 60 * 60 * 1000;
+  const approvedTokenCutoff = current - 24 * 60 * 60 * 1000;
+  for (const request of data.requests) {
+    if (request.status === 'pending' && request.createdAt < pendingCutoff) {
+      request.status = 'rejected';
+      request.decidedAt = current;
+    }
+    // The mobile access token is returned only while the approved browser is
+    // completing its first exchange. Long-term authentication stores only the
+    // hash in approvals, so plaintext tokens do not accumulate in state data.
+    if (request.approvedToken && (request.decidedAt || request.createdAt) < approvedTokenCutoff) {
+      delete request.approvedToken;
+    }
+  }
+  data.requests = data.requests.slice(-2000);
+  data.approvals = data.approvals
+    .filter((approval) => !approval.revokedAt || approval.revokedAt > current - 30 * 24 * 60 * 60 * 1000)
+    .slice(-2000);
+}
+
+function allowRequest(req, scope, max, windowMs) {
+  const key = `${scope}:${req.socket.remoteAddress || 'unknown'}`;
+  const current = now();
+  const bucket = requestLimits.get(key);
+  if (!bucket || bucket.resetAt <= current) {
+    requestLimits.set(key, { count: 1, resetAt: current + windowMs });
+    return true;
+  }
+  bucket.count += 1;
+  return bucket.count <= max;
+}
 
 function securityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -180,6 +226,7 @@ async function serveFile(res, file, cache = false) {
 
 async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/devices/register') {
+    if (!allowRequest(req, 'register', 60, 60_000)) return json(res, 429, { error: 'too_many_requests' });
     const body = await readJson(req);
     const uuid = cleanUuid(body.uuid);
     const secret = String(body.secret || '');
@@ -204,6 +251,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/pair/request') {
+    if (!allowRequest(req, 'pair', 12, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests' });
     const body = await readJson(req);
     const device = deviceByPairToken(body.pairToken || '');
     const clientId = cleanUuid(body.clientId);
@@ -239,11 +287,12 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/admin/login') {
     const ip = req.socket.remoteAddress || 'unknown';
-    const attempt = loginAttempts.get(ip) || { count: 0, blockedUntil: 0 };
+    const attempt = loginAttempts.get(ip) || { count: 0, blockedUntil: 0, lastAt: 0 };
     if (attempt.blockedUntil > now()) return json(res, 429, { error: 'too_many_attempts' });
     const body = await readJson(req);
     if (!safeEqual(body.password || '', adminPassword)) {
       attempt.count += 1;
+      attempt.lastAt = now();
       if (attempt.count >= 6) { attempt.blockedUntil = now() + 5 * 60 * 1000; attempt.count = 0; }
       loginAttempts.set(ip, attempt);
       return json(res, 401, { error: 'invalid_password' });
@@ -252,7 +301,8 @@ async function handleApi(req, res, url) {
     const sessionId = token(32);
     adminSessions.set(sessionId, { expiresAt: now() + 8 * 60 * 60 * 1000 });
     securityHeaders(res);
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Set-Cookie': `obs_remote_admin=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`, 'Cache-Control': 'no-store' });
+    const secureCookie = req.socket.encrypted ? '; Secure' : '';
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Set-Cookie': `obs_remote_admin=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secureCookie}`, 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ ok: true }));
   }
 
@@ -343,7 +393,7 @@ async function handleApi(req, res, url) {
   return json(res, 404, { error: 'not_found' });
 }
 
-const server = createServer(async (req, res) => {
+const requestListener = async (req, res) => {
   try {
     const url = new URL(req.url || '/', publicBaseUrl);
     if (url.pathname === '/health') return json(res, 200, { ok: true, desktops: desktopSockets.size });
@@ -364,18 +414,51 @@ const server = createServer(async (req, res) => {
     return json(res, 404, { error: 'not_found' });
   } catch (error) {
     console.error(error);
+    if (error instanceof SyntaxError) return json(res, 400, { error: 'invalid_json' });
+    if (error?.message === 'request_too_large') return json(res, 413, { error: 'request_too_large' });
     return json(res, 500, { error: 'internal_error' });
   }
-});
+};
+
+if (Boolean(tlsCertFile) !== Boolean(tlsKeyFile)) {
+  throw new Error('TLS_CERT_FILE and TLS_KEY_FILE must be configured together');
+}
+
+const httpServer = createHttpServer(requestListener);
+const httpsServer = tlsCertFile
+  ? createHttpsServer({
+      cert: await readFile(tlsCertFile),
+      key: await readFile(tlsKeyFile)
+    }, requestListener)
+  : null;
+const server = httpsServer
+  ? createNetServer((socket) => {
+      socket.setTimeout(10_000, () => socket.destroy());
+      socket.once('data', (buffer) => {
+        socket.setTimeout(0);
+        socket.pause();
+        socket.unshift(buffer);
+        // TLS ClientHello records start with 0x16. Plain HTTP is delegated to
+        // the existing server so installed LAN clients keep working on 8088.
+        const protocolServer = buffer[0] === 0x16 ? httpsServer : httpServer;
+        protocolServer.emit('connection', socket);
+        if (protocolServer === httpServer) socket.resume();
+      });
+    })
+  : httpServer;
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });
-server.on('upgrade', (req, socket, head) => {
+const handleUpgrade = (req, socket, head) => {
   const url = new URL(req.url || '/', publicBaseUrl);
   if (!['/ws/desktop', '/ws/mobile'].includes(url.pathname)) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, url));
-});
+};
+httpServer.on('upgrade', handleUpgrade);
+httpsServer?.on('upgrade', handleUpgrade);
 
 wss.on('connection', (socket, req, url) => {
+  socket.isAlive = true;
+  socket.on('pong', () => { socket.isAlive = true; });
   if (url.pathname === '/ws/desktop') {
     const uuid = cleanUuid(url.searchParams.get('uuid'));
     const secret = url.searchParams.get('secret') || '';
@@ -393,11 +476,22 @@ wss.on('connection', (socket, req, url) => {
           device.lastState = message.state;
           device.lastSeenAt = now();
           broadcastMobile(uuid, { type: 'state', state: device.lastState });
+        } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
+          const levelDb = Number(message.meter.levelDb);
+          broadcastMobile(uuid, {
+            type: 'meter',
+            meter: {
+              timestamp: Number.isFinite(Number(message.meter.timestamp)) ? Number(message.meter.timestamp) : now(),
+              activeInputName: cleanText(message.meter.activeInputName, 100),
+              levelDb: Number.isFinite(levelDb) ? Math.max(-100, Math.min(12, levelDb)) : null
+            }
+          });
         } else if (message.type === 'command-result') {
           const pending = pendingCommands.get(cleanText(message.id, 80));
           if (pending) {
             clearTimeout(pending.timer);
             pendingCommands.delete(cleanText(message.id, 80));
+            pending.socket.commandInFlight = false;
             if (pending.socket.readyState === WebSocket.OPEN) {
               pending.socket.send(JSON.stringify({ ...message, id: pending.clientCommandId }));
             }
@@ -419,6 +513,7 @@ wss.on('connection', (socket, req, url) => {
   if (!device) return socket.close(4004, 'device_not_found');
   const sockets = mobileSockets.get(device.uuid) || new Set();
   socket.approvalId = approval.id;
+  socket.commandInFlight = false;
   sockets.add(socket);
   mobileSockets.set(device.uuid, sockets);
   approval.lastUsedAt = now();
@@ -428,15 +523,19 @@ wss.on('connection', (socket, req, url) => {
     try {
       const message = JSON.parse(raw.toString());
       if (message.type !== 'command') return;
-      const allowed = ['atem.preview', 'atem.auto'];
-      if (!allowed.includes(message.command)) return socket.send(JSON.stringify({ type: 'command-result', id: message.id, ok: false, message: '不允许的远程操作' }));
-      const desktop = desktopSockets.get(device.uuid);
-      if (!desktop || desktop.readyState !== WebSocket.OPEN) return socket.send(JSON.stringify({ type: 'command-result', id: message.id, ok: false, message: '电脑当前离线' }));
-      const relayId = token(12);
       const clientCommandId = cleanText(message.id, 80);
+      if (!clientCommandId) return socket.send(JSON.stringify({ type: 'command-result', id: '', ok: false, message: '操作编号无效' }));
+      if (socket.commandInFlight) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '上一项操作仍在执行' }));
+      const allowed = ['atem.preview', 'atem.auto'];
+      if (!allowed.includes(message.command)) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '不允许的远程操作' }));
+      const desktop = desktopSockets.get(device.uuid);
+      if (!desktop || desktop.readyState !== WebSocket.OPEN) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '电脑当前离线' }));
+      socket.commandInFlight = true;
+      const relayId = token(12);
       const timer = setTimeout(() => {
         const pending = pendingCommands.get(relayId);
         pendingCommands.delete(relayId);
+        socket.commandInFlight = false;
         if (pending?.socket.readyState === WebSocket.OPEN) {
           pending.socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '电脑响应超时' }));
         }
@@ -456,6 +555,55 @@ wss.on('connection', (socket, req, url) => {
     if (sockets.size === 0) mobileSockets.delete(device.uuid);
   });
 });
+
+const heartbeat = setInterval(() => {
+  for (const socket of wss.clients) {
+    if (!socket.isAlive) {
+      socket.terminate();
+      continue;
+    }
+    socket.isAlive = false;
+    socket.ping();
+  }
+  const current = now();
+  for (const [id, session] of adminSessions) if (session.expiresAt < current) adminSessions.delete(id);
+  for (const [key, bucket] of requestLimits) if (bucket.resetAt < current) requestLimits.delete(key);
+  for (const [key, attempt] of loginAttempts) {
+    if (attempt.blockedUntil < current && current - (attempt.lastAt || 0) > 60 * 60 * 1000) loginAttempts.delete(key);
+  }
+}, 30_000);
+heartbeat.unref();
+
+for (const protocolServer of [httpServer, httpsServer].filter(Boolean)) {
+  protocolServer.headersTimeout = 15_000;
+  protocolServer.keepAliveTimeout = 5_000;
+}
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down remote service`);
+  clearInterval(heartbeat);
+  for (const pending of pendingCommands.values()) clearTimeout(pending.timer);
+  pendingCommands.clear();
+  for (const socket of wss.clients) socket.terminate();
+
+  await Promise.race([
+    saveQueue.catch((error) => console.error('Failed to finish state save during shutdown', error)),
+    new Promise((resolveTimeout) => setTimeout(resolveTimeout, 5_000))
+  ]);
+  await Promise.race([
+    new Promise((resolveClose) => server.close(resolveClose)),
+    new Promise((resolveTimeout) => setTimeout(resolveTimeout, 5_000))
+  ]);
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    void shutdown(signal).finally(() => process.exit(0));
+  });
+}
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`OBS remote server listening on ${publicBaseUrl}`);

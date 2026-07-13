@@ -123,9 +123,13 @@ const FloatingModePreview: React.FC<{ mode: FloatingWindowMode }> = ({ mode }) =
         <div className="floating-preview-meter"><span /></div>
       </>
     ) : mode === 'audio_atem' ? (
-      <div className="floating-preview-dual">
-        <div><b>音频</b><strong>正在讲话</strong><span /></div>
-        <div><b>PGM 1 · Camera 1</b><strong>04:05</strong><em>剩余 00:55</em></div>
+      <div className="floating-preview-combo">
+        <div className="floating-preview-combo-metrics">
+          <span><b>音频检测</b><strong>正在讲话</strong><em>麦克风 / Aux</em></span>
+          <span><b>当前机位</b><strong>04:05</strong><em>PGM 1 · Camera 1</em></span>
+        </div>
+        <i className="floating-preview-combo-meter" />
+        <div className="floating-preview-combo-prompts"><span>音频正常</span><span>剩余 00:55</span></div>
       </div>
     ) : (
       <div className="floating-preview-module-grid">
@@ -150,7 +154,7 @@ const FloatingModePicker: React.FC<{
     {
       value: 'audio_atem' as const,
       title: '音频 + 机位',
-      description: '以紧凑双层布局同时显示音频状态、当前机位和机位计时。'
+      description: '在同一个状态面板中显示音频、当前机位和机位计时。'
     },
     {
       value: 'multifunction' as const,
@@ -307,10 +311,19 @@ export const ATEMSection: React.FC<{
     try {
       const result = await window.obsGuard.testATEMConnection(draft.atemHost);
       setTestResult(result);
+      if (result.ok && draft.atemEnabled) {
+        await window.obsGuard.atemReconnect();
+      }
+    } catch (error) {
+      setTestResult({
+        ok: false,
+        message: error instanceof Error ? error.message : 'ATEM 连接测试失败',
+        inputCount: 0
+      });
     } finally {
       setTesting(false);
     }
-  }, [draft.atemHost]);
+  }, [draft.atemEnabled, draft.atemHost]);
 
   const handleScanNetwork = React.useCallback(async () => {
     setScanning(true);
@@ -319,6 +332,14 @@ export const ATEMSection: React.FC<{
     try {
       const result = await window.obsGuard.scanATEMNetwork(draft.atemHost);
       setScanResult(result);
+    } catch (error) {
+      setScanResult({
+        ok: false,
+        message: error instanceof Error ? error.message : 'ATEM 局域网扫描失败',
+        scannedHosts: 0,
+        interfaces: [],
+        devices: []
+      });
     } finally {
       setScanning(false);
     }
@@ -481,7 +502,7 @@ export const ATEMSection: React.FC<{
             <ToggleRow
               id="atem-floating-module"
               title="在小浮窗显示当前机位"
-              description="自动切换到多功能小浮窗，显示 PGM 机位和已使用时间"
+              description="自动切换到音频 + 机位小浮窗，一体显示音频、PGM 机位和已使用时间"
               checked={draft.floatingWindowMode === 'audio_atem' || (draft.floatingWindowMode === 'multifunction' && draft.floatingWindowModules.atem)}
               onChange={(v) => {
                 onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v });
@@ -794,7 +815,8 @@ export const RemoteAccessSection: React.FC<{
       />
       <div className="settings-field">
         <label className="settings-field-label" htmlFor="remote-server-url">远程服务地址</label>
-        <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="http://192.168.110.111:8088" />
+        <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="https://obs.huaweilive.top:8088" />
+        <span className="settings-field-help">内置服务会自动优先使用局域网，局域网不可达时切换到公网 HTTPS。</span>
       </div>
       <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
       <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
@@ -809,7 +831,7 @@ export const RemoteAccessSection: React.FC<{
           <code>{snapshot.remoteAccessPairUrl || `${draft.remoteServerUrl}/pair/等待连接`}</code>
         </div>
       </div>
-      <div className="settings-hint warn">远程切台属于高风险操作。移动端仅允许选择 PVW 和确认后的 AUTO，不开放远程 Hard Cut；请只在可信局域网中启用。</div>
+      <div className="settings-hint warn">远程切台属于高风险操作。移动端仅允许选择 PVW 和确认后的 AUTO，不开放远程 Hard Cut；公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
     </Section>
   );
 };

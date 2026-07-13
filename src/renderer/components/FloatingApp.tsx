@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, LayoutGrid, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
 import type { AppSnapshot } from '../../shared/types';
+import { useAudioMeter } from '../hooks/useAudioMeter';
 import {
   audioStateKind, dbLevelPercent, displayStatusText, floatingEmphasis, floatingHint, floatingTone, floatingWarningProgress, formatDb, thresholdPercent
 } from '../utils/status';
@@ -15,6 +16,7 @@ export const FloatingApp: React.FC = () => {
     localStorage.getItem('floatingTheme') === 'light' ? 'light' : 'dark'
   );
   const [scale, setScale] = useState(1);
+  const meter = useAudioMeter(snapshot);
 
   useEffect(() => {
     let mounted = true;
@@ -101,46 +103,69 @@ export const FloatingApp: React.FC = () => {
           </div>
         </header>
 
-        {mode === 'audio' && <AudioFloatingCard snapshot={snapshot} inputName={inputName} />}
-        {isAudioAtem && <AudioAtemFloatingCard snapshot={snapshot} inputName={inputName} />}
-        {isMulti && <MultiFunctionGrid snapshot={snapshot} inputName={inputName} />}
+        {mode === 'audio' && <AudioFloatingCard snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
+        {isAudioAtem && <AudioAtemFloatingCard snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
+        {isMulti && <MultiFunctionGrid snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
       </section>
     </main>
   );
 };
 
-const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string }> = ({ snapshot, inputName }) => {
-  const isAudioNormal = audioStateKind(snapshot) === 'normal';
-  const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
+const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string; meterLevelDb: number | null }> = ({ snapshot, inputName, meterLevelDb }) => {
+  const audioState = audioStateKind(snapshot);
+  const isAudioNormal = audioState === 'normal' || audioState === 'confirming';
+  const levelPercent = dbLevelPercent(meterLevelDb);
   const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
   const timerState = atemTimerState(snapshot);
   const cameraLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取机位';
+  const audioPrompt = isAudioNormal
+    ? { tone: 'safe', label: '音频正常', hint: '正在讲话' }
+    : audioState === 'silent'
+      ? { tone: snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10 ? 'critical' : 'warn', label: '静音计时', hint: floatingHint(snapshot) }
+      : { tone: 'idle', label: '音频未就绪', hint: floatingHint(snapshot) };
 
   return (
-    <section className="floating-dual-grid">
-      <article className="floating-dual-card floating-dual-audio">
-        <header><span><Mic2 size={12} /> 音频</span><strong>{isAudioNormal ? '音频正常' : displayStatusText(snapshot)}</strong></header>
-        <div className="floating-dual-main"><b>{inputName}</b><strong>{isAudioNormal ? '正在讲话' : `${snapshot.silentForSeconds}s`}</strong></div>
+    <section className="floating-combo-card">
+      <div className="floating-combo-metrics">
+        <div className="floating-combo-audio">
+          <span><Mic2 size={12} /> {isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
+          <strong>{isAudioNormal ? '正在讲话' : audioState === 'silent' ? `${snapshot.silentForSeconds}s` : '--'}</strong>
+          <em>{inputName}</em>
+        </div>
+        <div className={`floating-combo-camera ${timerState.tone}`}>
+          <span><Video size={12} /> 当前机位</span>
+          <strong>{formatFloatingTime(snapshot.atemProgramInputElapsedSeconds)}</strong>
+          <em>PGM {snapshot.atemProgramInput || '--'} · {cameraLabel}</em>
+        </div>
+      </div>
+      <div className="floating-combo-meter">
+        <div className="floating-combo-meter-label">
+          <span>{inputName}</span>
+          <strong>{formatDb(meterLevelDb)}</strong>
+        </div>
         <div className="floating-meter-track">
-          <div style={{ width: `${levelPercent}%` }} />
+          <div style={{ transform: `scaleX(${levelPercent / 100})` }} />
           <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
         </div>
-      </article>
-      <article className={`floating-dual-card floating-dual-atem ${timerState.tone}`}>
-        <header><span><Video size={12} /> 当前机位</span><strong>{timerState.label}</strong></header>
-        <div className="floating-dual-main">
-          <b>PGM {snapshot.atemProgramInput || '--'} · {cameraLabel}</b>
-          <strong>{formatFloatingTime(snapshot.atemProgramInputElapsedSeconds)}</strong>
+      </div>
+      <footer className="floating-combo-prompts">
+        <div className={`floating-combo-prompt ${audioPrompt.tone}`}>
+          <span><Mic2 size={11} /> {audioPrompt.label}</span>
+          <strong>{audioPrompt.hint}</strong>
         </div>
-        <footer>{timerState.hint}</footer>
-      </article>
+        <div className={`floating-combo-prompt ${timerState.tone || 'safe'}`}>
+          <span><Video size={11} /> {timerState.label}</span>
+          <strong>{timerState.hint}</strong>
+        </div>
+      </footer>
     </section>
   );
 };
 
-const AudioFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string }> = ({ snapshot, inputName }) => {
-  const isAudioNormal = audioStateKind(snapshot) === 'normal';
-  const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
+const AudioFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string; meterLevelDb: number | null }> = ({ snapshot, inputName, meterLevelDb }) => {
+  const audioState = audioStateKind(snapshot);
+  const isAudioNormal = audioState === 'normal' || audioState === 'confirming';
+  const levelPercent = dbLevelPercent(meterLevelDb);
   const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
 
   return (
@@ -153,10 +178,10 @@ const AudioFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string }> 
       <section className="floating-meter">
         <div>
           <span><Mic2 size={12} />{inputName}</span>
-          <strong>{formatDb(snapshot.lastLevelDb)}</strong>
+          <strong>{formatDb(meterLevelDb)}</strong>
         </div>
         <div className="floating-meter-track">
-          <div style={{ width: `${levelPercent}%` }} />
+          <div style={{ transform: `scaleX(${levelPercent / 100})` }} />
           <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
         </div>
       </section>
@@ -164,10 +189,11 @@ const AudioFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string }> 
   );
 };
 
-const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string }> = ({ snapshot, inputName }) => {
+const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string; meterLevelDb: number | null }> = ({ snapshot, inputName, meterLevelDb }) => {
   const modules = snapshot.config.floatingWindowModules;
-  const isAudioNormal = audioStateKind(snapshot) === 'normal';
-  const levelPercent = dbLevelPercent(snapshot.lastLevelDb);
+  const audioState = audioStateKind(snapshot);
+  const isAudioNormal = audioState === 'normal' || audioState === 'confirming';
+  const levelPercent = dbLevelPercent(meterLevelDb);
   const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
   const hasModule = modules.audio || modules.atem || modules.obsStats;
   const moduleCount = Number(modules.audio) + Number(modules.atem) + Number(modules.obsStats);
@@ -183,10 +209,10 @@ const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string }> 
             <b>{inputName}</b>
           </div>
           <div className="floating-meter-track">
-            <div style={{ width: `${levelPercent}%` }} />
+            <div style={{ transform: `scaleX(${levelPercent / 100})` }} />
             <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
           </div>
-          <footer><span>{formatDb(snapshot.lastLevelDb)}</span><em>{floatingHint(snapshot)}</em></footer>
+          <footer><span>{formatDb(meterLevelDb)}</span><em>{floatingHint(snapshot)}</em></footer>
         </article>
       )}
 

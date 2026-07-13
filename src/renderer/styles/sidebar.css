@@ -38,7 +38,7 @@
 .sidebar-brand-name {
   font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -67,7 +67,7 @@
   color: var(--text-faint);
   font-size: 10.5px;
   font-weight: 850;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -139,7 +139,7 @@
   background: var(--blue-soft);
   color: var(--blue-text);
   font-size: 8.5px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }
 
 .sidebar-settings-card {
