@@ -1,34 +1,25 @@
 /* =============================================================================
- * shell.css — 3 栏主界面骨架
- * 左 268 | 中 1fr | 右 320
+ * shell.css — 2 栏主界面骨架
+ * 左侧栏优先保证可读；窄屏时切换为紧凑图标栏。
  * ============================================================================= */
 
 .app-shell {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(272px, 296px) minmax(0, 1fr);
   gap: var(--s-6);
   /* macOS hiddenInset 标题栏约 28px,Windows 默认有 OS 标题栏约 32px。
    * padding-top 多留 28px 让 sidebar 顶部 logo + 标题栏不挤在一起 */
   height: 100vh;
+  min-height: 0;
   padding: 52px var(--s-7) var(--s-6);
   overflow: hidden;
-}
-
-@media (max-width: 1280px) {
-  .app-shell { grid-template-columns: 220px minmax(0, 1fr) 300px; gap: var(--s-5); padding: var(--s-5); }
-  .window-drag-strip { left: 220px; }
-}
-@media (max-width: 1100px) {
-  .app-shell { grid-template-columns: 200px minmax(0, 1fr); }
-  .window-drag-strip { left: 200px; }
-  .app-shell .right-column { display: none; }
 }
 
 .window-drag-strip {
   position: fixed;
   top: 0;
   right: 0;
-  left: 268px;
+  left: 296px;
   z-index: 50;
   /* macOS hiddenInset 标题栏高度 28px,留 28-36px drag 区。
    * 整个顶部 52px 都是 drag 区域,sidebar 顶部 logo 不会跟菜单栏挤 */
@@ -42,6 +33,40 @@
   flex-direction: column;
   gap: var(--s-5);
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 8px 4px 16px 0;
+  container: main-content / inline-size;
+}
+.app-main-content > * { flex: 0 0 auto; }
+
+@media (max-width: 1320px) {
+  .app-shell {
+    grid-template-columns: 256px minmax(0, 1fr);
+    gap: var(--s-5);
+    padding: 42px var(--s-5) var(--s-5);
+  }
+  .window-drag-strip { left: 256px; height: 42px; }
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 236px minmax(0, 1fr);
+    gap: var(--s-5);
+    padding: 42px var(--s-5) var(--s-5);
+  }
+  .window-drag-strip { left: 236px; height: 42px; }
+}
+
+@media (max-width: 840px) {
+  .app-shell {
+    grid-template-columns: 86px minmax(0, 1fr);
+    gap: var(--s-4);
+    padding: 40px var(--s-4) var(--s-4);
+  }
+  .window-drag-strip { left: 86px; height: 40px; }
 }

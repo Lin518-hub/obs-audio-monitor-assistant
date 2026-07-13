@@ -2,34 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Mic2, X } from 'lucide-react';
 import type { AppSnapshot } from '../../shared/types';
 
-export function playAlertTone(enabled: boolean): void {
-  if (!enabled) {
-    return;
-  }
-
-  try {
-    const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      return;
-    }
-    const context = new AudioContextCtor();
-    const gain = context.createGain();
-    const oscillator = context.createOscillator();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.42);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.46);
-    window.setTimeout(() => void context.close().catch(() => undefined), 700);
-  } catch {
-    // Browsers may block audio in rare cases; the visual alert still works.
-  }
-}
-
 export const ToastAlertApp: React.FC = () => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
 
@@ -38,7 +10,6 @@ export const ToastAlertApp: React.FC = () => {
     void window.obsGuard.getSnapshot().then((next) => {
       if (mounted) {
         setSnapshot(next);
-        playAlertTone(next.config.alertSoundEnabled);
       }
     });
     const dispose = window.obsGuard.onSnapshot((next) => { if (mounted) setSnapshot(next); });

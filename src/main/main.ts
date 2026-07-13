@@ -27,8 +27,12 @@ const trayIconPaths = {
 } as const;
 const FLOATING_WINDOW_DEFAULT_WIDTH = 340;
 const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
+const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 400;
+const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 238;
+const FLOATING_MULTI_DEFAULT_WIDTH = 460;
+const FLOATING_MULTI_DEFAULT_HEIGHT = 300;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
-const FLOATING_WINDOW_MAX_WIDTH = 560;
+const FLOATING_WINDOW_MAX_WIDTH = 640;
 const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WINDOW_DEFAULT_HEIGHT;
 const FLOATING_WINDOW_BASE_RADIUS = 14;
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
@@ -63,9 +67,15 @@ let downloadedUpdateFilePath: string | null = null;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
+let lastTrayTone: TrayTone | null = null;
+let lastTrayTooltip = '';
+let lastTrayMenuKey = '';
 const alertWindows = new Map<number, BrowserWindow>();
+const alertBackdropWindows = new Map<number, BrowserWindow>();
 const toastAlertWindows = new Map<number, BrowserWindow>();
 const preAlertWindows = new Map<number, BrowserWindow>();
+const rendererUnavailable = new WeakSet<BrowserWindow>();
+const rendererReloadTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -128,11 +138,11 @@ async function initializeApp(): Promise<void> {
   screen.on('display-metrics-changed', refreshDisplays);
 
   monitor.on('snapshot', (snapshot) => {
-    const merged = injectATEMState(snapshot);
-    latestSnapshot = merged;
-    broadcastSnapshot(merged);
-    updateTray(merged);
-    syncFloatingWindow(merged);
+    const incoming = injectATEMState(snapshot);
+    latestSnapshot = preserveSnapshotHistory(incoming);
+    broadcastSnapshot(incoming);
+    updateTray(incoming);
+    syncFloatingWindow(incoming);
     if (snapshot.preAlertVisible && !snapshot.alertVisible) {
       showPreAlertWindows(snapshot);
     } else {
@@ -140,6 +150,7 @@ async function initializeApp(): Promise<void> {
     }
     if (!snapshot.alertVisible) {
       closeAlertWindows('destroy');
+      closeAlertBackdropWindows('destroy');
       closeToastAlertWindows('destroy');
     }
   });
@@ -177,6 +188,10 @@ app.on('before-quit', () => {
   }
   void monitor?.stop();
   void atemMonitor?.stop();
+  closeAlertWindows('destroy');
+  closeAlertBackdropWindows('destroy');
+  closeToastAlertWindows('destroy');
+  closePreAlertWindows('destroy');
   unregisterATEMHotkeys();
 });
 
@@ -220,7 +235,15 @@ function registerIpc(): void {
     latestSnapshot = injectATEMState(snapshot);
     broadcastSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
-    if (Object.hasOwn(patch, 'floatingWindowEnabled') || Object.hasOwn(patch, 'floatingWindowBounds')) {
+    const floatingWindowChanged =
+      Object.hasOwn(patch, 'floatingWindowEnabled') ||
+      Object.hasOwn(patch, 'floatingWindowBounds') ||
+      Object.hasOwn(patch, 'floatingWindowMode') ||
+      Object.hasOwn(patch, 'floatingWindowModules');
+    if (floatingWindowChanged) {
+      if (latestSnapshot.config.floatingWindowEnabled) {
+        configureFloatingWindowForMode(latestSnapshot);
+      }
       syncFloatingWindow(latestSnapshot);
     }
     if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds')) {
@@ -345,13 +368,26 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     ...snapshot,
     atemConnected: atem.connected,
     atemConnectionState: atem.connectionState,
+    atemModelName: atem.modelName,
     atemProgramInput: atem.programInput,
     atemPreviewInput: atem.previewInput,
+    atemInputIds: atem.inputIds,
     atemInputLabels: atem.inputLabels,
     atemInputCount: atem.inputCount,
     atemProgramInputStartedAt: atem.programInputStartedAt,
     atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
     atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit
+  };
+}
+
+function preserveSnapshotHistory(snapshot: AppSnapshot): AppSnapshot {
+  if (snapshot.volumeHistory.length > 0 || !latestSnapshot || latestSnapshot.volumeHistory.length === 0) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    volumeHistory: latestSnapshot.volumeHistory
   };
 }
 
@@ -367,15 +403,31 @@ function registerATEMHotkeys(): void {
   const atem = atemMonitor;
   if (!atem) return;
 
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= 8; i++) {
     const accelerator = `num${i}`;
     try {
       globalShortcut.register(accelerator, () => {
-        void atem.changePreviewInput(i);
+        if (latestSnapshot?.atemInputIds.includes(i)) {
+          void atem.changePreviewInput(i);
+        }
       });
     } catch (error) {
       console.error(`[ATEM] failed to register global shortcut ${accelerator}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  try {
+    const registered = globalShortcut.register('Enter', () => {
+      const snapshot = latestSnapshot;
+      if (snapshot?.atemConnected && snapshot.atemPreviewInput > 0) {
+        void atem.autoTransition();
+      }
+    });
+    if (!registered) {
+      console.warn('[ATEM] global Enter shortcut is already in use by another application');
+    }
+  } catch (error) {
+    console.error(`[ATEM] failed to register global shortcut Enter: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -844,8 +896,8 @@ function formatUpdateError(error: unknown): string {
 
 function createSettingsWindow(): void {
   settingsWindow = new BrowserWindow({
-    width: 980,
-    height: 720,
+    width: 975,
+    height: 749,
     minWidth: 860,
     minHeight: 620,
     title: 'OBS 音频检测助手',
@@ -889,20 +941,21 @@ function showSettingsWindow(): void {
 
 function showFloatingWindow(snapshot: AppSnapshot): void {
   if (floatingWindow && !floatingWindow.isDestroyed()) {
-    floatingWindow.webContents.send('snapshot', snapshot);
     return;
   }
 
   const bounds = resolveFloatingWindowBounds(snapshot);
+  const mode = snapshot.config.floatingWindowMode;
+  const fixedAspectRatio = floatingWindowAspectRatio(mode);
   floatingWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     minWidth: FLOATING_WINDOW_MIN_WIDTH,
-    minHeight: floatingWindowHeightForWidth(FLOATING_WINDOW_MIN_WIDTH),
+    minHeight: floatingWindowHeightForMode(mode, FLOATING_WINDOW_MIN_WIDTH, snapshot.config.floatingWindowModules),
     maxWidth: FLOATING_WINDOW_MAX_WIDTH,
-    maxHeight: floatingWindowHeightForWidth(FLOATING_WINDOW_MAX_WIDTH),
+    maxHeight: fixedAspectRatio ? floatingWindowHeightForMode(mode, FLOATING_WINDOW_MAX_WIDTH, snapshot.config.floatingWindowModules) : 520,
     resizable: true,
     minimizable: false,
     maximizable: false,
@@ -924,7 +977,9 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
 
   attachWindowDiagnostics(floatingWindow, 'floating');
   floatingWindow.setAlwaysOnTop(true, 'floating');
-  floatingWindow.setAspectRatio(FLOATING_WINDOW_ASPECT_RATIO);
+  if (fixedAspectRatio) {
+    floatingWindow.setAspectRatio(fixedAspectRatio);
+  }
   applyFloatingWindowShape();
   floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   floatingWindow.once('ready-to-show', () => {
@@ -957,7 +1012,9 @@ function closeFloatingWindow(mode: 'close' | 'destroy' = 'destroy'): void {
 
 function syncFloatingWindow(snapshot: AppSnapshot): void {
   if (snapshot.config.floatingWindowEnabled) {
-    showFloatingWindow(snapshot);
+    if (!floatingWindow || floatingWindow.isDestroyed()) {
+      showFloatingWindow(snapshot);
+    }
     return;
   }
 
@@ -974,7 +1031,7 @@ async function setFloatingWindowVisible(visible: boolean): Promise<AppSnapshot> 
   latestSnapshot = injectATEMState(nextSnapshot);
 
   if (visible) {
-    showFloatingWindow(latestSnapshot);
+    syncFloatingWindow(latestSnapshot);
   } else {
     closeFloatingWindow('destroy');
   }
@@ -986,6 +1043,7 @@ async function setFloatingWindowVisible(visible: boolean): Promise<AppSnapshot> 
 
 async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   closeAlertWindows('destroy');
+  closeAlertBackdropWindows('destroy');
   closeToastAlertWindows('destroy');
   closePreAlertWindows('destroy');
   closeFloatingWindow('destroy');
@@ -1089,12 +1147,54 @@ function showAlertWindows(snapshot: AppSnapshot): void {
 
 function showAlertSurfaces(snapshot: AppSnapshot): void {
   const mode = snapshot.config.alertReminderMode;
-  showAlertWindows(snapshot);
-
-  if (mode === 'toast') {
-    showToastAlertWindows(snapshot);
+  if (mode === 'fullscreen') {
+    showAlertBackdropWindows(snapshot);
   } else {
-    closeToastAlertWindows('destroy');
+    closeAlertBackdropWindows('destroy');
+  }
+  showAlertWindows(snapshot);
+  closeToastAlertWindows('destroy');
+}
+
+function showAlertBackdropWindows(snapshot: AppSnapshot): void {
+  closeAlertBackdropWindows('destroy');
+  const displays = selectAlertDisplays(snapshot.config.alertDisplayMode, snapshot.config.alertDisplayId, snapshot.displays);
+
+  for (const display of displays) {
+    const backdropWindow = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      hasShadow: false,
+      icon: appIconPath(),
+      skipTaskbar: true,
+      frame: false,
+      show: false,
+      focusable: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+
+    backdropWindow.setAlwaysOnTop(true, 'floating');
+    backdropWindow.setIgnoreMouseEvents(true);
+    backdropWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    backdropWindow.once('ready-to-show', () => backdropWindow.showInactive());
+    backdropWindow.on('closed', () => {
+      alertBackdropWindows.delete(display.id);
+    });
+    alertBackdropWindows.set(display.id, backdropWindow);
+    loadRendererSafely(backdropWindow, '#alert-backdrop', `alert-backdrop:${display.id}`);
   }
 }
 
@@ -1206,6 +1306,13 @@ function closeAlertWindows(mode: 'close' | 'destroy' = 'destroy'): void {
   alertWindows.clear();
 }
 
+function closeAlertBackdropWindows(mode: 'close' | 'destroy' = 'destroy'): void {
+  for (const window of alertBackdropWindows.values()) {
+    safelyCloseWindow(window, mode);
+  }
+  alertBackdropWindows.clear();
+}
+
 function closeToastAlertWindows(mode: 'close' | 'destroy' = 'destroy'): void {
   for (const window of toastAlertWindows.values()) {
     safelyCloseWindow(window, mode);
@@ -1255,6 +1362,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 
   try {
     closeAlertWindows('destroy');
+    closeAlertBackdropWindows('destroy');
     closeToastAlertWindows('destroy');
     closePreAlertWindows('destroy');
     monitor.handleAlertAction(action);
@@ -1297,8 +1405,29 @@ function updateTray(snapshot: AppSnapshot): void {
   }
 
   const statusText = statusLabel(snapshot.status);
-  tray.setImage(createTrayIcon(trayTone(snapshot)));
-  tray.setToolTip(`OBS 音频检测助手 - ${statusText}`);
+  const tone = trayTone(snapshot);
+  const tooltip = `OBS 音频检测助手 - ${statusText}`;
+  const menuKey = [
+    statusText,
+    snapshot.config.floatingWindowEnabled,
+    snapshot.config.paused,
+    updateState?.status ?? 'idle',
+    updateState?.availableVersion ?? ''
+  ].join('|');
+
+  if (lastTrayTone !== tone) {
+    tray.setImage(createTrayIcon(tone));
+    lastTrayTone = tone;
+  }
+  if (lastTrayTooltip !== tooltip) {
+    tray.setToolTip(tooltip);
+    lastTrayTooltip = tooltip;
+  }
+  if (lastTrayMenuKey === menuKey) {
+    return;
+  }
+
+  lastTrayMenuKey = menuKey;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `状态：${statusText}`, enabled: false },
@@ -1360,7 +1489,7 @@ function loadRendererSafely(window: BrowserWindow, hash: string, label: string):
 
 function broadcastSnapshot(snapshot: AppSnapshot): void {
   BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send('snapshot', snapshot);
+    sendToWindow(window, 'snapshot', snapshot);
   });
 }
 
@@ -1370,16 +1499,54 @@ function broadcastUpdateState(): void {
   }
 
   BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send('update:state', updateState);
+    sendToWindow(window, 'update:state', updateState);
   });
 }
 
+function sendToWindow(window: BrowserWindow, channel: string, payload: unknown): void {
+  if (rendererUnavailable.has(window) || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+
+  try {
+    window.webContents.send(channel, payload);
+  } catch (error) {
+    // A renderer can disappear between the lifecycle check and send(), for
+    // example during Vite reload or a crash. Do not let that break monitoring.
+    rendererUnavailable.add(window);
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      console.warn(`[ipc] failed to send ${channel}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
+  window.webContents.on('did-finish-load', () => {
+    rendererUnavailable.delete(window);
+    const timer = rendererReloadTimers.get(window);
+    if (timer) {
+      clearTimeout(timer);
+      rendererReloadTimers.delete(window);
+    }
+  });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
     console.error(`[${label}] failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`);
   });
   window.webContents.on('render-process-gone', (_event, details) => {
+    rendererUnavailable.add(window);
     console.error(`[${label}] renderer gone: ${details.reason}`);
+    if (isQuitting || window.isDestroyed() || rendererReloadTimers.has(window)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      rendererReloadTimers.delete(window);
+      if (!isQuitting && !window.isDestroyed()) {
+        rendererUnavailable.delete(window);
+        window.reload();
+      }
+    }, 750);
+    rendererReloadTimers.set(window, timer);
   });
   window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     const levelName = ['log', 'warn', 'error', 'debug'][level] ?? String(level);
@@ -1431,8 +1598,18 @@ function resolveAlertPosition(
 
 function resolveFloatingWindowBounds(snapshot: AppSnapshot): WindowBounds {
   const saved = snapshot.config.floatingWindowBounds;
-  const width = saved ? clamp(saved.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH) : FLOATING_WINDOW_DEFAULT_WIDTH;
-  const height = floatingWindowHeightForWidth(width);
+  const mode = snapshot.config.floatingWindowMode;
+  const defaultWidth = mode === 'audio'
+    ? FLOATING_WINDOW_DEFAULT_WIDTH
+    : mode === 'audio_atem'
+      ? FLOATING_AUDIO_ATEM_DEFAULT_WIDTH
+      : FLOATING_MULTI_DEFAULT_WIDTH;
+  const width = saved
+    ? clamp(mode === 'multifunction' ? Math.max(saved.width, 380) : saved.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH)
+    : defaultWidth;
+  const height = mode !== 'multifunction'
+    ? floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules)
+    : Math.max(FLOATING_MULTI_DEFAULT_HEIGHT, saved?.height ?? FLOATING_MULTI_DEFAULT_HEIGHT);
   const displays = snapshot.displays.length > 0 ? snapshot.displays : getDisplays();
   const primary = displays.find((display) => display.primary) ?? displays[0];
 
@@ -1463,8 +1640,65 @@ function resolveFloatingWindowBounds(snapshot: AppSnapshot): WindowBounds {
   };
 }
 
-function floatingWindowHeightForWidth(width: number): number {
-  return Math.round(width / FLOATING_WINDOW_ASPECT_RATIO);
+function floatingWindowHeightForMode(
+  mode: AppConfig['floatingWindowMode'],
+  width: number,
+  modules: AppConfig['floatingWindowModules']
+): number {
+  if (mode === 'audio') {
+    return Math.round(width / FLOATING_WINDOW_ASPECT_RATIO);
+  }
+  if (mode === 'audio_atem') {
+    return Math.round(width / (FLOATING_AUDIO_ATEM_DEFAULT_WIDTH / FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT));
+  }
+
+  const moduleCount = countFloatingModules(modules);
+  if (moduleCount <= 1) return 220;
+  if (moduleCount === 2) return 250;
+  return 300;
+}
+
+function countFloatingModules(modules: AppConfig['floatingWindowModules']): number {
+  return Number(modules.audio) + Number(modules.atem) + Number(modules.obsStats);
+}
+
+function floatingWindowAspectRatio(mode: AppConfig['floatingWindowMode']): number | null {
+  if (mode === 'audio') return FLOATING_WINDOW_ASPECT_RATIO;
+  if (mode === 'audio_atem') return FLOATING_AUDIO_ATEM_DEFAULT_WIDTH / FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT;
+  return null;
+}
+
+function configureFloatingWindowForMode(snapshot: AppSnapshot): void {
+  if (!floatingWindow || floatingWindow.isDestroyed()) {
+    return;
+  }
+
+  const mode = snapshot.config.floatingWindowMode;
+  const bounds = floatingWindow.getBounds();
+  const width = clamp(mode === 'multifunction' ? Math.max(bounds.width, 380) : bounds.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH);
+  const minHeight = floatingWindowHeightForMode(mode, FLOATING_WINDOW_MIN_WIDTH, snapshot.config.floatingWindowModules);
+  const fixedAspectRatio = floatingWindowAspectRatio(mode);
+  const maxHeight = fixedAspectRatio ? floatingWindowHeightForMode(mode, FLOATING_WINDOW_MAX_WIDTH, snapshot.config.floatingWindowModules) : 520;
+  const height = fixedAspectRatio
+    ? floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules)
+    : clamp(floatingWindowHeightForMode(mode, width, snapshot.config.floatingWindowModules), minHeight, maxHeight);
+
+  floatingWindow.setMinimumSize(FLOATING_WINDOW_MIN_WIDTH, minHeight);
+  floatingWindow.setMaximumSize(FLOATING_WINDOW_MAX_WIDTH, maxHeight);
+  try {
+    floatingWindow.setAspectRatio(fixedAspectRatio ?? 0);
+  } catch {
+    // Older Electron builds may not support clearing the aspect ratio with 0.
+  }
+
+  if (bounds.width !== width || bounds.height !== height) {
+    isAdjustingFloatingWindowSize = true;
+    floatingWindow.setBounds({ ...bounds, width, height }, false);
+    isAdjustingFloatingWindowSize = false;
+  }
+  floatingWindow.setAlwaysOnTop(true, 'floating');
+  floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  applyFloatingWindowShape();
 }
 
 function keepFloatingWindowAspectRatio(): void {
@@ -1472,9 +1706,14 @@ function keepFloatingWindowAspectRatio(): void {
     return;
   }
 
+  const mode = latestSnapshot?.config.floatingWindowMode ?? 'audio';
+  if (!floatingWindowAspectRatio(mode)) {
+    return;
+  }
+
   const bounds = floatingWindow.getBounds();
   const width = clamp(bounds.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH);
-  const height = floatingWindowHeightForWidth(width);
+  const height = floatingWindowHeightForMode(mode, width, latestSnapshot?.config.floatingWindowModules ?? DEFAULT_CONFIG.floatingWindowModules);
   if (bounds.width === width && Math.abs(bounds.height - height) <= 1) {
     return;
   }

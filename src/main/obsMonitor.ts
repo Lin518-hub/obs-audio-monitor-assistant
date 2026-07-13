@@ -31,6 +31,9 @@ import type {
 
 const METER_STALE_MS = 5000;
 const VOLUME_HISTORY_RETENTION_MS = 10 * 60 * 1000;
+const VOLUME_HISTORY_SAMPLE_MS = 500;
+const METER_SNAPSHOT_THROTTLE_MS = 250;
+const VOLUME_HISTORY_BROADCAST_MS = 1000;
 const MAX_SILENCE_EVENTS = 100;
 
 interface MonitorEvents {
@@ -65,12 +68,16 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private outputTimer: NodeJS.Timeout | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private meterSnapshotTimer: NodeJS.Timeout | null = null;
   private testAlertRestore: { state: MonitorRuntimeState; errorMessage: string | null; inputs: InputOption[]; lastTargetMeterAt: number | null } | null = null;
   private history: AlertHistoryEntry[] = [];
   private silenceEvents: SilenceEventEntry[] = [];
   private inputStates = new Map<string, PerInputMonitorState>();
   private activeInputName = '';
   private volumeHistory: AppSnapshot['volumeHistory'] = [];
+  private volumeHistoryLastAt = new Map<string, number>();
+  private lastVolumeHistoryPrunedAt = 0;
+  private lastVolumeHistoryBroadcastAt = 0;
   private obsStats: OBSStatsSnapshot = emptyOBSStats();
   private lastTargetMeterAt: number | null = null;
   private simulatedLive = false;
@@ -83,7 +90,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.displays = displays;
   }
 
-  getSnapshot(now = Date.now()): AppSnapshot {
+  getSnapshot(now = Date.now(), includeVolumeHistory = true): AppSnapshot {
     const readinessReason = this.getReadinessReason(now);
     const status = readinessReason === 'error' ? 'error' : deriveStatus(this.state, this.config, now);
     const preAlertVisible = readinessReason === 'ready' && isPreAlertVisible(this.state, this.config, now);
@@ -110,14 +117,17 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       history: this.history,
       silenceEvents: this.silenceEvents,
       inputMonitors: this.getInputMonitorSnapshots(now),
-      volumeHistory: this.volumeHistory,
+      // 高频状态快照不重复克隆整段历史数据；图表数据每秒同步一次。
+      volumeHistory: includeVolumeHistory ? this.volumeHistory : [],
       obsStats: this.obsStats,
       errorMessage: this.errorMessage,
       // ATEM 字段由 main.ts 的 injectATEMState() 注入，此处提供默认值
       atemConnected: false,
       atemConnectionState: 'disconnected',
+      atemModelName: null,
       atemProgramInput: 0,
       atemPreviewInput: 0,
+      atemInputIds: [],
       atemInputLabels: {},
       atemInputCount: 0,
       atemProgramInputStartedAt: null,
@@ -535,7 +545,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       const state = this.ensureInputState(name, inputMeta.get(name) ?? '');
       const levelDb = maxInputLevelDb(item.inputLevelsMul);
       this.updateInputLevel(state, levelDb, now);
-      this.volumeHistory.push({ timestamp: now, inputName: name, levelDb });
+      const lastHistoryAt = this.volumeHistoryLastAt.get(name) ?? 0;
+      if (now - lastHistoryAt >= VOLUME_HISTORY_SAMPLE_MS) {
+        this.volumeHistoryLastAt.set(name, now);
+        this.volumeHistory.push({ timestamp: now, inputName: name, levelDb });
+      }
     }
 
     if (!sawTarget) {
@@ -545,13 +559,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.pruneVolumeHistory(now);
     const wasAlertVisible = this.state.alertVisible;
     this.recomputeAggregateState(now);
-    const snapshot = this.getSnapshot();
-
     if (!wasAlertVisible && this.state.alertVisible) {
-      this.emit('alert', snapshot);
+      this.emit('alert', this.getSnapshot(now));
     }
 
-    this.emit('snapshot', snapshot);
+    this.emitMeterSnapshot(now);
   }
 
   private markDisconnected(message: string): void {
@@ -637,6 +649,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.tickTimer = null;
     }
 
+    if (this.meterSnapshotTimer) {
+      clearTimeout(this.meterSnapshotTimer);
+      this.meterSnapshotTimer = null;
+    }
+
     this.clearReconnect();
   }
 
@@ -647,8 +664,30 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     }
   }
 
-  private emitSnapshot(now = Date.now()): void {
-    this.emit('snapshot', this.getSnapshot(now));
+  private emitSnapshot(now = Date.now(), includeVolumeHistory = true): void {
+    this.emit('snapshot', this.getSnapshot(now, includeVolumeHistory));
+  }
+
+  private emitMeterSnapshot(now: number): void {
+    if (this.meterSnapshotTimer) {
+      return;
+    }
+
+    const emitCurrent = (timestamp: number) => {
+      const includeHistory = timestamp - this.lastVolumeHistoryBroadcastAt >= VOLUME_HISTORY_BROADCAST_MS;
+      if (includeHistory) {
+        this.lastVolumeHistoryBroadcastAt = timestamp;
+      }
+      this.emitSnapshot(timestamp, includeHistory);
+    };
+
+    emitCurrent(now);
+    this.meterSnapshotTimer = setTimeout(() => {
+      this.meterSnapshotTimer = null;
+      if (this.state.connected) {
+        emitCurrent(Date.now());
+      }
+    }, METER_SNAPSHOT_THROTTLE_MS);
   }
 
   private getReadinessReason(now: number): ReadinessReason {
@@ -894,6 +933,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private pruneVolumeHistory(now: number): void {
+    if (now - this.lastVolumeHistoryPrunedAt < 1000) {
+      return;
+    }
+
+    this.lastVolumeHistoryPrunedAt = now;
     const minTime = now - VOLUME_HISTORY_RETENTION_MS;
     this.volumeHistory = this.volumeHistory.filter((point) => point.timestamp >= minTime);
   }

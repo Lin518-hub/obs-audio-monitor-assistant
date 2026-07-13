@@ -25,6 +25,7 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
   const [query, setQuery] = useState('');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const positionRafRef = useRef<number | null>(null);
   const [menuPos, setMenuPos] = useState<MenuPosition>({ top: 0, left: 0, width: 0, maxHeight: 320 });
 
   const selectedValues = values && values.length > 0 ? values : value ? [value] : [];
@@ -57,15 +58,30 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({ inputs, value, value
   useEffect(() => {
     if (open) {
       // 用 rAF 确保 DOM 已布局,再拿坐标
-      requestAnimationFrame(() => computePos());
+      positionRafRef.current = requestAnimationFrame(() => {
+        positionRafRef.current = null;
+        computePos();
+      });
+      const scheduleComputePos = () => {
+        if (positionRafRef.current !== null) return;
+        positionRafRef.current = requestAnimationFrame(() => {
+          positionRafRef.current = null;
+          computePos();
+        });
+      };
       // 监听所有滚动事件(包括 .settings-content 内部滚动)
-      window.addEventListener('scroll', computePos, true);
-      window.addEventListener('resize', computePos);
+      window.addEventListener('scroll', scheduleComputePos, true);
+      window.addEventListener('resize', scheduleComputePos);
+      return () => {
+        if (positionRafRef.current !== null) {
+          cancelAnimationFrame(positionRafRef.current);
+          positionRafRef.current = null;
+        }
+        window.removeEventListener('scroll', scheduleComputePos, true);
+        window.removeEventListener('resize', scheduleComputePos);
+      };
     }
-    return () => {
-      window.removeEventListener('scroll', computePos, true);
-      window.removeEventListener('resize', computePos);
-    };
+    return undefined;
   }, [open, computePos]);
 
   // 点击外部关闭

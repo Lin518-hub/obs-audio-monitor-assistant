@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 
 import './ipc';
 import './styles/tokens.css';
@@ -28,6 +28,7 @@ import { GuideDialog } from './components/dialogs/GuideDialog';
 import { ManualDialog } from './components/dialogs/ManualDialog';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { AlertApp } from './components/AlertApp';
+import { AlertBackdropApp } from './components/AlertBackdropApp';
 import { PreAlertApp } from './components/PreAlertApp';
 import { FloatingApp } from './components/FloatingApp';
 import { ToastAlertApp } from './components/ToastAlertApp';
@@ -38,12 +39,20 @@ import { useAutoSave } from './hooks/useAutoSave';
 import { formatDb, shouldShowOnboarding } from './utils/status';
 import { APP_VERSION } from './utils/appVersion';
 
-import type { AppConfig, TestConnectionResult } from '../shared/types';
+import type { AppConfig, AppSnapshot, TestConnectionResult, VolumeHistoryPoint } from '../shared/types';
 
-const root = createRoot(document.getElementById('root')!);
+const rootElement = document.getElementById('root') as (HTMLElement & { __obsGuardReactRoot?: Root }) | null;
+if (!rootElement) {
+  throw new Error('渲染容器不存在');
+}
+// Vite 热更新会重新执行这个入口模块。复用同一个 React root，避免
+// createRoot 在同一个 DOM 容器上重复挂载并导致 Electron 渲染进程崩溃。
+const root = rootElement.__obsGuardReactRoot ?? createRoot(rootElement);
+rootElement.__obsGuardReactRoot = root;
 
 const route =
   window.location.hash === '#alert' ? 'alert'
+    : window.location.hash === '#alert-backdrop' ? 'alert-backdrop'
     : window.location.hash === '#toast-alert' ? 'toast-alert'
     : window.location.hash === '#prealert' ? 'prealert'
     : window.location.hash === '#floating' ? 'floating'
@@ -52,12 +61,44 @@ const route =
 document.body.dataset.route = route;
 document.documentElement.dataset.route = route;
 
+class RendererErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo): void {
+    console.error('[renderer] unhandled render error', error, info.componentStack);
+  }
+
+  render(): React.ReactNode {
+    if (this.state.error) {
+      return (
+        <main className="boot-screen">
+          <strong>界面暂时无法显示</strong>
+          <span>检测仍在后台运行。重新加载界面即可恢复查看。</span>
+          <button type="button" className="btn-primary" onClick={() => window.location.reload()}>重新加载界面</button>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 root.render(
-  route === 'alert' ? <AlertApp />
-    : route === 'toast-alert' ? <ToastAlertApp />
-    : route === 'prealert' ? <PreAlertApp />
-    : route === 'floating' ? <FloatingApp />
-    : <SettingsApp />
+  <RendererErrorBoundary>
+    {route === 'alert' ? <AlertApp />
+      : route === 'alert-backdrop' ? <AlertBackdropApp />
+      : route === 'toast-alert' ? <ToastAlertApp />
+      : route === 'prealert' ? <PreAlertApp />
+      : route === 'floating' ? <FloatingApp />
+      : <SettingsApp />}
+  </RendererErrorBoundary>
 );
 
 // =============================================================================
@@ -98,7 +139,7 @@ function SettingsApp() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
       const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 9 && num <= snapshot.atemInputCount) {
+      if (num >= 1 && num <= 8 && snapshot.atemInputIds.includes(num)) {
         e.preventDefault();
         void window.obsGuard.changePreviewInput(num);
       } else if (e.key === 'Enter') {
@@ -239,99 +280,13 @@ function SettingsApp() {
       )}
 
       {page === 'atem' && (
-        <>
-          <div className="page-header">
-            <div className="page-header-title">
-              <h1>
-                <span>ATEM 导播台</span>
-                <span className="page-title-badge">BETA</span>
-              </h1>
-              <p className="page-header-subtitle">
-                显示当前 PGM / PVW 机位，并支持数字键选择预览机位
-              </p>
-            </div>
-            <div className="page-header-actions">
-              <button type="button" className="btn-secondary" onClick={() => openSettings('atem')}>
-                配置 ATEM
-              </button>
-              <button type="button" className="btn-primary" onClick={() => void window.obsGuard.atemReconnect()} disabled={!snapshot.config.atemEnabled}>
-                重连导播台
-              </button>
-            </div>
-          </div>
-
-          <div className={`atem-workbench ${snapshot.atemConnected ? 'connected' : ''}`}>
-            <div className="atem-stage-card program">
-              <span>PGM 播出</span>
-              <strong>{snapshot.atemProgramInput || '--'}</strong>
-              <em>{snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取到播出机位'}</em>
-            </div>
-            <div className="atem-stage-card preview">
-              <span>PVW 预览</span>
-              <strong>{snapshot.atemPreviewInput || '--'}</strong>
-              <em>{snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取到预览机位'}</em>
-            </div>
-            <div className="atem-status-card">
-              <span>连接状态</span>
-              <strong>{snapshot.config.atemEnabled ? (snapshot.atemConnected ? '已连接' : snapshot.atemConnectionState === 'connecting' ? '连接中' : '未连接') : '未启用'}</strong>
-              <em>{snapshot.config.atemEnabled ? `地址 ${snapshot.config.atemHost}` : '请先在设置中启用 ATEM Beta'}</em>
-            </div>
-          </div>
-
-          {!snapshot.config.atemEnabled && (
-            <div className="settings-hint warn">
-              ATEM Beta 默认不连接硬件。点击“配置 ATEM”后开启连接，并使用“查找导播台”扫描同网段设备。
-            </div>
-          )}
-
-          {snapshot.config.atemEnabled && !snapshot.atemConnected && (
-            <div className="settings-hint warn">
-              暂未连接 ATEM。请确认导播台和电脑在同一局域网，或进入设置使用“查找导播台”选择设备 IP。
-            </div>
-          )}
-
-          {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
-            <div className="atem-input-grid">
-              {Array.from({ length: snapshot.atemInputCount }, (_, i) => i + 1).map((num) => {
-                const isProgram = num === snapshot.atemProgramInput;
-                const isPreview = num === snapshot.atemPreviewInput;
-                const label = snapshot.atemInputLabels[num] || `Input ${num}`;
-                const matchesSearch = !search.trim() || `${num} ${label}`.toLowerCase().includes(search.trim().toLowerCase());
-                if (!matchesSearch) return null;
-                return (
-                  <button
-                    type="button"
-                    key={num}
-                    className={`atem-input-button ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
-                    onClick={() => void window.obsGuard.changePreviewInput(num)}
-                  >
-                    <span>{num}</span>
-                    <strong>{label}</strong>
-                    <em>{isProgram ? 'PGM' : isPreview ? 'PVW' : '选为 PVW'}</em>
-                  </button>
-                );
-              })}
-              <button type="button" className="atem-auto-button" onClick={() => void window.obsGuard.autoTransition()}>
-                AUTO 切换
-              </button>
-              {snapshot.atemPreviewInput > 0 && (
-                <button
-                  type="button"
-                  className="atem-hardcut-button"
-                  onClick={() => {
-                    const label = snapshot.atemInputLabels[snapshot.atemPreviewInput] || `Input ${snapshot.atemPreviewInput}`;
-                    if (snapshot.config.atemHardCutConfirm && !window.confirm(`确认硬切到 PGM ${snapshot.atemPreviewInput}（${label}）吗？`)) {
-                      return;
-                    }
-                    void window.obsGuard.changeProgramInput(snapshot.atemPreviewInput);
-                  }}
-                >
-                  Hard Cut 到 PVW
-                </button>
-              )}
-            </div>
-          )}
-        </>
+        <ATEMConsole
+          snapshot={snapshot}
+          draft={draft}
+          search={search}
+          onChange={updateDraft}
+          onOpenSettings={() => openSettings('atem')}
+        />
       )}
 
       {page === 'history' && (
@@ -373,14 +328,8 @@ function SettingsApp() {
           onNotifications={() => openSettings('updates')}
           hasUpdateNotice={hasUpdateNotice}
         />
-        {mainContent}
+        <div className="page-transition" key={page}>{mainContent}</div>
       </section>
-      <aside className="right-column">
-        <ConnectionStatusCard snapshot={snapshot} />
-        <ProductivityChart history={snapshot.history} />
-        <HistoryCalendar history={snapshot.history} />
-      </aside>
-
       <SettingsPanel
         open={settingsOpen}
         onClose={() => { setSettingsOpen(false); setSettingsFocus(null); }}
@@ -415,6 +364,139 @@ function SettingsApp() {
   );
 }
 
+function ATEMConsole({
+  snapshot,
+  draft,
+  search,
+  onChange,
+  onOpenSettings
+}: {
+  snapshot: AppSnapshot;
+  draft: AppConfig;
+  search: string;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+  onOpenSettings: () => void;
+}) {
+  const elapsed = snapshot.atemProgramInputElapsedSeconds;
+  const limit = Math.max(10, draft.atemCameraTimeLimitSeconds);
+  const remaining = Math.max(0, limit - elapsed);
+  const progress = Math.min(100, (elapsed / limit) * 100);
+  const warning = draft.atemCameraTimeAlertEnabled && elapsed >= limit * 0.75;
+  const timerTone = snapshot.atemProgramInputOverLimit ? 'danger' : warning ? 'warning' : 'safe';
+  const query = search.trim().toLowerCase();
+  const visibleInputs = snapshot.atemInputIds.filter((inputId) => {
+    const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
+    return !query || `${inputId} ${label}`.toLowerCase().includes(query);
+  });
+  const programLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取播出信号';
+  const previewLabel = snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取预览信号';
+
+  const openATEMFloating = () => {
+    onChange('floatingWindowMode', 'audio_atem');
+    onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: true });
+    onChange('floatingWindowEnabled', true);
+  };
+
+  const hardCut = () => {
+    if (snapshot.atemPreviewInput <= 0) return;
+    if (draft.atemHardCutConfirm && !window.confirm(`确认硬切到 ${previewLabel} 吗？`)) return;
+    void window.obsGuard.changeProgramInput(snapshot.atemPreviewInput);
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <div className="page-header-title">
+          <h1><span>ATEM 导播台</span><span className="page-title-badge">BETA</span></h1>
+          <p className="page-header-subtitle">播出机位、预览信号与单机位停留时间</p>
+        </div>
+        <div className="page-header-actions">
+          <button type="button" className="btn-secondary" onClick={onOpenSettings}>连接设置</button>
+          <button type="button" className="btn-secondary" onClick={openATEMFloating}>打开机位小窗</button>
+          <button type="button" className="btn-primary atem-reconnect-button" onClick={() => void window.obsGuard.atemReconnect()} disabled={!draft.atemEnabled}>重新连接</button>
+        </div>
+      </div>
+
+      <section className="atem-overview">
+        <article className="atem-live-card program">
+          <span>正在播出 PGM</span>
+          <div><strong>{snapshot.atemProgramInput || '--'}</strong><b>{programLabel}</b></div>
+        </article>
+        <article className="atem-live-card preview">
+          <span>预览队列 PVW</span>
+          <div><strong>{snapshot.atemPreviewInput || '--'}</strong><b>{previewLabel}</b></div>
+        </article>
+        <article className={`atem-timer-card ${timerTone}`}>
+          <header>
+            <span>当前机位计时</span>
+            <button type="button" className={`atem-timer-toggle ${draft.atemCameraTimeAlertEnabled ? 'active' : ''}`} onClick={() => onChange('atemCameraTimeAlertEnabled', !draft.atemCameraTimeAlertEnabled)}>
+              {draft.atemCameraTimeAlertEnabled ? '提醒开启' : '提醒关闭'}
+            </button>
+          </header>
+          <strong>{formatATEMTime(elapsed)}</strong>
+          <div className="atem-timer-progress"><i style={{ width: `${progress}%` }} /></div>
+          <footer>
+            <span>{snapshot.atemProgramInputOverLimit ? `已超时 ${formatATEMTime(elapsed - limit)}` : `剩余 ${formatATEMTime(remaining)}`}</span>
+            <button type="button" onClick={onOpenSettings}>阈值 {formatATEMTime(limit)}</button>
+          </footer>
+        </article>
+      </section>
+
+      <div className={`atem-connection-banner ${snapshot.atemConnected ? 'connected' : 'disconnected'}`}>
+        <span><i />{snapshot.atemConnected ? `${snapshot.atemModelName || 'ATEM'} 已连接 · ${draft.atemHost}` : draft.atemEnabled ? 'ATEM 尚未连接，请检查 IP 和网络' : 'ATEM 功能未开启'}</span>
+        <b>{snapshot.atemConnected && snapshot.atemInputCount === 0 ? '正在同步信号…' : `${snapshot.atemInputCount} 路常用信号`}</b>
+      </div>
+
+      <section className="atem-source-panel">
+        <header>
+          <div><strong>信号源</strong><span>仅显示 CAM 1–8、Color、彩条和 Media Player</span></div>
+          <em>点击信号源只会选入 PVW，不会直接改变播出画面</em>
+        </header>
+        <div className="atem-source-grid">
+          {visibleInputs.map((inputId) => {
+            const isProgram = inputId === snapshot.atemProgramInput;
+            const isPreview = inputId === snapshot.atemPreviewInput;
+            const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
+            return (
+              <button
+                type="button"
+                key={inputId}
+                className={`atem-source-button ${isProgram ? 'program' : ''} ${isPreview ? 'preview' : ''}`}
+                onClick={() => void window.obsGuard.changePreviewInput(inputId)}
+                disabled={!snapshot.atemConnected}
+              >
+                <span>{inputId >= 1 && inputId <= 8 ? `CAM ${inputId}` : label}</span>
+                <strong>{label}</strong>
+                <em>{isProgram ? '正在播出' : isPreview ? '已在预览' : '选入预览'}</em>
+              </button>
+            );
+          })}
+          {snapshot.atemConnected && visibleInputs.length === 0 && (
+            <div className="atem-source-empty">
+              {query ? '没有符合搜索条件的常用信号源' : '正在同步 ATEM 信号源，无需切换页面'}
+            </div>
+          )}
+          {!snapshot.atemConnected && <div className="atem-source-empty">连接 ATEM 后显示可用信号源</div>}
+        </div>
+      </section>
+
+      <section className="atem-transition-panel">
+        <div><strong>执行切换</strong><span>先选择 PVW，再执行 AUTO 或 Hard Cut</span></div>
+        <div className="atem-transition-actions">
+          <button type="button" className="atem-auto-button" onClick={() => void window.obsGuard.autoTransition()} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0}>AUTO 柔切</button>
+          <button type="button" className="atem-hardcut-button" onClick={hardCut} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0}>Hard Cut 硬切</button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function formatATEMTime(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safe / 60);
+  return `${String(minutes).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
+}
+
 // =============================================================================
 // 快捷入口卡(在 page='settings' 时显示,点开即跳到对应设置 section)
 // 注意:现在 page='settings' 已移除,本组件保留备用(若未来重新加入中间页)
@@ -439,6 +521,11 @@ function MonitoringDashboard({ snapshot, search }: { snapshot: NonNullable<Retur
 
   return (
     <div className="monitor-grid">
+      <div className="monitor-summary-grid">
+        <ConnectionStatusCard snapshot={snapshot} />
+        <ProductivityChart history={snapshot.history} />
+        <HistoryCalendar history={snapshot.history} />
+      </div>
       <section className="monitor-card span-2">
         <div className="monitor-card-title">
           <span><BarChart3 size={18} /> 音量历史</span>
@@ -550,7 +637,11 @@ function VolumeHistoryPanel({ snapshot, query }: { snapshot: NonNullable<ReturnT
   const xFromTime = (timestamp: number) => left + ((timestamp - minTime) / span) * plotWidth;
   const series = visibleNames
     .map((name, index) => {
-      const points = historyPoints.filter((point) => point.inputName === name).slice(-180);
+      // historyPoints is already capped globally. Slicing each series again
+      // would leave the x-axis covering the full range while the line only
+      // used the final fraction of it, making the graph look stuck on the
+      // right side.
+      const points = sampleVolumeHistory(historyPoints.filter((point) => point.inputName === name), 240);
       const path = points.map((point, pointIndex) => {
         const x = xFromTime(point.timestamp).toFixed(1);
         const y = yFromDb(point.levelDb).toFixed(1);
@@ -632,6 +723,17 @@ function VolumeHistoryPanel({ snapshot, query }: { snapshot: NonNullable<ReturnT
       </div>
     </div>
   );
+}
+
+function sampleVolumeHistory(points: VolumeHistoryPoint[], maxPoints: number): VolumeHistoryPoint[] {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+
+  return Array.from({ length: maxPoints }, (_, index) => {
+    const sourceIndex = Math.round(index * (points.length - 1) / (maxPoints - 1));
+    return points[sourceIndex];
+  });
 }
 
 function SettingsShortcutCards({ onPick }: { onPick: (section: string) => void }) {

@@ -93,7 +93,7 @@ export const floatingTone = (snapshot: AppSnapshot): 'safe' | 'warning' | 'dange
     return 'danger';
   }
   const displayedSilent = displayedSilenceSeconds(snapshot);
-  if (snapshot.preAlertVisible || (displayedSilent >= 30 && displayedSilent % 30 < 5)) {
+  if (snapshot.preAlertVisible || floatingWarningProgress(snapshot) > 0) {
     return 'warning';
   }
   return snapshotTone(snapshot);
@@ -103,11 +103,30 @@ export const floatingEmphasis = (snapshot: AppSnapshot): string => {
   if (snapshot.alertVisible || (snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10)) {
     return 'critical-emphasis';
   }
-  const displayedSilent = displayedSilenceSeconds(snapshot);
-  if (snapshot.preAlertVisible || (displayedSilent >= 30 && displayedSilent % 30 < 5)) {
-    return 'soft-emphasis';
+  if (snapshot.preAlertVisible || floatingWarningProgress(snapshot) > 0) {
+    return 'warning-emphasis';
   }
   return '';
+};
+
+/**
+ * Continuous yellow warning intensity between 25% and 75% of the silence
+ * limit. The last ten seconds are handled separately as the red state.
+ */
+export const floatingWarningProgress = (snapshot: AppSnapshot): number => {
+  if (snapshot.alertVisible || snapshot.readinessReason !== 'ready') {
+    return 0;
+  }
+
+  const duration = Math.max(1, snapshot.config.silenceDurationSeconds);
+  const silentSeconds = displayedSilenceSeconds(snapshot);
+  const start = duration * 0.25;
+  const end = duration * 0.75;
+  if (silentSeconds < start || end <= start) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, (silentSeconds - start) / (end - start)));
 };
 
 export const floatingHint = (snapshot: AppSnapshot): string => {

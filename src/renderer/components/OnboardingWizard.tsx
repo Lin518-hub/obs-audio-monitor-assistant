@@ -75,28 +75,49 @@ const StepIndicator: React.FC<{ currentIndex: number }> = memo(({ currentIndex }
 // =============================================================================
 // 步骤 1：欢迎
 // =============================================================================
-const WelcomeStep: React.FC<{ onNext: () => void }> = memo(({ onNext }) => (
-  <>
-    <div className="onboarding-card-body step-enter">
-      <div className="onboarding-welcome">
-        <div className="onboarding-logo">
-          <Mic2 size={36} />
+const WelcomeStep: React.FC<{ onNext: () => void }> = memo(({ onNext }) => {
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  return (
+    <>
+      <div className="onboarding-card-body step-enter">
+        <div className="onboarding-welcome">
+          <div className="onboarding-logo">
+            <Mic2 size={36} />
+          </div>
+          <div className="onboarding-welcome-blur">
+            <h2>欢迎使用 OBS 音频检测助手</h2>
+            <p className="welcome-sub">实时监测 OBS 直播中的麦克风与音频源，</p>
+            <p className="welcome-sub">在静音或掉线时立即弹窗报警，守护每一场直播。</p>
+          </div>
         </div>
-        <div className="onboarding-welcome-blur">
-          <h2>欢迎使用 OBS 音频检测助手</h2>
-          <p className="welcome-sub">实时监测 OBS 直播中的麦克风与音频源，</p>
-          <p className="welcome-sub">在静音或掉线时立即弹窗报警，守护每一场直播。</p>
-        </div>
+        {reducedMotion && (
+          <div className="onboarding-motion-notice" role="status">
+            <Clock size={17} />
+            <span>
+              <strong>系统当前关闭了界面动画</strong>
+              Windows 可前往“设置 → 辅助功能 → 视觉效果”，开启“动画效果”；软件会自动跟随系统设置。
+            </span>
+          </div>
+        )}
       </div>
-    </div>
-    <div className="onboarding-card-footer">
-      <span />
-      <button type="button" className="btn-primary" onClick={onNext}>
-        开始设置 <ArrowRight size={16} />
-      </button>
-    </div>
-  </>
-));
+      <div className="onboarding-card-footer">
+        <span />
+        <button type="button" className="btn-primary" onClick={onNext}>
+          开始设置 <ArrowRight size={16} />
+        </button>
+      </div>
+    </>
+  );
+});
 
 // =============================================================================
 // 步骤 2：OBS WebSocket 连接
@@ -477,6 +498,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
   const { draft, snapshot, onUpdateDraft, onComplete, onTestConnection, onRefreshInputs, testResult, testingConnection } = props;
 
   const [stepIndex, setStepIndex] = useState(0);
+  const [stepDirection, setStepDirection] = useState<'forward' | 'backward'>('forward');
   const currentKey = STEP_KEYS[stepIndex];
   const isLast = stepIndex === STEP_KEYS.length - 1;
 
@@ -484,11 +506,13 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
     if (isLast) {
       onComplete();
     } else {
+      setStepDirection('forward');
       setStepIndex((i) => Math.min(i + 1, STEP_KEYS.length - 1));
     }
   }, [isLast, onComplete]);
 
   const goPrev = useCallback(() => {
+    setStepDirection('backward');
     setStepIndex((i) => Math.max(i - 1, 0));
   }, []);
 
@@ -512,7 +536,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = (props) => {
       <StepIndicator currentIndex={stepIndex} />
 
       {/* 卡片 key 稳定，不随步骤切换 remount */}
-      <div className="onboarding-card">
+      <div className="onboarding-card" data-step-direction={stepDirection}>
         <StepContent
           stepKey={currentKey}
           draft={draft}

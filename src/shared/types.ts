@@ -12,7 +12,9 @@ export type MonitorStatus =
   | 'error';
 
 export type AlertDisplayMode = 'primary' | 'display_id' | 'all';
-export type AlertReminderMode = 'classic' | 'toast';
+export type AlertReminderMode = 'classic' | 'fullscreen';
+export type AlertSoundPreset = 'clear' | 'strong' | 'low' | 'soft';
+export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
 
 export type AlertAction = 'acknowledge' | 'snooze_10m' | 'ignore_once';
 
@@ -130,8 +132,10 @@ export interface UpdateSnapshot {
 export interface ATEMStateSnapshot {
   connected: boolean;
   connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
+  modelName: string | null;
   programInput: number;
   previewInput: number;
+  inputIds: number[];
   inputLabels: Record<number, string>;
   inputCount: number;
   programInputStartedAt: number | null;
@@ -180,6 +184,7 @@ export interface AppConfig {
   alertDisplayId: number | null;
   alertReminderMode: AlertReminderMode;
   alertSoundEnabled: boolean;
+  alertSoundPreset: AlertSoundPreset;
   paused: boolean;
   hasSeenGuide: boolean;
   guideSeenVersion: string;
@@ -188,6 +193,7 @@ export interface AppConfig {
   rememberAlertPosition: boolean;
   alertPositions: Record<string, AlertPosition>;
   floatingWindowEnabled: boolean;
+  floatingWindowMode: FloatingWindowMode;
   floatingWindowBounds: WindowBounds | null;
   floatingWindowModules: {
     audio: boolean;
@@ -251,8 +257,10 @@ export interface AppSnapshot {
   /** ATEM 导播台状态 (beta) */
   atemConnected: boolean;
   atemConnectionState: string;
+  atemModelName: string | null;
   atemProgramInput: number;
   atemPreviewInput: number;
+  atemInputIds: number[];
   atemInputLabels: Record<number, string>;
   atemInputCount: number;
   atemProgramInputStartedAt: number | null;
@@ -272,6 +280,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertDisplayId: null,
   alertReminderMode: 'classic',
   alertSoundEnabled: false,
+  alertSoundPreset: 'strong',
   paused: false,
   hasSeenGuide: false,
   guideSeenVersion: '',
@@ -280,6 +289,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   rememberAlertPosition: true,
   alertPositions: {},
   floatingWindowEnabled: false,
+  floatingWindowMode: 'audio',
   floatingWindowBounds: null,
   floatingWindowModules: {
     audio: true,
@@ -295,5 +305,5 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 180
+  atemCameraTimeLimitSeconds: 300
 };

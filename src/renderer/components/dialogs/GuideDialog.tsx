@@ -17,6 +17,11 @@ interface GuideStep {
 
 const clamp2 = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
 
+interface GuideLayout {
+  rect: { left: number; top: number; width: number; height: number; right: number; bottom: number };
+  card: { left: number; top: number; width: number };
+}
+
 export const GuideDialog: React.FC<{
   onClose: () => void;
   onTestConnection: () => void;
@@ -44,9 +49,11 @@ export const GuideDialog: React.FC<{
   const [stepIndex, setStepIndex] = useState(0);
   const step = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
-  const [layout, setLayout] = useState<{ rect: { left: number; top: number; width: number; height: number; right: number; bottom: number }; card: { left: number; top: number; width: number } } | null>(null);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const spotlightRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
-  const lastLayoutRef = useRef<typeof layout>(null);
+  const lastLayoutRef = useRef<GuideLayout | null>(null);
   const stepRef = useRef<GuideStep>(step);
   stepRef.current = step;
 
@@ -81,8 +88,8 @@ export const GuideDialog: React.FC<{
     targets.forEach((t) => t.classList.remove('guide-active-target'));
     const target = document.querySelector<HTMLElement>(`[data-guide="${step.target}"]`);
     let disposed = false;
-    let raf = 0;
     let scrollRaf = 0;
+    let layoutRaf = 0;
     const timers: number[] = [];
     let ro: ResizeObserver | null = null;
 
@@ -101,11 +108,22 @@ export const GuideDialog: React.FC<{
       ? Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
       : Math.max(0, (scrollContainer as HTMLElement).scrollHeight - (scrollContainer as HTMLElement).clientHeight);
 
-    const updateLayout = () => {
-      if (disposed || !target) {
-        if (lastLayoutRef.current) { lastLayoutRef.current = null; setLayout(null); }
-        return;
+    const applyLayout = (next: GuideLayout) => {
+      const spotlight = spotlightRef.current;
+      const card = cardRef.current;
+      if (spotlight) {
+        spotlight.style.transform = `translate3d(${next.rect.left}px, ${next.rect.top}px, 0)`;
+        spotlight.style.width = `${next.rect.right - next.rect.left}px`;
+        spotlight.style.height = `${next.rect.bottom - next.rect.top}px`;
       }
+      if (card) {
+        card.style.transform = `translate3d(${next.card.left}px, ${next.card.top}px, 0)`;
+        card.style.width = `${next.card.width}px`;
+      }
+    };
+
+    const calculateLayout = (): GuideLayout | null => {
+      if (disposed || !target) return null;
       const tr = target.getBoundingClientRect();
       const vw = window.innerWidth, vh = window.innerHeight;
       const margin = 24, pad = 8, gap = 18;
@@ -129,18 +147,23 @@ export const GuideDialog: React.FC<{
         { l: rect.left, t: rect.top - cardHeight - gap }
       ].map((p) => ({ left: clamp(p.l, margin, maxLeft), top: clamp(p.t, margin, maxTop) }));
       const card = { left: roundPixel(candidates[0].left), top: roundPixel(candidates[0].top), width: roundPixel(cardWidth) };
-      const next = { rect, card };
-      if (!lastLayoutRef.current ||
-        lastLayoutRef.current.rect.left !== next.rect.left ||
-        lastLayoutRef.current.rect.top !== next.rect.top ||
-        lastLayoutRef.current.rect.width !== next.rect.width ||
-        lastLayoutRef.current.rect.height !== next.rect.height ||
-        lastLayoutRef.current.card.left !== next.card.left ||
-        lastLayoutRef.current.card.top !== next.card.top ||
-        lastLayoutRef.current.card.width !== next.card.width) {
-        lastLayoutRef.current = next;
-        setLayout(next);
-      }
+      return { rect, card };
+    };
+
+    const updateLayout = (ready = false) => {
+      const next = calculateLayout();
+      if (!next) return;
+      lastLayoutRef.current = next;
+      applyLayout(next);
+      if (ready) setLayoutReady(true);
+    };
+
+    const scheduleLayout = () => {
+      if (layoutRaf || disposed) return;
+      layoutRaf = window.requestAnimationFrame(() => {
+        layoutRaf = 0;
+        updateLayout();
+      });
     };
 
     const animate = () => {
@@ -165,43 +188,37 @@ export const GuideDialog: React.FC<{
     };
 
     target?.classList.add('guide-active-target');
-    updateLayout();
+    updateLayout(true);
+    overlayRef.current?.classList.add('is-tracking');
     animate();
-    timers.push(window.setTimeout(updateLayout, 120));
-    timers.push(window.setTimeout(updateLayout, 300));
+    timers.push(window.setTimeout(scheduleLayout, 120));
+    timers.push(window.setTimeout(scheduleLayout, 300));
     if (target) {
-      ro = new ResizeObserver(() => updateLayout());
+      ro = new ResizeObserver(scheduleLayout);
       ro.observe(target);
     }
-    window.addEventListener('resize', updateLayout);
-    scrollContainer.addEventListener('scroll', updateLayout, true);
+    window.addEventListener('resize', scheduleLayout);
+    scrollContainer.addEventListener('scroll', scheduleLayout, { capture: true, passive: true });
 
     return () => {
       disposed = true;
       ro?.disconnect();
-      window.cancelAnimationFrame(raf);
       window.cancelAnimationFrame(scrollRaf);
+      window.cancelAnimationFrame(layoutRaf);
       timers.forEach((t) => window.clearTimeout(t));
-      window.removeEventListener('resize', updateLayout);
-      scrollContainer.removeEventListener('scroll', updateLayout, true);
+      window.removeEventListener('resize', scheduleLayout);
+      scrollContainer.removeEventListener('scroll', scheduleLayout, { capture: true });
+      overlayRef.current?.classList.remove('is-tracking');
       targets.forEach((t) => t.classList.remove('guide-active-target'));
       target?.classList.remove('guide-active-target');
     };
   }, [step.target]);
 
   return (
-    <div className="guide-overlay" role="dialog" aria-modal="true">
-      {layout && (
-        <div
-          className="guide-spotlight"
-          style={{
-            transform: `translate3d(${layout.rect.left}px, ${layout.rect.top}px, 0)`,
-            width: layout.rect.right - layout.rect.left,
-            height: layout.rect.bottom - layout.rect.top
-          }}
-        />
-      )}
-      <section ref={cardRef} className="guide-card" style={layout ? { left: `${layout.card.left}px`, top: `${layout.card.top}px`, width: `${layout.card.width}px` } : undefined}>
+    <div ref={overlayRef} className={`guide-overlay ${layoutReady ? 'is-ready' : ''}`} role="dialog" aria-modal="true">
+      <div ref={spotlightRef} className="guide-spotlight" />
+      <section ref={cardRef} className="guide-card">
+        <div className="guide-card-content" key={step.title}>
         <div className="guide-card-head">
           <div>
             <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--green-700)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>新手引导</span>
@@ -237,6 +254,7 @@ export const GuideDialog: React.FC<{
               {!isLast && <ChevronRight size={14} />}
             </button>
           </div>
+        </div>
         </div>
       </section>
     </div>

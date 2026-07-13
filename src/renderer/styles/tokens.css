@@ -208,11 +208,13 @@ body {
 }
 
 html[data-route="alert"],
+html[data-route="alert-backdrop"],
 html[data-route="toast-alert"],
 html[data-route="prealert"],
 html[data-route="floating"] { overflow: hidden; }
 
 body[data-route="alert"],
+body[data-route="alert-backdrop"],
 body[data-route="toast-alert"],
 body[data-route="prealert"],
 body[data-route="floating"] { background: transparent; overflow: hidden; }
@@ -220,6 +222,20 @@ body[data-route="floating"] { background: transparent; overflow: hidden; }
 button, input, select, textarea { font: inherit; color: inherit; -webkit-app-region: no-drag; }
 button { border: 0; background: transparent; cursor: pointer; padding: 0; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+button:not(:disabled), [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  transition-property: transform, opacity, background-color, border-color, box-shadow, color, filter;
+  transition-duration: 180ms;
+  transition-timing-function: var(--ease-out-soft);
+}
+button:not(:disabled):active, [role="button"]:active {
+  transform: scale(0.985);
+}
+button:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--green-500);
+  outline-offset: 2px;
+}
 
 input, textarea, select {
   -webkit-user-select: text;

@@ -52,7 +52,7 @@ describe('ConfigStore', () => {
     expect(saved.alertDisplayId).toBeNull();
     expect(saved.alertPositions).toEqual({ 1: { x: 13, y: 48 } });
     expect(saved.floatingWindowEnabled).toBe(false);
-    expect(saved.floatingWindowBounds).toEqual({ x: 5, y: 9, width: 320, height: 320 });
+    expect(saved.floatingWindowBounds).toEqual({ x: 5, y: 9, width: 320, height: 520 });
   });
 
   it('trims text fields and clamps the OBS port range', async () => {
@@ -79,6 +79,20 @@ describe('ConfigStore', () => {
     const reloaded = await new ConfigStore().load();
 
     expect(reloaded.silenceDurationSeconds).toBe(300);
+  });
+
+  it('migrates the legacy three-minute ATEM default and preserves the combined floating mode', async () => {
+    const store = new ConfigStore();
+    await store.save({
+      ...DEFAULT_CONFIG,
+      floatingWindowMode: 'audio_atem',
+      atemCameraTimeLimitSeconds: 180
+    });
+
+    const reloaded = await new ConfigStore().load();
+
+    expect(reloaded.floatingWindowMode).toBe('audio_atem');
+    expect(reloaded.atemCameraTimeLimitSeconds).toBe(300);
   });
 
   it('restores defaults and marks the guide as unseen', async () => {

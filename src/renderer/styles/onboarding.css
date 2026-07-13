@@ -134,6 +134,7 @@
 /* ---- 玻璃卡片（仅此一处使用 backdrop-filter） ---- */
 .onboarding-card {
   width: min(520px, calc(100vw - 48px));
+  height: min(560px, calc(100vh - 180px));
   max-height: calc(100vh - 220px);
   background: rgba(255, 255, 255, 0.92);
   border-radius: var(--r-xl);
@@ -141,12 +142,13 @@
   box-shadow: var(--glass-shadow-lg);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   -webkit-app-region: no-drag;
   position: relative;
   z-index: 1;
   contain: layout paint;
-  animation: ob-card-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ob-card-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes ob-card-in {
@@ -160,12 +162,23 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-5);
+  min-height: 0;
+  overscroll-behavior: contain;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   flex: 1;
 }
 
 .onboarding-card-body.step-enter {
-  animation: ob-step-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ob-step-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  backface-visibility: hidden;
+  contain: layout paint;
+  will-change: opacity, transform;
+}
+
+.onboarding-card[data-step-direction="backward"] .onboarding-card-body.step-enter {
+  animation-name: ob-step-in-backward;
 }
 
 @keyframes ob-step-in {
@@ -173,7 +186,13 @@
   100% { opacity: 1; transform: translateX(0); }
 }
 
+@keyframes ob-step-in-backward {
+  0%   { opacity: 0; transform: translateX(-18px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
 .onboarding-card-footer {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -211,6 +230,24 @@
 }
 
 .onboarding-welcome-blur .welcome-sub + .welcome-sub { margin-top: 4px; }
+
+.onboarding-motion-notice {
+  width:min(560px,100%);
+  margin:0 auto;
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:12px 14px;
+  border:1px solid var(--event-yellow-border);
+  border-radius:var(--r-md);
+  background:var(--yellow-soft);
+  color:var(--yellow-text);
+  font-size:12px;
+  line-height:1.55;
+}
+.onboarding-motion-notice svg { flex:0 0 auto; margin-top:2px; }
+.onboarding-motion-notice span { display:flex; flex-direction:column; gap:2px; }
+.onboarding-motion-notice strong { color:var(--text-primary); font-size:12.5px; }
 
 .onboarding-logo {
   display: flex;
@@ -616,7 +653,7 @@
 
 /* ---- 响应式 ---- */
 @media (max-width: 560px) {
-  .onboarding-card { width: calc(100vw - 32px); }
+  .onboarding-card { width: calc(100vw - 32px); height: min(520px, calc(100vh - 140px)); max-height: calc(100vh - 140px); }
   .onboarding-card-body   { padding: var(--s-5); }
   .onboarding-card-footer { padding: var(--s-3) var(--s-5); }
   .onboarding-row { grid-template-columns: 1fr; }

@@ -18,10 +18,12 @@ import {
   TestTube2,
   Timer,
   Trash2,
-  Video
+  Video,
+  Volume2
 } from 'lucide-react';
-import type { AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
+import type { AlertSoundPreset, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, FloatingWindowMode, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
 import { snapshotTargetName } from '../../utils/status';
+import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
 import { SourcePicker } from './SourcePicker';
 
@@ -32,6 +34,214 @@ interface SectionProps {
   id?: string;
   children: React.ReactNode;
 }
+
+const AlertStylePreview: React.FC<{ mode: 'classic' | 'fullscreen' }> = ({ mode }) => (
+  <div className={`alert-style-preview alert-style-preview-${mode}`} aria-hidden="true">
+    {mode === 'fullscreen' && (
+      <div className="alert-preview-desktop">
+        <span /><span /><span />
+        <i /><i />
+      </div>
+    )}
+    {mode === 'fullscreen' && <div className="alert-preview-vignette" />}
+    <div className="alert-preview-window">
+      <div className="alert-preview-heading">
+        <span className="alert-preview-icon"><AlertTriangle size={12} /></span>
+        <span className="alert-preview-heading-copy">
+          <b>音频静音提醒</b>
+          <strong>麦克风/Aux 可能没有声音</strong>
+        </span>
+      </div>
+      <span className="alert-preview-line" />
+      <div className="alert-preview-actions">
+        <span>单次忽略</span>
+        <span>确定</span>
+      </div>
+    </div>
+  </div>
+);
+
+const AlertStylePicker: React.FC<{
+  value: 'classic' | 'fullscreen';
+  onChange: (value: 'classic' | 'fullscreen') => void;
+}> = ({ value, onChange }) => {
+  const options = [
+    {
+      value: 'classic' as const,
+      title: '经典弹窗',
+      description: '只显示正式报警弹窗,适合需要最少干扰的工作台。'
+    },
+    {
+      value: 'fullscreen' as const,
+      title: '全屏红边 + 弹窗',
+      description: '屏幕四周显示红色渐变边框,中间保留正式报警弹窗。'
+    }
+  ];
+
+  return (
+    <div className="alert-style-picker" role="radiogroup" aria-label="正式报警样式">
+      {options.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={`alert-style-option ${selected ? 'active' : ''}`}
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+          >
+            <div className="alert-style-option-preview">
+              <AlertStylePreview mode={option.value} />
+              {selected && <span className="alert-style-selected">当前使用</span>}
+            </div>
+            <div className="alert-style-option-copy">
+              <strong>{option.title}</strong>
+              <span>{option.description}</span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const FloatingModePreview: React.FC<{ mode: FloatingWindowMode }> = ({ mode }) => (
+  <div className={`floating-mode-preview floating-mode-preview-${mode}`} aria-hidden="true">
+    <div className="floating-preview-topbar">
+      <span className="floating-preview-dot" />
+      <strong>{mode === 'audio' ? '检测中' : mode === 'audio_atem' ? '音频与机位' : '多功能监看'}</strong>
+      <span className="floating-preview-actions"><i /><i /><i /></span>
+    </div>
+    {mode === 'audio' ? (
+      <>
+        <div className="floating-preview-audio-status">正在讲话</div>
+        <div className="floating-preview-audio-meta">麦克风 / Aux</div>
+        <div className="floating-preview-meter"><span /></div>
+      </>
+    ) : mode === 'audio_atem' ? (
+      <div className="floating-preview-dual">
+        <div><b>音频</b><strong>正在讲话</strong><span /></div>
+        <div><b>PGM 1 · Camera 1</b><strong>04:05</strong><em>剩余 00:55</em></div>
+      </div>
+    ) : (
+      <div className="floating-preview-module-grid">
+        <div className="floating-preview-module floating-preview-module-wide"><b>音频守护</b><strong>音频正常</strong><span /></div>
+        <div className="floating-preview-module"><b>ATEM</b><strong>PGM 1</strong></div>
+        <div className="floating-preview-module"><b>OBS</b><strong>60 FPS</strong></div>
+      </div>
+    )}
+  </div>
+);
+
+const FloatingModePicker: React.FC<{
+  value: FloatingWindowMode;
+  onChange: (value: FloatingWindowMode) => void;
+}> = ({ value, onChange }) => {
+  const options = [
+    {
+      value: 'audio' as const,
+      title: '音频提醒',
+      description: '只显示讲话状态、静音倒计时和实时电平,保持最小占用。'
+    },
+    {
+      value: 'audio_atem' as const,
+      title: '音频 + 机位',
+      description: '以紧凑双层布局同时显示音频状态、当前机位和机位计时。'
+    },
+    {
+      value: 'multifunction' as const,
+      title: '多功能监看',
+      description: '按模块显示音频、ATEM 和 OBS 性能摘要,内容会自适应排版。'
+    }
+  ];
+
+  return (
+    <div className="floating-mode-picker" role="radiogroup" aria-label="小浮窗模式">
+      {options.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={`floating-mode-option ${selected ? 'active' : ''}`}
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+          >
+            <div className="floating-mode-option-preview">
+              <FloatingModePreview mode={option.value} />
+              {selected && <span className="alert-style-selected">当前使用</span>}
+            </div>
+            <div className="floating-mode-option-copy">
+              <strong>{option.title}</strong>
+              <span>{option.description}</span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const ALERT_SOUND_OPTIONS: Array<{ value: AlertSoundPreset; title: string; description: string }> = [
+  { value: 'strong', title: '沉稳提醒', description: '音量更饱满,适合导播环境' },
+  { value: 'clear', title: '清晰提醒', description: '明亮易辨,适合主播桌面' },
+  { value: 'low', title: '低频提醒', description: '更厚实,不刺耳' },
+  { value: 'soft', title: '柔和提醒', description: '较短较柔和,适合安静环境' }
+];
+
+const AlertSoundPicker: React.FC<{
+  value: AlertSoundPreset;
+  onChange: (value: AlertSoundPreset) => void;
+}> = ({ value, onChange }) => {
+  const [previewing, setPreviewing] = React.useState<AlertSoundPreset | null>(null);
+
+  const preview = (preset: AlertSoundPreset) => {
+    setPreviewing(preset);
+    playAlertTone(true, preset);
+    window.setTimeout(() => setPreviewing((current) => current === preset ? null : current), 720);
+  };
+
+  return (
+    <div className="alert-sound-picker" role="radiogroup" aria-label="提示音类型">
+      {ALERT_SOUND_OPTIONS.map((option) => {
+        const selected = value === option.value;
+        return (
+          <div
+            key={option.value}
+            className={`alert-sound-option ${selected ? 'active' : ''}`}
+            role="radio"
+            aria-checked={selected}
+            tabIndex={0}
+            onClick={() => onChange(option.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onChange(option.value);
+              }
+            }}
+          >
+            <span className="alert-sound-icon"><Volume2 size={15} /></span>
+            <span className="alert-sound-copy">
+              <strong>{option.title}</strong>
+              <em>{option.description}</em>
+            </span>
+            <button
+              type="button"
+              className="alert-sound-preview-button"
+              onClick={(event) => { event.stopPropagation(); preview(option.value); }}
+              aria-label={`试听${option.title}`}
+            >
+              <Play size={11} />
+              {previewing === option.value ? '播放中' : '试听'}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const Section: React.FC<SectionProps> = ({ icon: Icon, title, description, id, children }) => (
   <section className="settings-section" id={id}>
@@ -90,6 +300,7 @@ export const ATEMSection: React.FC<{
     if (!draft.atemHost) return;
     setTesting(true);
     setTestResult(null);
+    setScanResult(null);
     try {
       const result = await window.obsGuard.testATEMConnection(draft.atemHost);
       setTestResult(result);
@@ -101,6 +312,7 @@ export const ATEMSection: React.FC<{
   const handleScanNetwork = React.useCallback(async () => {
     setScanning(true);
     setScanResult(null);
+    setTestResult(null);
     try {
       const result = await window.obsGuard.scanATEMNetwork(draft.atemHost);
       setScanResult(result);
@@ -121,6 +333,12 @@ export const ATEMSection: React.FC<{
   };
 
   const status = connectionStatusLabel();
+
+  React.useEffect(() => {
+    if (snapshot.atemConnected) {
+      setScanResult((current) => current && !current.ok ? null : current);
+    }
+  }, [snapshot.atemConnected]);
 
   return (
     <Section id="settings-atem" icon={Video} title="ATEM 导播台" description="通过网络连接 Blackmagic ATEM 切换台">
@@ -224,7 +442,7 @@ export const ATEMSection: React.FC<{
               />
               {status.text}
               {snapshot.atemConnected && (
-                <> · PGM {snapshot.atemProgramInput}{snapshot.atemInputLabels[snapshot.atemProgramInput] ? ` (${snapshot.atemInputLabels[snapshot.atemProgramInput]})` : ''} · 共 {snapshot.atemInputCount} 路</>
+                <> · PGM {snapshot.atemProgramInput}{snapshot.atemInputLabels[snapshot.atemProgramInput] ? ` (${snapshot.atemInputLabels[snapshot.atemProgramInput]})` : ''} · {snapshot.atemInputCount} 路常用信号</>
               )}
               {!snapshot.atemConnected && snapshot.atemConnectionState !== 'connecting' && (
                 <> — 请确认 IP 地址正确且 ATEM 与电脑在同一网络</>
@@ -237,42 +455,64 @@ export const ATEMSection: React.FC<{
             )}
           </div>
 
-          <ToggleRow
-            id="atem-hotkey-global"
-            title="全局快捷键"
-            description="启用后数字键盘(Num1-9)可在任何应用中选 Preview 机位，Enter 执行 AUTO 切换"
-            checked={draft.atemHotkeyGlobal}
-            onChange={(v) => onChange('atemHotkeyGlobal', v)}
-          />
-          <ToggleRow
-            id="atem-hardcut-confirm"
-            title="硬切确认保护"
-            description="执行 Hard Cut 前需要二次确认，避免直播中误切到错误机位"
-            checked={draft.atemHardCutConfirm}
-            onChange={(v) => onChange('atemHardCutConfirm', v)}
-          />
-          <ToggleRow
-            id="atem-camera-timer"
-            title="机位超时提醒"
-            description="当同一个 PGM 机位停留超过设定时间，在 ATEM 面板和小浮窗中提示"
-            checked={draft.atemCameraTimeAlertEnabled}
-            onChange={(v) => onChange('atemCameraTimeAlertEnabled', v)}
-          />
-          <div className="settings-field">
-            <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
-            <NumberField
-              value={draft.atemCameraTimeLimitSeconds}
-              min={10}
-              max={3600}
-              step={10}
-              suffix="秒"
-              onChange={(v) => onChange('atemCameraTimeLimitSeconds', v)}
+          <div className="settings-subgroup atem-timer-settings">
+            <div className="settings-subgroup-title">机位计时提醒</div>
+            <ToggleRow
+              id="atem-camera-timer"
+              title="启用单机位超时提醒"
+              description="同一 PGM 机位停留过久时，在 ATEM 页面和小浮窗中变色提示"
+              checked={draft.atemCameraTimeAlertEnabled}
+              onChange={(v) => onChange('atemCameraTimeAlertEnabled', v)}
+            />
+            <div className="settings-field">
+              <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
+              <NumberField
+                value={draft.atemCameraTimeLimitSeconds}
+                min={10}
+                max={3600}
+                step={10}
+                suffix="秒"
+                onChange={(v) => onChange('atemCameraTimeLimitSeconds', v)}
+              />
+            </div>
+            <ToggleRow
+              id="atem-floating-module"
+              title="在小浮窗显示当前机位"
+              description="自动切换到多功能小浮窗，显示 PGM 机位和已使用时间"
+              checked={draft.floatingWindowMode === 'audio_atem' || (draft.floatingWindowMode === 'multifunction' && draft.floatingWindowModules.atem)}
+              onChange={(v) => {
+                onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v });
+                if (v) {
+                  onChange('floatingWindowMode', 'audio_atem');
+                  onChange('floatingWindowEnabled', true);
+                } else if (draft.floatingWindowMode === 'audio_atem') {
+                  onChange('floatingWindowMode', 'audio');
+                }
+              }}
+            />
+          </div>
+
+          <div className="settings-subgroup atem-control-settings">
+            <div className="settings-subgroup-title">切台保护</div>
+            <ToggleRow
+              id="atem-hotkey-global"
+              title="全局切台快捷键"
+              description="Num1–8 只选择 PVW，Enter 执行 AUTO 切换；开启后在其他软件中按 Enter 也会触发，请在直播前确认"
+              checked={draft.atemHotkeyGlobal}
+              onChange={(v) => onChange('atemHotkeyGlobal', v)}
+            />
+            <ToggleRow
+              id="atem-hardcut-confirm"
+              title="硬切确认保护"
+              description="Hard Cut 前需要再次确认，防止直播中误切"
+              checked={draft.atemHardCutConfirm}
+              onChange={(v) => onChange('atemHardCutConfirm', v)}
             />
           </div>
 
           {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
             <div className="atem-input-list">
-              {Array.from({ length: snapshot.atemInputCount }, (_, i) => i + 1).map((num) => {
+              {snapshot.atemInputIds.map((num) => {
                 const label = snapshot.atemInputLabels[num];
                 const isProgram = num === snapshot.atemProgramInput;
                 const isPreview = num === snapshot.atemPreviewInput;
@@ -342,39 +582,47 @@ export const RulesSection: React.FC<{
     </p>
     <div className="settings-field">
       <span className="settings-field-label">正式报警样式</span>
-      <SegmentedControl
-        value={draft.alertReminderMode}
+      <AlertStylePicker
+        value={draft.alertReminderMode === 'classic' ? 'classic' : 'fullscreen'}
         onChange={(v) => onChange('alertReminderMode', v)}
-        options={[
-          { value: 'classic', label: '经典弹窗', icon: <AlertTriangle size={13} /> },
-          { value: 'toast', label: '弹窗 + 小红窗', icon: <AlertTriangle size={13} /> }
-        ]}
       />
     </div>
     <ToggleRow
       id="rule-alert-sound"
       title="声音提示"
-      description="正式报警时通过系统默认扬声器播放一声提示音"
+      description="正式报警后持续循环提示音,关闭报警后停止"
       checked={draft.alertSoundEnabled}
       onChange={(v) => onChange('alertSoundEnabled', v)}
     />
-    <ToggleRow
-      id="rule-prealert"
-      title="报警前预警"
-      description="达到正式报警时长前先显示黄色小浮窗提示"
-      checked={draft.preAlertEnabled}
-      onChange={(v) => onChange('preAlertEnabled', v)}
-    />
-    <div className="settings-field">
-      <label className="settings-field-label" htmlFor="rule-prealert-ratio">预警触发比例</label>
-      <NumberField
-        value={Math.round((draft.preAlertRatio ?? 0.75) * 100)}
-        min={50}
-        max={95}
-        step={5}
-        suffix="%"
-        onChange={(v) => onChange('preAlertRatio', v / 100)}
+    <div className="settings-subgroup settings-prealert-group">
+      <div className="settings-subgroup-title">报警前预警</div>
+      <ToggleRow
+        id="rule-prealert"
+        title="启用预警浮窗"
+        description="达到正式报警时长前先显示黄色小浮窗提示"
+        checked={draft.preAlertEnabled}
+        onChange={(v) => onChange('preAlertEnabled', v)}
       />
+      <div className={`settings-field settings-prealert-ratio ${draft.preAlertEnabled ? '' : 'disabled'}`}>
+        <label className="settings-field-label" htmlFor="rule-prealert-ratio">预警触发比例</label>
+        <NumberField
+          value={Math.round((draft.preAlertRatio ?? 0.75) * 100)}
+          min={50}
+          max={95}
+          step={5}
+          suffix="%"
+          onChange={(v) => onChange('preAlertRatio', v / 100)}
+        />
+      </div>
+      <p className="settings-section-hint">例如正式报警为 120 秒,75% 会在静音 90 秒时出现预警浮窗。</p>
+    </div>
+    <div className="settings-subgroup settings-sound-group">
+      <div className="settings-subgroup-title">提示音类型</div>
+      <AlertSoundPicker
+        value={draft.alertSoundPreset}
+        onChange={(v) => onChange('alertSoundPreset', v)}
+      />
+      <p className="settings-section-hint">正式报警后会循环播放提示音,确认或单次忽略后立即停止。声音通过系统默认扬声器输出,点击“试听”可先确认音量和音色。</p>
     </div>
   </Section>
 );
@@ -442,7 +690,7 @@ export const SystemSection: React.FC<{
     <ToggleRow
       id="system-floating"
       title="小浮窗置顶显示"
-      description={draft.floatingWindowEnabled ? '当前已在桌面显示状态浮窗' : '适合直播中放在屏幕角落持续观察'}
+      description={draft.floatingWindowEnabled ? '当前已显示并保持在其他窗口上方' : '打开后会自动置顶,适合直播中持续观察'}
       checked={draft.floatingWindowEnabled}
       onChange={(v) => onChange('floatingWindowEnabled', v)}
     />
@@ -453,30 +701,43 @@ export const SystemSection: React.FC<{
       checked={draft.autoLaunch}
       onChange={(v) => onChange('autoLaunch', v)}
     />
-    <div className="settings-subgroup">
-      <div className="settings-subgroup-title">小浮窗显示内容</div>
-      <ToggleRow
-        id="floating-module-audio"
-        title="音频状态"
-        description="显示当前检测状态、静音倒计时和电平"
-        checked={draft.floatingWindowModules.audio}
-        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, audio: v })}
-      />
-      <ToggleRow
-        id="floating-module-atem"
-        title="ATEM 当前机位"
-        description="显示 PGM 机位和当前机位持续时间"
-        checked={draft.floatingWindowModules.atem}
-        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v })}
-      />
-      <ToggleRow
-        id="floating-module-stats"
-        title="OBS 性能摘要"
-        description="显示 FPS 和 CPU 使用率"
-        checked={draft.floatingWindowModules.obsStats}
-        onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, obsStats: v })}
+    <div className="settings-field">
+      <span className="settings-field-label">小浮窗模式</span>
+      <FloatingModePicker
+        value={draft.floatingWindowMode}
+        onChange={(v) => onChange('floatingWindowMode', v)}
       />
     </div>
+    {draft.floatingWindowMode === 'multifunction' ? (
+      <div className="settings-subgroup">
+        <div className="settings-subgroup-title">多功能模块</div>
+        <ToggleRow
+          id="floating-module-audio"
+          title="音频守护"
+          description="显示当前检测状态、静音倒计时和电平"
+          checked={draft.floatingWindowModules.audio}
+          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, audio: v })}
+        />
+        <ToggleRow
+          id="floating-module-atem"
+          title="ATEM 当前机位"
+          description="显示 PGM 机位和当前机位持续时间"
+          checked={draft.floatingWindowModules.atem}
+          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v })}
+        />
+        <ToggleRow
+          id="floating-module-stats"
+          title="OBS 性能摘要"
+          description="显示 FPS、CPU 和推流码率"
+          checked={draft.floatingWindowModules.obsStats}
+          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, obsStats: v })}
+        />
+      </div>
+    ) : draft.floatingWindowMode === 'audio_atem' ? (
+      <div className="settings-hint">当前为音频 + 机位模式，小浮窗会固定比例显示音频状态、PGM 机位和持续时间。</div>
+    ) : (
+      <div className="settings-hint">当前为音频提醒模式,小浮窗只显示音频状态和电平,不会被其他模块挤压。</div>
+    )}
     <p className="settings-section-hint">
       当前检测到 {snapshot.displays.length} 个屏幕。关闭主窗口后软件仍会在托盘或菜单栏后台运行。
     </p>

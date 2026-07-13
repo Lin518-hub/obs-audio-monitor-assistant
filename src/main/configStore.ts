@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AppConfig, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -19,6 +19,13 @@ export class ConfigStore {
         ...parsed,
         obsPassword: this.decryptPassword(parsed.obsPasswordEncrypted)
       };
+
+      // 180 seconds was the previous built-in default. Move untouched legacy
+      // installations to the new five-minute default while preserving every
+      // other custom duration.
+      if (parsed.atemCameraTimeLimitSeconds === 180) {
+        config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
+      }
 
       return this.normalize(config);
     } catch {
@@ -61,6 +68,8 @@ export class ConfigStore {
         ? [targetInputName]
         : [];
 
+    const floatingWindowModules = floatingWindowModulesValue(merged.floatingWindowModules);
+
     return {
       ...merged,
       obsHost: stringValue(merged.obsHost, DEFAULT_CONFIG.obsHost).trim() || DEFAULT_CONFIG.obsHost,
@@ -74,6 +83,7 @@ export class ConfigStore {
       alertDisplayId: nullableIntegerValue(merged.alertDisplayId),
       alertReminderMode: alertReminderModeValue(merged.alertReminderMode),
       alertSoundEnabled: booleanValue(merged.alertSoundEnabled, DEFAULT_CONFIG.alertSoundEnabled),
+      alertSoundPreset: alertSoundPresetValue(merged.alertSoundPreset),
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
@@ -82,8 +92,9 @@ export class ConfigStore {
       rememberAlertPosition: booleanValue(merged.rememberAlertPosition, DEFAULT_CONFIG.rememberAlertPosition),
       alertPositions: alertPositionsValue(merged.alertPositions),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
+      floatingWindowMode: floatingWindowModeValue(merged.floatingWindowMode, floatingWindowModules),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
-      floatingWindowModules: floatingWindowModulesValue(merged.floatingWindowModules),
+      floatingWindowModules,
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       updateSource: updateSourceValue(merged.updateSource),
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
@@ -166,10 +177,31 @@ function alertDisplayModeValue(value: unknown): AlertDisplayMode {
 }
 
 function alertReminderModeValue(value: unknown): AlertReminderMode {
-  if (value === 'toast' || value === 'both') {
-    return 'toast';
+  if (value === 'toast' || value === 'both' || value === 'fullscreen') {
+    return 'fullscreen';
   }
   return value === 'classic' ? value : DEFAULT_CONFIG.alertReminderMode;
+}
+
+function alertSoundPresetValue(value: unknown): AlertSoundPreset {
+  return value === 'clear' || value === 'strong' || value === 'low' || value === 'soft'
+    ? value
+    : DEFAULT_CONFIG.alertSoundPreset;
+}
+
+function floatingWindowModeValue(value: unknown, modules: AppConfig['floatingWindowModules']): FloatingWindowMode {
+  if (value === 'multifunction') {
+    return 'multifunction';
+  }
+  if (value === 'audio_atem') {
+    return 'audio_atem';
+  }
+  if (value === 'audio') {
+    return 'audio';
+  }
+
+  // Existing versions used the module switches as the implicit mode.
+  return modules.atem || modules.obsStats ? 'multifunction' : DEFAULT_CONFIG.floatingWindowMode;
 }
 
 function updateSourceValue(value: unknown): UpdateSource {
@@ -223,8 +255,8 @@ function windowBoundsValue(value: unknown): WindowBounds | null {
   return {
     x: Math.round(raw.x as number),
     y: Math.round(raw.y as number),
-    width: clamp(Math.round(raw.width as number), 320, 560),
-    height: clamp(Math.round(raw.height as number), 150, 320)
+    width: clamp(Math.round(raw.width as number), 320, 640),
+    height: clamp(Math.round(raw.height as number), 150, 520)
   };
 }
 

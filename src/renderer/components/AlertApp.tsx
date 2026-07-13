@@ -1,28 +1,36 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, BellOff, Check } from 'lucide-react';
 import type { AlertAction, AppSnapshot } from '../../shared/types';
-import { playAlertTone } from './ToastAlertApp';
+import { startAlertToneLoop } from '../utils/alertSound';
 
 export const AlertApp: React.FC = () => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [closingAction, setClosingAction] = useState<AlertAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const stopSoundRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let mounted = true;
     void window.obsGuard.getSnapshot().then((next) => {
       if (mounted) {
         setSnapshot(next);
-        playAlertTone(next.config.alertSoundEnabled);
+        stopSoundRef.current = startAlertToneLoop(next.config.alertSoundEnabled, next.config.alertSoundPreset);
       }
     });
     const dispose = window.obsGuard.onSnapshot((next) => { if (mounted) setSnapshot(next); });
-    return () => { mounted = false; dispose(); };
+    return () => {
+      mounted = false;
+      dispose();
+      stopSoundRef.current?.();
+      stopSoundRef.current = null;
+    };
   }, []);
 
   const sendAction = useCallback(
     async (action: AlertAction) => {
       if (closingAction) return;
+      stopSoundRef.current?.();
+      stopSoundRef.current = null;
       setClosingAction(action);
       setError(null);
       try {

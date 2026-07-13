@@ -8,18 +8,25 @@ import type { AppSnapshot } from '../../shared/types';
 export const useSnapshot = (): AppSnapshot | null => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
 
+  const mergeSnapshot = (next: AppSnapshot, current: AppSnapshot | null): AppSnapshot => {
+    if (next.volumeHistory.length > 0 || !current || current.volumeHistory.length === 0) {
+      return next;
+    }
+    return { ...next, volumeHistory: current.volumeHistory };
+  };
+
   useEffect(() => {
     let mounted = true;
 
     void window.obsGuard.getSnapshot().then((next) => {
       if (mounted) {
-        setSnapshot(next);
+        setSnapshot((current) => mergeSnapshot(next, current));
       }
     });
 
     const dispose = window.obsGuard.onSnapshot((next) => {
       if (mounted) {
-        setSnapshot(next);
+        setSnapshot((current) => mergeSnapshot(next, current));
       }
     });
 
