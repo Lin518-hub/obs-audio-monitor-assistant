@@ -149,6 +149,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemSwitchHistory: [],
       remoteAccessConnectionState: 'disabled',
       remoteAccessConnected: false,
+      remoteAccessActiveServerUrl: null,
       remoteAccessPairUrl: null,
       remoteAccessErrorMessage: null,
       remoteAccessLastConnectedAt: null

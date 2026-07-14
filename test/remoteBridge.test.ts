@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
+  proxyDirectiveUrl,
+  publicPairUrl,
   remoteServerCandidates
 } from '../src/main/RemoteBridge.js';
 
@@ -21,5 +23,25 @@ describe('remote server selection', () => {
     expect(remoteServerCandidates('https://remote.example.com/control/')).toEqual([
       'https://remote.example.com/control'
     ]);
+  });
+
+  it('rewrites a cached LAN pairing link to the public HTTPS endpoint', () => {
+    expect(publicPairUrl(`${LAN_REMOTE_SERVER_URL}/pair/example-token`)).toBe(
+      `${PUBLIC_REMOTE_SERVER_URL}/pair/example-token`
+    );
+    expect(publicPairUrl('https://remote.example.com/pair/example-token')).toBe(
+      'https://remote.example.com/pair/example-token'
+    );
+  });
+});
+
+describe('system proxy routing', () => {
+  it('uses the first supported proxy directive', () => {
+    expect(proxyDirectiveUrl('PROXY 127.0.0.1:7890; DIRECT')).toBe('http://127.0.0.1:7890');
+    expect(proxyDirectiveUrl('SOCKS5 127.0.0.1:1080; DIRECT')).toBe('socks5://127.0.0.1:1080');
+  });
+
+  it('keeps direct connections agent-free', () => {
+    expect(proxyDirectiveUrl('DIRECT')).toBeNull();
   });
 });

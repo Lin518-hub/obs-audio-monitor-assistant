@@ -16,6 +16,8 @@ export type AlertReminderMode = 'classic' | 'fullscreen';
 export type AlertSoundPreset = 'clear' | 'strong' | 'low' | 'soft';
 export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
 export type RemoteAccessConnectionState = 'disabled' | 'connecting' | 'connected' | 'error';
+export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
+export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
 
 export type AlertAction = 'acknowledge' | 'snooze_10m' | 'ignore_once';
 
@@ -193,6 +195,7 @@ export interface ATEMScanResult {
 export interface RemoteAccessSnapshot {
   connectionState: RemoteAccessConnectionState;
   connected: boolean;
+  activeServerUrl: string | null;
   pairUrl: string | null;
   errorMessage: string | null;
   lastConnectedAt: number | null;
@@ -202,6 +205,7 @@ export interface AppConfig {
   obsHost: string;
   obsPort: number;
   obsPassword: string;
+  rememberObsPassword: boolean;
   targetInputName: string;
   targetInputNames: string[];
   silenceDurationSeconds: number;
@@ -300,6 +304,7 @@ export interface AppSnapshot {
   atemSwitchHistory: ATEMSwitchHistoryEntry[];
   remoteAccessConnectionState: RemoteAccessConnectionState;
   remoteAccessConnected: boolean;
+  remoteAccessActiveServerUrl: string | null;
   remoteAccessPairUrl: string | null;
   remoteAccessErrorMessage: string | null;
   remoteAccessLastConnectedAt: number | null;
@@ -309,6 +314,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   obsHost: '127.0.0.1',
   obsPort: 4455,
   obsPassword: '',
+  rememberObsPassword: true,
   targetInputName: '',
   targetInputNames: [],
   silenceDurationSeconds: 120,

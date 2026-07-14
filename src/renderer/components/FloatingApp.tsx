@@ -7,7 +7,7 @@ import {
 } from '../utils/status';
 
 const AUDIO_FLOATING_BASE = { width: 340, height: 178 };
-const AUDIO_ATEM_FLOATING_BASE = { width: 400, height: 238 };
+const AUDIO_ATEM_FLOATING_BASE = { width: 400, height: 292 };
 const MULTI_FLOATING_BASE = { width: 460, height: 300 };
 
 export const FloatingApp: React.FC = () => {
@@ -115,46 +115,43 @@ const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string
   const audioState = audioStateKind(snapshot);
   const isAudioNormal = audioState === 'normal' || audioState === 'confirming';
   const levelPercent = dbLevelPercent(meterLevelDb);
-  const thresholdPct = thresholdPercent(snapshot.config.silenceThresholdDb);
   const timerState = atemTimerState(snapshot);
   const cameraLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取机位';
   const audioPrompt = isAudioNormal
-    ? { tone: 'safe', label: '音频正常', hint: '正在讲话' }
+    ? { tone: 'safe', label: '音频正常' }
     : audioState === 'silent'
-      ? { tone: snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10 ? 'critical' : 'warn', label: '静音计时', hint: floatingHint(snapshot) }
-      : { tone: 'idle', label: '音频未就绪', hint: floatingHint(snapshot) };
+      ? { tone: snapshot.secondsUntilAlert !== null && snapshot.secondsUntilAlert <= 10 ? 'critical' : 'warn', label: floatingHint(snapshot) }
+      : { tone: 'idle', label: floatingHint(snapshot) };
+  const audioValue = isAudioNormal
+    ? '正在讲话'
+    : audioState === 'silent'
+      ? `${snapshot.silentForSeconds}s`
+      : displayStatusText(snapshot);
 
   return (
     <section className="floating-combo-card">
       <div className="floating-combo-metrics">
         <div className="floating-combo-audio">
-          <span><Mic2 size={12} /> {isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
-          <strong>{isAudioNormal ? '正在讲话' : audioState === 'silent' ? `${snapshot.silentForSeconds}s` : '--'}</strong>
+          <span>音频检测</span>
+          <strong>{audioValue}</strong>
           <em>{inputName}</em>
         </div>
         <div className={`floating-combo-camera ${timerState.tone}`}>
-          <span><Video size={12} /> 当前机位</span>
+          <span>当前机位</span>
           <strong>{formatFloatingTime(snapshot.atemProgramInputElapsedSeconds)}</strong>
           <em>PGM {snapshot.atemProgramInput || '--'} · {cameraLabel}</em>
         </div>
       </div>
       <div className="floating-combo-meter">
-        <div className="floating-combo-meter-label">
-          <span>{inputName}</span>
-          <strong>{formatDb(meterLevelDb)}</strong>
-        </div>
         <div className="floating-meter-track">
           <div style={{ transform: `scaleX(${levelPercent / 100})` }} />
-          <div className="floating-meter-threshold" style={{ left: `${thresholdPct}%` }} />
         </div>
       </div>
       <footer className="floating-combo-prompts">
         <div className={`floating-combo-prompt ${audioPrompt.tone}`}>
-          <span><Mic2 size={11} /> {audioPrompt.label}</span>
-          <strong>{audioPrompt.hint}</strong>
+          <strong>{audioPrompt.label}</strong>
         </div>
         <div className={`floating-combo-prompt ${timerState.tone || 'safe'}`}>
-          <span><Video size={11} /> {timerState.label}</span>
           <strong>{timerState.hint}</strong>
         </div>
       </footer>

@@ -13,9 +13,9 @@ vi.mock('electron', () => ({
     getPath: () => electronMock.userData
   },
   safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (value: string) => Buffer.from(value, 'utf8'),
-    decryptString: (value: Buffer) => value.toString('utf8')
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async (value: string) => Buffer.from(value, 'utf8'),
+    decryptStringAsync: async (value: Buffer) => ({ result: value.toString('utf8'), shouldReEncrypt: false })
   }
 }));
 
@@ -79,6 +79,17 @@ describe('ConfigStore', () => {
     const reloaded = await new ConfigStore().load();
 
     expect(reloaded.silenceDurationSeconds).toBe(300);
+  });
+
+  it('securely persists the OBS password only when requested', async () => {
+    const store = new ConfigStore();
+    await store.save({ ...DEFAULT_CONFIG, obsPassword: 'secret-value', rememberObsPassword: true });
+    expect((await new ConfigStore().load()).obsPassword).toBe('secret-value');
+
+    await store.save({ ...DEFAULT_CONFIG, obsPassword: 'session-only', rememberObsPassword: false });
+    const sessionOnlyReload = await new ConfigStore().load();
+    expect(sessionOnlyReload.obsPassword).toBe('');
+    expect(sessionOnlyReload.rememberObsPassword).toBe(false);
   });
 
   it('migrates legacy ATEM defaults to ten minutes and preserves the combined floating mode', async () => {

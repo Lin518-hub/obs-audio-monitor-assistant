@@ -30,7 +30,7 @@ const trayIconPaths = {
 const FLOATING_WINDOW_DEFAULT_WIDTH = 340;
 const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
 const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 400;
-const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 238;
+const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 292;
 const FLOATING_MULTI_DEFAULT_WIDTH = 460;
 const FLOATING_MULTI_DEFAULT_HEIGHT = 300;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
@@ -431,6 +431,7 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     ...(remote ? {
       remoteAccessConnectionState: remote.connectionState,
       remoteAccessConnected: remote.connected,
+      remoteAccessActiveServerUrl: remote.activeServerUrl,
       remoteAccessPairUrl: remote.pairUrl,
       remoteAccessErrorMessage: remote.errorMessage,
       remoteAccessLastConnectedAt: remote.lastConnectedAt

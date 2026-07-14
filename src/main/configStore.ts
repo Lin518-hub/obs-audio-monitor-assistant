@@ -11,16 +11,20 @@ interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
 export class ConfigStore {
   private readonly path = join(app.getPath('userData'), 'config.json');
   private currentConfig: AppConfig | null = null;
+  private currentEncryptedPassword = '';
   private writeQueue: Promise<void> = Promise.resolve();
 
   async load(): Promise<AppConfig> {
     try {
       const raw = await readFile(this.path, 'utf8');
       const parsed = JSON.parse(raw) as Partial<PersistedConfig>;
+      const rememberObsPassword = booleanValue(parsed.rememberObsPassword, DEFAULT_CONFIG.rememberObsPassword);
+      this.currentEncryptedPassword = stringValue(parsed.obsPasswordEncrypted, '');
       const config: AppConfig = {
         ...DEFAULT_CONFIG,
         ...parsed,
-        obsPassword: this.decryptPassword(parsed.obsPasswordEncrypted)
+        rememberObsPassword,
+        obsPassword: rememberObsPassword ? await this.decryptPassword(parsed.obsPasswordEncrypted) : ''
       };
 
       // Move the two previous built-in defaults to the new ten-minute value.
@@ -63,14 +67,20 @@ export class ConfigStore {
   private enqueueWrite(resolveConfig: () => AppConfig): Promise<AppConfig> {
     const operation = this.writeQueue.catch(() => undefined).then(async () => {
       const normalized = this.normalize(resolveConfig());
+      const obsPasswordEncrypted = normalized.rememberObsPassword
+        ? normalized.obsPassword === this.currentConfig?.obsPassword && this.currentEncryptedPassword
+          ? this.currentEncryptedPassword
+          : await this.encryptPassword(normalized.obsPassword)
+        : '';
       const persisted: PersistedConfig = {
         ...normalized,
-        obsPasswordEncrypted: this.encryptPassword(normalized.obsPassword)
+        obsPasswordEncrypted
       };
       delete (persisted as Partial<AppConfig>).obsPassword;
 
       await mkdir(dirname(this.path), { recursive: true });
       await writeFile(this.path, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
+      this.currentEncryptedPassword = obsPasswordEncrypted;
       this.currentConfig = normalized;
       return normalized;
     });
@@ -101,6 +111,7 @@ export class ConfigStore {
       obsHost: stringValue(merged.obsHost, DEFAULT_CONFIG.obsHost).trim() || DEFAULT_CONFIG.obsHost,
       obsPort: clamp(Math.round(numberValue(merged.obsPort, DEFAULT_CONFIG.obsPort)), 1, 65535),
       obsPassword: stringValue(merged.obsPassword, ''),
+      rememberObsPassword: booleanValue(merged.rememberObsPassword, DEFAULT_CONFIG.rememberObsPassword),
       targetInputName: targetInputName || migratedTargets[0] || '',
       targetInputNames: migratedTargets,
       silenceDurationSeconds: clamp(Math.round(numberValue(merged.silenceDurationSeconds, DEFAULT_CONFIG.silenceDurationSeconds)), 5, 60 * 60),
@@ -137,26 +148,31 @@ export class ConfigStore {
     };
   }
 
-  private encryptPassword(password: string): string {
+  private async encryptPassword(password: string): Promise<string> {
     if (!password) {
       return '';
     }
 
-    if (safeStorage.isEncryptionAvailable()) {
-      return `safe:${safeStorage.encryptString(password).toString('base64')}`;
+    try {
+      if (await safeStorage.isAsyncEncryptionAvailable()) {
+        return `safe:${(await safeStorage.encryptStringAsync(password)).toString('base64')}`;
+      }
+    } catch {
+      // Keep the password in memory for this run when the credential store is unavailable.
+      return '';
     }
 
     return `plain:${Buffer.from(password, 'utf8').toString('base64')}`;
   }
 
-  private decryptPassword(value: string | undefined): string {
+  private async decryptPassword(value: string | undefined): Promise<string> {
     if (!value) {
       return '';
     }
 
     try {
-      if (value.startsWith('safe:') && safeStorage.isEncryptionAvailable()) {
-        return safeStorage.decryptString(Buffer.from(value.slice(5), 'base64'));
+      if (value.startsWith('safe:') && await safeStorage.isAsyncEncryptionAvailable()) {
+        return (await safeStorage.decryptStringAsync(Buffer.from(value.slice(5), 'base64'))).result;
       }
 
       if (value.startsWith('plain:')) {

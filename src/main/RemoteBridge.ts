@@ -1,8 +1,18 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { hostname } from 'node:os';
+import { ProxyAgent } from 'proxy-agent';
 import WebSocket from 'ws';
-import type { AppConfig, AppSnapshot, AudioMeterFrame, RemoteAccessSnapshot } from '../shared/types.js';
+import {
+  LAN_REMOTE_SERVER_URL,
+  PUBLIC_REMOTE_SERVER_URL,
+  type AppConfig,
+  type AppSnapshot,
+  type AudioMeterFrame,
+  type RemoteAccessSnapshot
+} from '../shared/types.js';
+
+export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types.js';
 
 export interface RemoteCommand {
   id: string;
@@ -17,10 +27,9 @@ interface RemoteBridgeEvents {
 
 const SEND_INTERVAL_MS = 400;
 const METER_SEND_INTERVAL_MS = 80;
-export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
-export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
 const LAN_CONNECT_TIMEOUT_MS = 2500;
 const PUBLIC_CONNECT_TIMEOUT_MS = 8000;
+const PUBLIC_FALLBACK_DELAY_MS = 350;
 
 export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private socket: WebSocket | null = null;
@@ -38,7 +47,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private secret = '';
   private generation = 0;
   private state: RemoteAccessSnapshot = {
-    connectionState: 'disabled', connected: false, pairUrl: null, errorMessage: null, lastConnectedAt: null
+    connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, lastConnectedAt: null
   };
 
   static createDeviceIdentity(): { uuid: string; secret: string } {
@@ -63,7 +72,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.clearTimers();
     this.closeSocket();
     if (!this.enabled) {
-      this.setState({ connectionState: 'disabled', connected: false, pairUrl: null, errorMessage: null });
+      this.setState({ connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null });
       return;
     }
     await this.connect(this.generation);
@@ -106,40 +115,73 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       this.setState({ connectionState: 'error', connected: false, errorMessage: '远程访问配置无效' });
       return;
     }
-    this.setState({ connectionState: 'connecting', connected: false, errorMessage: null });
+    this.setState({
+      connectionState: 'connecting',
+      connected: false,
+      activeServerUrl: null,
+      pairUrl: publicPairUrl(this.state.pairUrl),
+      errorMessage: null
+    });
     let lastError: unknown = null;
-    for (const candidate of this.serverCandidates) {
+    const controllers = this.serverCandidates.map(() => new AbortController());
+    const attempts = this.serverCandidates.map((candidate, index) => this.registerWithServer(
+      candidate,
+      index === 0 ? 0 : PUBLIC_FALLBACK_DELAY_MS,
+      controllers[index].signal
+    ).catch((error) => {
+      lastError = error;
+      throw error;
+    }));
+
+    try {
+      const registered = await Promise.any(attempts);
+      controllers.forEach((controller) => controller.abort());
       if (!this.enabled || generation !== this.generation) return;
-      try {
-        const response = await fetch(`${candidate}/api/devices/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: this.uuid, secret: this.secret, label: hostname() }),
-          signal: AbortSignal.timeout(candidate === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS)
-        });
-        const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
-        if (!response.ok || !body.device?.pairUrl) throw new Error(body.error || `服务器返回 ${response.status}`);
-        if (!this.enabled || generation !== this.generation) return;
-        this.serverUrl = candidate;
-        this.state.pairUrl = body.device.pairUrl;
-        this.openSocket(generation);
-        return;
-      } catch (error) {
-        lastError = error;
-      }
+      this.serverUrl = registered.serverUrl;
+      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: publicPairUrl(registered.pairUrl) });
+      await this.openSocket(generation);
+      return;
+    } catch (error) {
+      lastError = error;
+      controllers.forEach((controller) => controller.abort());
     }
 
     if (!this.enabled || generation !== this.generation) return;
-    this.setState({ connectionState: 'error', connected: false, errorMessage: friendlyError(lastError) });
+    this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, errorMessage: friendlyError(lastError) });
     this.scheduleReconnect(generation);
   }
 
-  private openSocket(generation: number): void {
+  private async registerWithServer(serverUrl: string, delayMs: number, signal: AbortSignal): Promise<{ serverUrl: string; pairUrl: string }> {
+    if (delayMs > 0) await abortableDelay(delayMs, signal);
+    const timeout = serverUrl === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS;
+    const { session } = await import('electron');
+    if (serverUrl === PUBLIC_REMOTE_SERVER_URL) {
+      await Promise.allSettled([
+        session.defaultSession.clearHostResolverCache(),
+        session.defaultSession.forceReloadProxyConfig()
+      ]);
+    }
+    const response = await session.defaultSession.fetch(`${serverUrl}/api/devices/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: this.uuid, secret: this.secret, label: hostname() }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)])
+    });
+    const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
+    if (!response.ok || !body.device?.pairUrl) throw new Error(body.error || `服务器返回 ${response.status}`);
+    return { serverUrl, pairUrl: body.device.pairUrl };
+  }
+
+  private async openSocket(generation: number): Promise<void> {
     const wsUrl = new URL(this.serverUrl);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     wsUrl.pathname = '/ws/desktop';
     wsUrl.search = new URLSearchParams({ uuid: this.uuid, secret: this.secret }).toString();
-    const socket = new WebSocket(wsUrl);
+    const proxyUrl = await resolveSystemProxy(wsUrl.toString());
+    if (!this.enabled || generation !== this.generation) return;
+    const socket = new WebSocket(wsUrl, proxyUrl
+      ? { agent: new ProxyAgent({ getProxyForUrl: () => proxyUrl }) }
+      : undefined);
     this.socket = socket;
     this.socketConnectTimer = setTimeout(() => {
       if (socket === this.socket && socket.readyState !== WebSocket.OPEN) socket.terminate();
@@ -156,7 +198,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       try {
         const message = JSON.parse(raw.toString()) as { type?: string; pairUrl?: string; id?: string; command?: string; payload?: Record<string, unknown> };
         if (message.type === 'registered' && message.pairUrl) {
-          this.setState({ pairUrl: message.pairUrl });
+          this.setState({ pairUrl: publicPairUrl(message.pairUrl) });
         } else if (message.type === 'command' && message.id && (message.command === 'atem.preview' || message.command === 'atem.auto')) {
           this.emit('command', { id: message.id, command: message.command, payload: message.payload ?? {} });
         }
@@ -244,9 +286,61 @@ export function remoteServerCandidates(configuredUrl: string): string[] {
 
 function friendlyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (/name_not_resolved|enotfound|nxdomain|dns/i.test(message)) {
+    return '公网域名解析失败，请刷新 DNS 缓存或改用 223.5.5.5 / 119.29.29.29';
+  }
   if (/timeout/i.test(message)) return '连接远程服务超时';
   if (/fetch|connect|refused|network/i.test(message)) return '无法连接远程服务，请检查服务器地址和网络';
   return message || '远程服务连接失败';
+}
+
+function abortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolveDelay, rejectDelay) => {
+    const timer = setTimeout(resolveDelay, delayMs);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      rejectDelay(signal.reason);
+    }, { once: true });
+  });
+}
+
+export function proxyDirectiveUrl(value: string): string | null {
+  const directives = value.split(';').map((item) => item.trim()).filter(Boolean);
+  for (const directive of directives) {
+    const [kind = '', address = ''] = directive.split(/\s+/, 2);
+    if (!address || kind.toUpperCase() === 'DIRECT') continue;
+    if (/^HTTPS$/i.test(kind)) return `https://${address}`;
+    if (/^(PROXY|HTTP)$/i.test(kind)) return `http://${address}`;
+    if (/^SOCKS5?$/i.test(kind)) return `socks5://${address}`;
+    if (/^SOCKS4$/i.test(kind)) return `socks4://${address}`;
+  }
+  return null;
+}
+
+async function resolveSystemProxy(url: string): Promise<string | null> {
+  try {
+    const { session } = await import('electron');
+    return proxyDirectiveUrl(await session.defaultSession.resolveProxy(url));
+  } catch {
+    return null;
+  }
+}
+
+export function publicPairUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const pairUrl = new URL(value);
+    const normalizedOrigin = pairUrl.origin.replace(/\/$/, '');
+    if (normalizedOrigin !== LAN_REMOTE_SERVER_URL && normalizedOrigin !== PUBLIC_REMOTE_SERVER_URL) return value;
+    const publicOrigin = new URL(PUBLIC_REMOTE_SERVER_URL);
+    pairUrl.protocol = publicOrigin.protocol;
+    pairUrl.hostname = publicOrigin.hostname;
+    pairUrl.port = publicOrigin.port;
+    return pairUrl.toString();
+  } catch {
+    return value;
+  }
 }
 
 function remoteTelemetry(snapshot: AppSnapshot) {

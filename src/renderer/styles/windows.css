@@ -403,8 +403,8 @@
 
 /* ====== Multi-function floating mode ====== */
 .floating-audio-atem-mode {
-  gap:calc(8px * var(--floating-ui-scale, 1));
-  padding:calc(11px * var(--floating-ui-scale, 1));
+  gap:calc(10px * var(--floating-ui-scale, 1));
+  padding:calc(12px * var(--floating-ui-scale, 1));
 }
 .floating-dual-grid {
   position:relative;
@@ -447,8 +447,9 @@
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  gap: calc(8px * var(--floating-ui-scale, 1));
-  padding: calc(10px * var(--floating-ui-scale, 1));
+  justify-content: space-between;
+  gap: calc(10px * var(--floating-ui-scale, 1));
+  padding: calc(12px * var(--floating-ui-scale, 1));
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: calc(10px * var(--floating-ui-scale, 1));
@@ -461,8 +462,8 @@
 .floating-combo-metrics {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
-  gap: calc(8px * var(--floating-ui-scale, 1));
-  min-height: 0;
+  gap: calc(10px * var(--floating-ui-scale, 1));
+  min-height: calc(74px * var(--floating-ui-scale, 1));
 }
 .floating-combo-audio,
 .floating-combo-camera {
@@ -470,10 +471,10 @@
   min-width: 0;
   flex-direction: column;
   justify-content: center;
-  gap: calc(3px * var(--floating-ui-scale, 1));
+  gap: calc(4px * var(--floating-ui-scale, 1));
 }
 .floating-combo-camera {
-  padding-left: calc(10px * var(--floating-ui-scale, 1));
+  padding-left: calc(12px * var(--floating-ui-scale, 1));
   border-left: 1px solid rgba(148, 163, 184, 0.2);
 }
 .floating-combo-audio > span,
@@ -482,7 +483,7 @@
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  font-size: calc(9.5px * var(--floating-ui-scale, 1));
+  font-size: calc(10px * var(--floating-ui-scale, 1));
   opacity: 0.68;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -491,7 +492,7 @@
 .floating-combo-camera > strong {
   overflow: hidden;
   color: inherit;
-  font-size: calc(25px * var(--floating-ui-scale, 1));
+  font-size: calc(17px * var(--floating-ui-scale, 1));
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -515,7 +516,7 @@
 .floating-combo-meter {
   display: flex;
   flex-direction: column;
-  gap: calc(4px * var(--floating-ui-scale, 1));
+  gap: 0;
 }
 .floating-combo-meter-label {
   display: flex;
@@ -535,21 +536,19 @@
 .floating-combo-prompts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: calc(6px * var(--floating-ui-scale, 1));
+  gap: calc(8px * var(--floating-ui-scale, 1));
 }
 .floating-combo-prompt {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: calc(5px * var(--floating-ui-scale, 1));
-  min-height: calc(25px * var(--floating-ui-scale, 1));
-  padding: 0 calc(7px * var(--floating-ui-scale, 1));
+  min-height: calc(30px * var(--floating-ui-scale, 1));
+  padding: 0 calc(9px * var(--floating-ui-scale, 1));
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: calc(7px * var(--floating-ui-scale, 1));
   background: rgba(148, 163, 184, 0.08);
   color: inherit;
-  font-size: calc(8.5px * var(--floating-ui-scale, 1));
+  font-size: calc(9.5px * var(--floating-ui-scale, 1));
 }
 .floating-combo-prompt span {
   display: inline-flex;
@@ -559,11 +558,13 @@
   white-space: nowrap;
 }
 .floating-combo-prompt strong {
+  display:block;
+  width:100%;
   overflow: hidden;
   font-size: inherit;
-  font-weight: 650;
-  opacity: 0.78;
-  text-align: right;
+  font-weight: 800;
+  opacity: 0.88;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -24,7 +24,18 @@ import {
   Wifi
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import type { AlertSoundPreset, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, FloatingWindowMode, TestConnectionResult, UpdateSnapshot } from '../../../shared/types';
+import {
+  LAN_REMOTE_SERVER_URL,
+  PUBLIC_REMOTE_SERVER_URL,
+  type AlertSoundPreset,
+  type AppConfig,
+  type AppSnapshot,
+  type ATEMScanResult,
+  type ATEMTestResult,
+  type FloatingWindowMode,
+  type TestConnectionResult,
+  type UpdateSnapshot
+} from '../../../shared/types';
 import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
@@ -283,6 +294,19 @@ export const ConnectionSection: React.FC<{
         <label className="settings-field-label" htmlFor="conn-pwd">WebSocket 密码</label>
         <input id="conn-pwd" className="input" type="password" value={draft.obsPassword} onChange={(e) => onChange('obsPassword', e.target.value)} placeholder="未设置密码可留空" />
       </div>
+    </div>
+    <ToggleRow
+      id="remember-obs-password"
+      title="安全保存 OBS 密码"
+      description={draft.rememberObsPassword
+        ? '使用系统凭据库加密保存。macOS 可能请求登录钥匙串授权，这是系统在保护 OBS 密码。'
+        : '密码仅在本次运行期间使用，退出软件后不会保存，也不会访问系统钥匙串。'}
+      checked={draft.rememberObsPassword}
+      onChange={(value) => onChange('rememberObsPassword', value)}
+    />
+    <div className="credential-actions">
+      <span>OBS 未设置 WebSocket 密码时可关闭保存并清空输入。</span>
+      <button type="button" className="btn-secondary compact" onClick={() => onChange('obsPassword', '')}>清空密码</button>
     </div>
     <div className={`settings-hint ${snapshot.connected ? '' : 'warn'}`}>
       {snapshot.connected
@@ -776,6 +800,16 @@ export const RemoteAccessSection: React.FC<{
 }> = ({ draft, snapshot, onChange }) => {
   const [qrDataUrl, setQrDataUrl] = React.useState('');
   const [copyLabel, setCopyLabel] = React.useState('复制扫码链接');
+  const normalizedServerUrl = draft.remoteServerUrl.trim().replace(/\/$/, '');
+  const usingBuiltInService = normalizedServerUrl === LAN_REMOTE_SERVER_URL || normalizedServerUrl === PUBLIC_REMOTE_SERVER_URL;
+  const activeRoute = snapshot.remoteAccessActiveServerUrl === LAN_REMOTE_SERVER_URL
+    ? '局域网线路'
+    : snapshot.remoteAccessActiveServerUrl === PUBLIC_REMOTE_SERVER_URL
+      ? '公网 HTTPS'
+      : snapshot.remoteAccessActiveServerUrl
+        ? '自定义线路'
+        : '';
+  const pairFallbackBase = usingBuiltInService ? PUBLIC_REMOTE_SERVER_URL : normalizedServerUrl;
 
   React.useEffect(() => {
     let active = true;
@@ -790,9 +824,9 @@ export const RemoteAccessSection: React.FC<{
   }, [snapshot.remoteAccessPairUrl]);
 
   const status = snapshot.remoteAccessConnected
-    ? { label: '远程服务已连接', tone: 'ok' }
+    ? { label: `远程服务已连接${activeRoute ? ` · ${activeRoute}` : ''}`, tone: 'ok' }
     : snapshot.remoteAccessConnectionState === 'connecting'
-      ? { label: '正在连接远程服务', tone: 'pending' }
+      ? { label: usingBuiltInService ? '正在自动检测局域网与公网线路' : '正在连接自定义远程服务', tone: 'pending' }
       : snapshot.remoteAccessErrorMessage
         ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
         : { label: '远程访问未启用', tone: 'idle' };
@@ -813,11 +847,22 @@ export const RemoteAccessSection: React.FC<{
         checked={draft.remoteAccessEnabled}
         onChange={(value) => onChange('remoteAccessEnabled', value)}
       />
-      <div className="settings-field">
-        <label className="settings-field-label" htmlFor="remote-server-url">远程服务地址</label>
-        <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="https://obs.huaweilive.top:8088" />
-        <span className="settings-field-help">内置服务会自动优先使用局域网，局域网不可达时切换到公网 HTTPS。</span>
+      <div className={`remote-route-card ${usingBuiltInService ? 'auto' : 'custom'}`}>
+        <Route size={18} />
+        <div>
+          <strong>{usingBuiltInService ? '自动选择连接线路' : '使用自定义远程服务'}</strong>
+          <span>{usingBuiltInService ? '局域网与公网错峰连接，局域网可用时优先使用，否则自动转到公网 HTTPS。' : normalizedServerUrl}</span>
+        </div>
+        {usingBuiltInService && <b>自动</b>}
       </div>
+      <details className="remote-custom-server" open={!usingBuiltInService}>
+        <summary>自定义服务器地址</summary>
+        <div className="settings-field">
+          <label className="settings-field-label" htmlFor="remote-server-url">服务器 URL</label>
+          <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="https://example.com:8088" />
+          {!usingBuiltInService && <button type="button" className="btn-secondary" onClick={() => onChange('remoteServerUrl', PUBLIC_REMOTE_SERVER_URL)}>恢复自动连接</button>}
+        </div>
+      </details>
       <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
       <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
       <div className="remote-access-grid">
@@ -828,7 +873,7 @@ export const RemoteAccessSection: React.FC<{
           <strong>首次扫码需要审批</strong>
           <p>手机输入直播间名称并提交申请，管理员在统一后台批准后，该浏览器才会进入监控面板。</p>
           <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
-          <code>{snapshot.remoteAccessPairUrl || `${draft.remoteServerUrl}/pair/等待连接`}</code>
+          <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
         </div>
       </div>
       <div className="settings-hint warn">远程切台属于高风险操作。移动端仅允许选择 PVW 和确认后的 AUTO，不开放远程 Hard Cut；公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
