@@ -1,4 +1,5 @@
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, type AppConfig } from '../src/shared/types.js';
 
@@ -52,7 +53,7 @@ describe('ConfigStore', () => {
     expect(saved.alertDisplayId).toBeNull();
     expect(saved.alertPositions).toEqual({ 1: { x: 13, y: 48 } });
     expect(saved.floatingWindowEnabled).toBe(false);
-    expect(saved.floatingWindowBounds).toEqual({ x: 5, y: 9, width: 320, height: 520 });
+    expect(saved.floatingWindowBounds).toEqual({ x: 5, y: 9, width: 170, height: 520 });
   });
 
   it('trims text fields and clamps the OBS port range', async () => {
@@ -110,6 +111,21 @@ describe('ConfigStore', () => {
       atemCameraTimeLimitSeconds: 300
     });
     expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
+  });
+
+  it('resets the legacy wide audio and ATEM bounds to the compact preview size', async () => {
+    mkdirSync(electronMock.userData, { recursive: true });
+    writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify({
+      ...DEFAULT_CONFIG,
+      floatingWindowMode: 'audio_atem',
+      floatingWindowLayoutVersion: 1,
+      floatingWindowBounds: { x: 120, y: 90, width: 400, height: 292 }
+    }));
+
+    const migrated = await new ConfigStore().load();
+
+    expect(migrated.floatingWindowLayoutVersion).toBe(DEFAULT_CONFIG.floatingWindowLayoutVersion);
+    expect(migrated.floatingWindowBounds).toBeNull();
   });
 
   it('restores defaults and marks the guide as unseen', async () => {

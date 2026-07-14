@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, LayoutGrid, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
+import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
 import type { AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
 import {
@@ -7,7 +7,7 @@ import {
 } from '../utils/status';
 
 const AUDIO_FLOATING_BASE = { width: 340, height: 178 };
-const AUDIO_ATEM_FLOATING_BASE = { width: 400, height: 292 };
+const AUDIO_ATEM_FLOATING_BASE = { width: 180, height: 130 };
 const MULTI_FLOATING_BASE = { width: 460, height: 300 };
 
 export const FloatingApp: React.FC = () => {
@@ -71,11 +71,6 @@ export const FloatingApp: React.FC = () => {
   } as React.CSSProperties;
   const inputName = snapshot.activeInputName || snapshot.config.targetInputName || '未选择音源';
 
-  const toggleMode = () => {
-    const nextMode = mode === 'audio' ? 'audio_atem' : mode === 'audio_atem' ? 'multifunction' : 'audio';
-    void window.obsGuard.saveConfig({ floatingWindowMode: nextMode });
-  };
-
   const floatingTitle = mode === 'audio' ? displayStatusText(snapshot) : mode === 'audio_atem' ? '音频与机位' : '多功能监看';
 
   return (
@@ -88,9 +83,6 @@ export const FloatingApp: React.FC = () => {
             <strong>{floatingTitle}</strong>
           </div>
           <div className="floating-window-actions">
-            <button aria-label="切换小浮窗模式" onClick={toggleMode}>
-              <LayoutGrid size={14} />
-            </button>
             <button aria-label={theme === 'dark' ? '切换浅色小浮窗' : '切换深色小浮窗'} onClick={toggleTheme}>
               {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             </button>

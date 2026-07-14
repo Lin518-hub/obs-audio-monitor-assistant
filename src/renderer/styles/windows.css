@@ -403,8 +403,17 @@
 
 /* ====== Multi-function floating mode ====== */
 .floating-audio-atem-mode {
-  gap:calc(10px * var(--floating-ui-scale, 1));
-  padding:calc(12px * var(--floating-ui-scale, 1));
+  gap:calc(6px * var(--floating-ui-scale, 1));
+  padding:calc(8px * var(--floating-ui-scale, 1));
+}
+.floating-audio-atem-mode .floating-status {
+  gap:calc(5px * var(--floating-ui-scale, 1));
+  font-size:calc(10px * var(--floating-ui-scale, 1));
+}
+.floating-audio-atem-mode .floating-window-actions button {
+  width:calc(20px * var(--floating-ui-scale, 1));
+  height:calc(20px * var(--floating-ui-scale, 1));
+  border-radius:calc(5px * var(--floating-ui-scale, 1));
 }
 .floating-dual-grid {
   position:relative;
@@ -448,11 +457,11 @@
   min-height: 0;
   flex-direction: column;
   justify-content: space-between;
-  gap: calc(10px * var(--floating-ui-scale, 1));
-  padding: calc(12px * var(--floating-ui-scale, 1));
+  gap: calc(4px * var(--floating-ui-scale, 1));
+  padding: calc(6px * var(--floating-ui-scale, 1));
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: calc(10px * var(--floating-ui-scale, 1));
+  border-radius: calc(8px * var(--floating-ui-scale, 1));
   background: rgba(255, 255, 255, 0.07);
 }
 .floating-shell.theme-light .floating-combo-card {
@@ -461,9 +470,9 @@
 }
 .floating-combo-metrics {
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
-  gap: calc(10px * var(--floating-ui-scale, 1));
-  min-height: calc(74px * var(--floating-ui-scale, 1));
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: calc(6px * var(--floating-ui-scale, 1));
+  min-height: calc(38px * var(--floating-ui-scale, 1));
 }
 .floating-combo-audio,
 .floating-combo-camera {
@@ -471,10 +480,10 @@
   min-width: 0;
   flex-direction: column;
   justify-content: center;
-  gap: calc(4px * var(--floating-ui-scale, 1));
+  gap: calc(1px * var(--floating-ui-scale, 1));
 }
 .floating-combo-camera {
-  padding-left: calc(12px * var(--floating-ui-scale, 1));
+  padding-left: calc(6px * var(--floating-ui-scale, 1));
   border-left: 1px solid rgba(148, 163, 184, 0.2);
 }
 .floating-combo-audio > span,
@@ -483,7 +492,7 @@
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  font-size: calc(10px * var(--floating-ui-scale, 1));
+  font-size: calc(7.5px * var(--floating-ui-scale, 1));
   opacity: 0.68;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -492,7 +501,7 @@
 .floating-combo-camera > strong {
   overflow: hidden;
   color: inherit;
-  font-size: calc(17px * var(--floating-ui-scale, 1));
+  font-size: calc(11px * var(--floating-ui-scale, 1));
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -500,12 +509,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.floating-combo-camera > strong { font-size: calc(22px * var(--floating-ui-scale, 1)); }
+.floating-combo-camera > strong { font-size: calc(14px * var(--floating-ui-scale, 1)); }
 .floating-combo-audio > em,
 .floating-combo-camera > em {
   overflow: hidden;
   color: inherit;
-  font-size: calc(9.5px * var(--floating-ui-scale, 1));
+  font-size: calc(7px * var(--floating-ui-scale, 1));
   font-style: normal;
   opacity: 0.7;
   text-overflow: ellipsis;
@@ -517,6 +526,9 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+.floating-combo-meter .floating-meter-track {
+  height:calc(3px * var(--floating-ui-scale, 1));
 }
 .floating-combo-meter-label {
   display: flex;
@@ -536,19 +548,19 @@
 .floating-combo-prompts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: calc(8px * var(--floating-ui-scale, 1));
+  gap: calc(4px * var(--floating-ui-scale, 1));
 }
 .floating-combo-prompt {
   display: flex;
   min-width: 0;
   align-items: center;
-  min-height: calc(30px * var(--floating-ui-scale, 1));
-  padding: 0 calc(9px * var(--floating-ui-scale, 1));
+  min-height: calc(20px * var(--floating-ui-scale, 1));
+  padding: 0 calc(5px * var(--floating-ui-scale, 1));
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: calc(7px * var(--floating-ui-scale, 1));
+  border-radius: calc(5px * var(--floating-ui-scale, 1));
   background: rgba(148, 163, 184, 0.08);
   color: inherit;
-  font-size: calc(9.5px * var(--floating-ui-scale, 1));
+  font-size: calc(7.5px * var(--floating-ui-scale, 1));
 }
 .floating-combo-prompt span {
   display: inline-flex;

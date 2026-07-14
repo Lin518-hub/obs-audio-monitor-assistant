@@ -33,6 +33,12 @@ export class ConfigStore {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
 
+      // V3.2.1 replaces the old wide audio + ATEM window with the compact preview layout.
+      if (numberValue(parsed.floatingWindowLayoutVersion, 0) < DEFAULT_CONFIG.floatingWindowLayoutVersion && config.floatingWindowMode === 'audio_atem') {
+        config.floatingWindowBounds = null;
+        config.floatingWindowLayoutVersion = DEFAULT_CONFIG.floatingWindowLayoutVersion;
+      }
+
       this.currentConfig = this.normalize(config);
       return this.currentConfig;
     } catch {
@@ -130,6 +136,7 @@ export class ConfigStore {
       alertPositions: alertPositionsValue(merged.alertPositions),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
       floatingWindowMode: floatingWindowModeValue(merged.floatingWindowMode, floatingWindowModules),
+      floatingWindowLayoutVersion: clamp(Math.round(numberValue(merged.floatingWindowLayoutVersion, DEFAULT_CONFIG.floatingWindowLayoutVersion)), 1, DEFAULT_CONFIG.floatingWindowLayoutVersion),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       floatingWindowModules,
       remoteAccessEnabled: booleanValue(merged.remoteAccessEnabled, DEFAULT_CONFIG.remoteAccessEnabled),
@@ -323,8 +330,10 @@ function windowBoundsValue(value: unknown): WindowBounds | null {
   return {
     x: Math.round(raw.x as number),
     y: Math.round(raw.y as number),
-    width: clamp(Math.round(raw.width as number), 320, 640),
-    height: clamp(Math.round(raw.height as number), 150, 520)
+    // The compact audio + ATEM layout is intentionally smaller than the
+    // audio-only window. Per-mode limits are enforced by the main process.
+    width: clamp(Math.round(raw.width as number), 170, 640),
+    height: clamp(Math.round(raw.height as number), 120, 520)
   };
 }
 

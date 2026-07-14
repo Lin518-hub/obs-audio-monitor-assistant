@@ -29,8 +29,9 @@ const trayIconPaths = {
 } as const;
 const FLOATING_WINDOW_DEFAULT_WIDTH = 340;
 const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
-const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 400;
-const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 292;
+const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 180;
+const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 130;
+const FLOATING_AUDIO_ATEM_MIN_WIDTH = 170;
 const FLOATING_MULTI_DEFAULT_WIDTH = 460;
 const FLOATING_MULTI_DEFAULT_HEIGHT = 300;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
@@ -266,6 +267,9 @@ function registerIpc(): void {
     const previous = (latestSnapshot ?? monitor.getSnapshot()).config;
     const protectedPatch = {
       ...patch,
+      ...(Object.hasOwn(patch, 'floatingWindowMode') && patch.floatingWindowMode !== previous.floatingWindowMode
+        ? { floatingWindowBounds: null }
+        : {}),
       remoteDeviceUuid: previous.remoteDeviceUuid,
       remoteDeviceSecret: previous.remoteDeviceSecret
     };
@@ -1796,6 +1800,7 @@ function countFloatingModules(modules: AppConfig['floatingWindowModules']): numb
 }
 
 function floatingWindowMinWidthForMode(mode: AppConfig['floatingWindowMode']): number {
+  if (mode === 'audio_atem') return FLOATING_AUDIO_ATEM_MIN_WIDTH;
   return mode === 'multifunction' ? FLOATING_MULTI_MIN_WIDTH : FLOATING_WINDOW_MIN_WIDTH;
 }
 
@@ -1850,7 +1855,7 @@ function keepFloatingWindowAspectRatio(): void {
   }
 
   const bounds = floatingWindow.getBounds();
-  const width = clamp(bounds.width, FLOATING_WINDOW_MIN_WIDTH, FLOATING_WINDOW_MAX_WIDTH);
+  const width = clamp(bounds.width, floatingWindowMinWidthForMode(mode), FLOATING_WINDOW_MAX_WIDTH);
   const height = floatingWindowHeightForMode(mode, width, latestSnapshot?.config.floatingWindowModules ?? DEFAULT_CONFIG.floatingWindowModules);
   if (bounds.width === width && Math.abs(bounds.height - height) <= 1) {
     return;
@@ -1874,7 +1879,13 @@ function applyFloatingWindowShape(): void {
   }
 
   const { width, height } = floatingWindow.getBounds();
-  const radius = Math.min(Math.round(FLOATING_WINDOW_BASE_RADIUS * (width / FLOATING_WINDOW_DEFAULT_WIDTH)), Math.floor(width / 2), Math.floor(height / 2));
+  const mode = latestSnapshot?.config.floatingWindowMode ?? 'audio';
+  const baseWidth = mode === 'audio_atem'
+    ? FLOATING_AUDIO_ATEM_DEFAULT_WIDTH
+    : mode === 'multifunction'
+      ? FLOATING_MULTI_DEFAULT_WIDTH
+      : FLOATING_WINDOW_DEFAULT_WIDTH;
+  const radius = Math.min(Math.round(FLOATING_WINDOW_BASE_RADIUS * (width / baseWidth)), Math.floor(width / 2), Math.floor(height / 2));
   const rectangles: Rectangle[] = [];
 
   for (let y = 0; y < height; y += 1) {

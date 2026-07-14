@@ -224,6 +224,7 @@ export interface AppConfig {
   alertPositions: Record<string, AlertPosition>;
   floatingWindowEnabled: boolean;
   floatingWindowMode: FloatingWindowMode;
+  floatingWindowLayoutVersion: number;
   floatingWindowBounds: WindowBounds | null;
   floatingWindowModules: {
     audio: boolean;
@@ -333,6 +334,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertPositions: {},
   floatingWindowEnabled: false,
   floatingWindowMode: 'audio',
+  floatingWindowLayoutVersion: 2,
   floatingWindowBounds: null,
   floatingWindowModules: {
     audio: true,
