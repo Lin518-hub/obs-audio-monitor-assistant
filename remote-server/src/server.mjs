@@ -161,6 +161,7 @@ function publicDevice(device) {
     label: device.label,
     roomName: device.roomName || '',
     online: desktopSockets.has(device.uuid),
+    onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
     lastSeenAt: device.lastSeenAt || null,
     createdAt: device.createdAt,
     pairUrl: `${publicBaseUrl}/pair/${encodeURIComponent(device.pairToken)}`
@@ -200,6 +201,13 @@ function broadcastMobile(deviceUuid, payload) {
   const encoded = JSON.stringify(payload);
   for (const socket of mobileSockets.get(deviceUuid) || []) {
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
+  }
+}
+
+function notifyDesktopPresence(deviceUuid) {
+  const desktop = desktopSockets.get(deviceUuid);
+  if (desktop?.readyState === WebSocket.OPEN) {
+    desktop.send(JSON.stringify({ type: 'presence', onlineMobileClients: mobileSockets.get(deviceUuid)?.size || 0 }));
   }
 }
 
@@ -396,7 +404,11 @@ async function handleApi(req, res, url) {
 const requestListener = async (req, res) => {
   try {
     const url = new URL(req.url || '/', publicBaseUrl);
-    if (url.pathname === '/health') return json(res, 200, { ok: true, desktops: desktopSockets.size });
+    if (url.pathname === '/health') return json(res, 200, {
+      ok: true,
+      desktops: desktopSockets.size,
+      mobiles: Array.from(mobileSockets.values()).reduce((sum, sockets) => sum + sockets.size, 0)
+    });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname === '/') return redirect(res, '/admin');
     if (url.pathname === '/admin') return serveFile(res, join(publicDir, 'admin.html'));
@@ -468,7 +480,11 @@ wss.on('connection', (socket, req, url) => {
     desktopSockets.set(uuid, socket);
     device.lastSeenAt = now();
     void saveData();
-    socket.send(JSON.stringify({ type: 'registered', pairUrl: `${publicBaseUrl}/pair/${device.pairToken}` }));
+    socket.send(JSON.stringify({
+      type: 'registered',
+      pairUrl: `${publicBaseUrl}/pair/${device.pairToken}`,
+      onlineMobileClients: mobileSockets.get(uuid)?.size || 0
+    }));
     socket.on('message', (raw) => {
       try {
         const message = JSON.parse(raw.toString());
@@ -476,6 +492,9 @@ wss.on('connection', (socket, req, url) => {
           device.lastState = message.state;
           device.lastSeenAt = now();
           broadcastMobile(uuid, { type: 'state', state: device.lastState });
+          socket.send(JSON.stringify({ type: 'state-ack', receivedAt: now() }));
+        } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
+          socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
         } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
           const levelDb = Number(message.meter.levelDb);
           broadcastMobile(uuid, {
@@ -516,6 +535,7 @@ wss.on('connection', (socket, req, url) => {
   socket.commandInFlight = false;
   sockets.add(socket);
   mobileSockets.set(device.uuid, sockets);
+  notifyDesktopPresence(device.uuid);
   approval.lastUsedAt = now();
   socket.send(JSON.stringify({ type: 'state', state: device.lastState }));
   socket.send(JSON.stringify({ type: 'device-status', online: desktopSockets.has(device.uuid) }));
@@ -528,6 +548,7 @@ wss.on('connection', (socket, req, url) => {
       if (socket.commandInFlight) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '上一项操作仍在执行' }));
       const allowed = ['atem.preview', 'atem.auto'];
       if (!allowed.includes(message.command)) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '不允许的远程操作' }));
+      if (message.command === 'atem.auto' && message.payload?.confirmed !== true) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '请先完成二次确认' }));
       const desktop = desktopSockets.get(device.uuid);
       if (!desktop || desktop.readyState !== WebSocket.OPEN) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '电脑当前离线' }));
       socket.commandInFlight = true;
@@ -553,6 +574,7 @@ wss.on('connection', (socket, req, url) => {
     }
     sockets.delete(socket);
     if (sockets.size === 0) mobileSockets.delete(device.uuid);
+    notifyDesktopPresence(device.uuid);
   });
 });
 

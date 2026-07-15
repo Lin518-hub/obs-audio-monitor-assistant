@@ -7,7 +7,7 @@ import {
 } from '../utils/status';
 
 const AUDIO_FLOATING_BASE = { width: 340, height: 178 };
-const AUDIO_ATEM_FLOATING_BASE = { width: 180, height: 130 };
+const AUDIO_ATEM_FLOATING_BASE = { width: 340, height: 178 };
 const MULTI_FLOATING_BASE = { width: 460, height: 300 };
 
 export const FloatingApp: React.FC = () => {

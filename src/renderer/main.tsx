@@ -146,6 +146,8 @@ function SettingsApp() {
         });
       } else if (e.key === 'Enter') {
         e.preventDefault();
+        const previewLabel = snapshot.atemInputLabels[snapshot.atemPreviewInput] || `PGM ${snapshot.atemPreviewInput}`;
+        if (snapshot.config.atemHardCutConfirm && !window.confirm(`确认将 ${previewLabel} 从 PVW 切换到 PGM 吗？`)) return;
         void window.obsGuard.autoTransition().catch((error) => {
           console.error('[ATEM] AUTO shortcut failed', error);
         });
@@ -386,6 +388,7 @@ function ATEMConsole({
   onOpenSettings: () => void;
 }) {
   const [operation, setOperation] = useState<{ tone: 'pending' | 'ok' | 'bad'; text: string } | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>('current');
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
   const limit = Math.max(10, draft.atemCameraTimeLimitSeconds);
   const remaining = Math.max(0, limit - elapsed);
@@ -395,8 +398,20 @@ function ATEMConsole({
   const query = search.trim().toLowerCase();
   const visibleInputs = snapshot.atemInputIds.filter((inputId) => {
     const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
-    return !query || `${inputId} ${label}`.toLowerCase().includes(query);
+    const group = draft.atemInputCustomizations[String(inputId)]?.group || '未分组';
+    return !query || `${inputId} ${label} ${group}`.toLowerCase().includes(query);
   });
+  const groupedInputs = Array.from(visibleInputs.reduce((groups, inputId) => {
+    const group = draft.atemInputCustomizations[String(inputId)]?.group || '未分组';
+    const list = groups.get(group) ?? [];
+    list.push(inputId);
+    groups.set(group, list);
+    return groups;
+  }, new Map<string, number[]>()));
+  const sessions = [snapshot.atemCurrentSession, ...snapshot.atemRecentSessions].filter(Boolean) as NonNullable<AppSnapshot['atemCurrentSession']>[];
+  const selectedSession = selectedSessionId === 'current' && snapshot.atemCurrentSession
+    ? snapshot.atemCurrentSession
+    : sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null;
   const programLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取播出信号';
   const previewLabel = snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取预览信号';
   const visibleSwitchHistory = snapshot.atemSwitchHistory
@@ -423,6 +438,12 @@ function ATEMConsole({
     if (snapshot.atemPreviewInput <= 0) return;
     if (draft.atemHardCutConfirm && !window.confirm(`确认硬切到 ${previewLabel} 吗？`)) return;
     await runATEMAction('正在执行硬切…', `已硬切到 ${previewLabel}`, () => window.obsGuard.changeProgramInput(snapshot.atemPreviewInput));
+  };
+
+  const autoCut = async () => {
+    if (snapshot.atemPreviewInput <= 0) return;
+    if (draft.atemHardCutConfirm && !window.confirm(`确认将 ${previewLabel} 从 PVW 切换到 PGM 吗？`)) return;
+    await runATEMAction('正在执行 AUTO 切换…', `已切换到 ${previewLabel}`, () => window.obsGuard.autoTransition());
   };
 
   return (
@@ -480,16 +501,21 @@ function ATEMConsole({
           <div><strong>信号源</strong><span>仅显示 CAM 1–8、Color、彩条和 Media Player</span></div>
           <em>点击信号源只会选入 PVW，不会直接改变播出画面</em>
         </header>
-        <div className="atem-source-grid">
-          {visibleInputs.map((inputId) => {
+        <div className="atem-source-groups">
+          {groupedInputs.map(([group, inputIds]) => <div className="atem-source-group" key={group}>
+            <div className="atem-source-group-title"><span>{group}</span><b>{inputIds.length} 路</b></div>
+            <div className="atem-source-grid">
+          {inputIds.map((inputId) => {
             const isProgram = inputId === snapshot.atemProgramInput;
             const isPreview = inputId === snapshot.atemPreviewInput;
             const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
+            const color = draft.atemInputCustomizations[String(inputId)]?.color || '#22C55E';
             return (
               <button
                 type="button"
                 key={inputId}
                 className={`atem-source-button ${isProgram ? 'program' : ''} ${isPreview ? 'preview' : ''}`}
+                style={{ '--atem-source-color': color } as React.CSSProperties}
                 onClick={() => void runATEMAction(`正在选择 ${label}…`, `${label} 已选入 PVW`, () => window.obsGuard.changePreviewInput(inputId))}
                 disabled={!snapshot.atemConnected || operation?.tone === 'pending'}
               >
@@ -499,6 +525,8 @@ function ATEMConsole({
               </button>
             );
           })}
+            </div>
+          </div>)}
           {snapshot.atemConnected && visibleInputs.length === 0 && (
             <div className="atem-source-empty">
               {query ? '没有符合搜索条件的常用信号源' : '正在同步 ATEM 信号源，无需切换页面'}
@@ -514,11 +542,38 @@ function ATEMConsole({
           <button
             type="button"
             className="atem-auto-button"
-            onClick={() => void runATEMAction('正在执行 AUTO 切换…', `已切换到 ${previewLabel}`, () => window.obsGuard.autoTransition())}
+            onClick={() => void autoCut()}
             disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0 || operation?.tone === 'pending'}
           >AUTO 柔切</button>
           <button type="button" className="atem-hardcut-button" onClick={() => void hardCut()} disabled={!snapshot.atemConnected || snapshot.atemPreviewInput <= 0 || operation?.tone === 'pending'}>Hard Cut 硬切</button>
         </div>
+      </section>
+
+      <section className="atem-session-panel">
+        <header>
+          <div><strong><Clock3 size={17} /> 直播机位统计</strong><span>按直播或录制场次保存，自动保留最近 10 场</span></div>
+          {sessions.length > 0 && <select value={selectedSession?.id === snapshot.atemCurrentSession?.id ? 'current' : selectedSession?.id} onChange={(event) => setSelectedSessionId(event.target.value)}>
+            {snapshot.atemCurrentSession && <option value="current">当前直播</option>}
+            {snapshot.atemRecentSessions.map((session, index) => <option key={session.id} value={session.id}>第 {index + 1} 场 · {formatATEMSwitchDate(session.startedAt)}</option>)}
+          </select>}
+        </header>
+        {selectedSession && selectedSession.totalDurationSeconds > 0 ? <>
+          <div className="atem-session-timeline" aria-label="机位切换时间轴">
+            {selectedSession.segments.map((segment) => {
+              const custom = draft.atemInputCustomizations[String(segment.inputId)];
+              const width = Math.max(1.5, segment.durationSeconds / selectedSession.totalDurationSeconds * 100);
+              return <span key={segment.id} style={{ width: `${width}%`, background: custom?.color || '#22C55E' }} title={`${custom?.name || segment.inputLabel} · ${formatATEMDuration(segment.durationSeconds)}`} />;
+            })}
+          </div>
+          <div className="atem-session-usage">
+            {selectedSession.usage.map((item) => <article key={item.inputId}>
+              <i style={{ background: item.color }} />
+              <div><strong>{item.inputLabel}</strong><span>{item.group} · {formatATEMDuration(item.durationSeconds)}</span></div>
+              <b>{item.percent.toFixed(1)}%</b>
+              <em><span style={{ width: `${item.percent}%`, background: item.color }} /></em>
+            </article>)}
+          </div>
+        </> : <div className="atem-history-empty">直播或录制开始后，PGM 机位停留时间会在这里形成时间轴和占比。</div>}
       </section>
 
       <section className="atem-history-panel">

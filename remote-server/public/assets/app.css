@@ -5,3 +5,5 @@
 button:focus-visible,input:focus-visible{outline:3px solid rgba(34,197,94,.34);outline-offset:3px}
 .level-track i{width:100%;transform:scaleX(0);transform-origin:left center;transition:transform 90ms linear;will-change:transform}.time-track i{width:0;transform:none;transition:width .28s linear}
 .controller-list{display:grid;gap:8px;margin-top:14px}.controller-row{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px solid var(--line);border-radius:13px;background:rgba(246,251,247,.86)}.controller-row>span{min-width:0;display:flex;flex-direction:column;gap:3px}.controller-row strong,.controller-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.controller-row small{color:var(--muted);font-size:11px}.controller-row button{min-height:36px;flex:0 0 auto;padding:0 12px;border-radius:10px;font-weight:800}
+/* Per-camera accent propagated from the desktop configuration. */
+.input-button{position:relative;padding-left:17px}.input-button::before{content:"";position:absolute;left:7px;top:13px;bottom:13px;width:4px;border-radius:999px;background:var(--input-color,var(--green))}

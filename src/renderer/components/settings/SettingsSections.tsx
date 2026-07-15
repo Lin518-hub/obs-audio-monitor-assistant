@@ -493,7 +493,11 @@ export const ATEMSection: React.FC<{
                 <> · PGM {snapshot.atemProgramInput}{snapshot.atemInputLabels[snapshot.atemProgramInput] ? ` (${snapshot.atemInputLabels[snapshot.atemProgramInput]})` : ''} · {snapshot.atemInputCount} 路常用信号</>
               )}
               {!snapshot.atemConnected && snapshot.atemConnectionState !== 'connecting' && (
-                <> — 请确认 IP 地址正确且 ATEM 与电脑在同一网络</>
+                <>
+                  {snapshot.atemReconnectAttempt > 0
+                    ? ` — 第 ${snapshot.atemReconnectAttempt} 次退避重连已安排`
+                    : ' — 请确认 IP 地址正确且 ATEM 与电脑在同一网络'}
+                </>
               )}
             </span>
             {(snapshot.atemConnectionState === 'error' || (!snapshot.atemConnected && snapshot.atemConnectionState === 'disconnected')) && (
@@ -552,27 +556,36 @@ export const ATEMSection: React.FC<{
             />
             <ToggleRow
               id="atem-hardcut-confirm"
-              title="硬切确认保护"
-              description="Hard Cut 前需要再次确认，防止直播中误切"
+              title="危险切台二次确认"
+              description="AUTO、Hard Cut、全局 Enter 与移动端切换前均需明确确认"
               checked={draft.atemHardCutConfirm}
               onChange={(v) => onChange('atemHardCutConfirm', v)}
             />
           </div>
 
           {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
-            <div className="atem-input-list">
+            <div className="atem-customization-list">
+              <div className="settings-subgroup-title">机位名称、颜色与分组</div>
               {snapshot.atemInputIds.map((num) => {
-                const label = snapshot.atemInputLabels[num];
+                const key = String(num);
+                const hardwareLabel = snapshot.atemInputHardwareLabels[num] || `Input ${num}`;
+                const custom = draft.atemInputCustomizations[key] || { name: '', color: '#22C55E', group: '' };
                 const isProgram = num === snapshot.atemProgramInput;
                 const isPreview = num === snapshot.atemPreviewInput;
+                const updateCustomization = (patch: Partial<typeof custom>) => onChange('atemInputCustomizations', {
+                  ...draft.atemInputCustomizations,
+                  [key]: { ...custom, ...patch }
+                });
                 return (
-                  <span
+                  <div
                     key={num}
-                    className={`atem-input-chip ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
+                    className={`atem-customization-row ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
                   >
-                    <span className="atem-input-dot" />
-                    {num}{label ? ` ${label}` : ''}
-                  </span>
+                    <div className="atem-customization-source"><i style={{ background: custom.color }} /><strong>{num}</strong><span>{hardwareLabel}</span></div>
+                    <input className="input" value={custom.name} onChange={(event) => updateCustomization({ name: event.target.value })} placeholder="自定义名称" aria-label={`${hardwareLabel} 自定义名称`} />
+                    <input className="input" value={custom.group} onChange={(event) => updateCustomization({ group: event.target.value })} placeholder="分组，如 主播" aria-label={`${hardwareLabel} 分组`} />
+                    <input className="atem-color-input" type="color" value={custom.color} onChange={(event) => updateCustomization({ color: event.target.value })} aria-label={`${hardwareLabel} 颜色`} />
+                  </div>
                 );
               })}
             </div>
@@ -864,6 +877,12 @@ export const RemoteAccessSection: React.FC<{
         </div>
       </details>
       <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
+      <div className="remote-metrics-grid">
+        <div><span>线路类型</span><strong>{snapshot.remoteAccessRouteType === 'lan' ? '局域网' : snapshot.remoteAccessRouteType === 'public' ? '公网 HTTPS' : snapshot.remoteAccessRouteType === 'custom' ? '自定义' : '--'}</strong></div>
+        <div><span>服务延迟</span><strong>{snapshot.remoteAccessLatencyMs === null ? '--' : `${snapshot.remoteAccessLatencyMs} ms`}</strong></div>
+        <div><span>在线手机</span><strong>{snapshot.remoteAccessOnlineMobileClients} 台</strong></div>
+        <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
+      </div>
       <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
       <div className="remote-access-grid">
         <div className="remote-qr-card">

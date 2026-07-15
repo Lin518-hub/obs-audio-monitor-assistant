@@ -82,6 +82,21 @@ describe('ConfigStore', () => {
     expect(reloaded.silenceDurationSeconds).toBe(300);
   });
 
+  it('normalizes custom ATEM names, colors and groups', async () => {
+    const store = new ConfigStore();
+    const saved = await store.save({
+      ...DEFAULT_CONFIG,
+      atemInputCustomizations: {
+        1: { name: '  主播近景  ', color: '#12ab34', group: '  主播组  ' },
+        invalid: { name: '不会保存', color: '#fff', group: '测试' }
+      }
+    });
+
+    expect(saved.atemInputCustomizations).toEqual({
+      1: { name: '主播近景', color: '#12AB34', group: '主播组' }
+    });
+  });
+
   it('securely persists the OBS password only when requested', async () => {
     const store = new ConfigStore();
     await store.save({ ...DEFAULT_CONFIG, obsPassword: 'secret-value', rememberObsPassword: true });

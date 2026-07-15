@@ -26,6 +26,9 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
   const silent = displayedSilenceSeconds(snapshot);
   const remaining = secondsUntilVisibleAlert(snapshot);
   const targetName = snapshotTargetName(snapshot);
+  const meterAgeSeconds = snapshot.lastAudioMeterReceivedAt === null
+    ? null
+    : Math.max(0, Math.floor((Date.now() - snapshot.lastAudioMeterReceivedAt) / 1000));
 
   const applyClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
@@ -125,6 +128,11 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
           )}
         </div>
       </footer>
+      <div className={`level-meter-link-state ${meterAgeSeconds === null || meterAgeSeconds > 5 ? 'stale' : ''}`}>
+        <span>最近电平数据</span>
+        <strong>{meterAgeSeconds === null ? '尚未收到' : meterAgeSeconds <= 1 ? '刚刚' : `${meterAgeSeconds} 秒前`}</strong>
+        <em>{meterAgeSeconds !== null && meterAgeSeconds <= 5 ? '数据链路正常' : '当前不是静音判定，正在等待电平链路'}</em>
+      </div>
     </section>
   );
 };

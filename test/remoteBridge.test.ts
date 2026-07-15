@@ -4,6 +4,7 @@ import {
   PUBLIC_REMOTE_SERVER_URL,
   proxyDirectiveUrl,
   publicPairUrl,
+  remoteRouteType,
   remoteServerCandidates
 } from '../src/main/RemoteBridge.js';
 
@@ -23,6 +24,12 @@ describe('remote server selection', () => {
     expect(remoteServerCandidates('https://remote.example.com/control/')).toEqual([
       'https://remote.example.com/control'
     ]);
+  });
+
+  it('labels LAN, public and custom service routes', () => {
+    expect(remoteRouteType(LAN_REMOTE_SERVER_URL)).toBe('lan');
+    expect(remoteRouteType(PUBLIC_REMOTE_SERVER_URL)).toBe('public');
+    expect(remoteRouteType('https://remote.example.com')).toBe('custom');
   });
 
   it('rewrites a cached LAN pairing link to the public HTTPS endpoint', () => {

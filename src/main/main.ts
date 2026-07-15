@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -6,10 +6,11 @@ import { ConfigStore } from './configStore.js';
 import { getDisplays } from './display.js';
 import { HistoryStore } from './historyStore.js';
 import { ATEMHistoryStore } from './atemHistoryStore.js';
+import { ATEMSessionStore } from './ATEMSessionStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates, type RemoteCommand } from './RemoteBridge.js';
-import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,9 +30,9 @@ const trayIconPaths = {
 } as const;
 const FLOATING_WINDOW_DEFAULT_WIDTH = 340;
 const FLOATING_WINDOW_DEFAULT_HEIGHT = 178;
-const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 180;
-const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 130;
-const FLOATING_AUDIO_ATEM_MIN_WIDTH = 170;
+const FLOATING_AUDIO_ATEM_DEFAULT_WIDTH = 340;
+const FLOATING_AUDIO_ATEM_DEFAULT_HEIGHT = 178;
+const FLOATING_AUDIO_ATEM_MIN_WIDTH = 320;
 const FLOATING_MULTI_DEFAULT_WIDTH = 460;
 const FLOATING_MULTI_DEFAULT_HEIGHT = 300;
 const FLOATING_WINDOW_MIN_WIDTH = 320;
@@ -58,7 +59,12 @@ if (process.platform === 'win32') {
 let configStore: ConfigStore;
 let historyStore: HistoryStore;
 let atemHistoryStore: ATEMHistoryStore;
+let atemSessionStore: ATEMSessionStore;
 let atemSwitchHistory: ATEMSwitchHistoryEntry[] = [];
+let atemCurrentSession: ATEMLiveSession | null = null;
+let atemRecentSessions: ATEMLiveSession[] = [];
+let atemSessionQueue: Promise<void> = Promise.resolve();
+let atemSessionTransitionPending = false;
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
 let remoteBridge: RemoteBridge;
@@ -111,6 +117,7 @@ async function initializeApp(): Promise<void> {
   configStore = new ConfigStore();
   historyStore = new HistoryStore();
   atemHistoryStore = new ATEMHistoryStore();
+  atemSessionStore = new ATEMSessionStore();
   let config = await configStore.load();
   // Persist generated remote UUID/secret and one-time config migrations.
   config = await configStore.save(config);
@@ -122,6 +129,9 @@ async function initializeApp(): Promise<void> {
   }
   const history = await historyStore.load();
   atemSwitchHistory = await atemHistoryStore.load();
+  const storedSessions = await atemSessionStore.load();
+  atemCurrentSession = storedSessions.activeSession;
+  atemRecentSessions = storedSessions.sessions;
   monitor = new OBSMonitor(config, getDisplays());
   monitor.setHistory(history);
 
@@ -167,6 +177,7 @@ async function initializeApp(): Promise<void> {
     remoteBridge.updateSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
+    syncATEMLiveSession(snapshot);
     if (snapshot.preAlertVisible && !snapshot.alertVisible) {
       showPreAlertWindows(snapshot);
     } else {
@@ -198,14 +209,19 @@ async function initializeApp(): Promise<void> {
     }
   });
   atemMonitor.on('switchRecorded', (entry) => {
-    void atemHistoryStore.add(entry).then((history) => {
-      atemSwitchHistory = history;
+    atemSessionQueue = atemSessionQueue.catch(() => undefined).then(async () => {
+      atemSwitchHistory = await atemHistoryStore.add(entry);
+      if (atemCurrentSession) {
+        const sessions = await atemSessionStore.addSegment(sessionSegmentFromSwitch(entry));
+        atemCurrentSession = sessions.activeSession;
+        atemRecentSessions = sessions.sessions;
+      }
       if (!latestSnapshot) return;
       latestSnapshot = injectATEMState(latestSnapshot);
       broadcastSnapshot(latestSnapshot);
       remoteBridge.updateSnapshot(latestSnapshot);
     }).catch((error) => {
-      console.error(`[atem-history] failed to save switch: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[atem-session] failed to record camera switch: ${error instanceof Error ? error.message : String(error)}`);
     });
   });
 
@@ -416,6 +432,12 @@ function registerIpc(): void {
 function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
   const atem = atemMonitor?.getSnapshot();
   const remote = remoteBridge?.getSnapshot();
+  const customizations = snapshot.config.atemInputCustomizations;
+  const hardwareLabels = atem?.inputLabels ?? snapshot.atemInputHardwareLabels ?? {};
+  const effectiveLabels = Object.fromEntries(Object.entries(hardwareLabels).map(([inputId, label]) => [
+    Number(inputId),
+    customizations[inputId]?.name || label
+  ]));
   return {
     ...snapshot,
     ...(atem ? {
@@ -425,12 +447,21 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemProgramInput: atem.programInput,
       atemPreviewInput: atem.previewInput,
       atemInputIds: atem.inputIds,
-      atemInputLabels: atem.inputLabels,
+      atemInputLabels: effectiveLabels,
+      atemInputHardwareLabels: hardwareLabels,
       atemInputCount: atem.inputCount,
       atemProgramInputStartedAt: atem.programInputStartedAt,
       atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
       atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit,
-      atemSwitchHistory
+      atemSwitchHistory: atemSwitchHistory.map((entry) => ({
+        ...entry,
+        fromInputLabel: customizations[String(entry.fromInputId)]?.name || entry.fromInputLabel,
+        toInputLabel: customizations[String(entry.toInputId)]?.name || entry.toInputLabel
+      })),
+      atemReconnectAttempt: atem.reconnectAttempt,
+      atemNextReconnectAt: atem.nextReconnectAt,
+      atemCurrentSession: decorateATEMSession(atemCurrentSession, snapshot.config, atem),
+      atemRecentSessions: atemRecentSessions.map((session) => decorateATEMSession(session, snapshot.config, null) as ATEMLiveSession)
     } : {}),
     ...(remote ? {
       remoteAccessConnectionState: remote.connectionState,
@@ -438,9 +469,97 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       remoteAccessActiveServerUrl: remote.activeServerUrl,
       remoteAccessPairUrl: remote.pairUrl,
       remoteAccessErrorMessage: remote.errorMessage,
-      remoteAccessLastConnectedAt: remote.lastConnectedAt
+      remoteAccessLastConnectedAt: remote.lastConnectedAt,
+      remoteAccessRouteType: remote.routeType,
+      remoteAccessLatencyMs: remote.latencyMs,
+      remoteAccessOnlineMobileClients: remote.onlineMobileClients,
+      remoteAccessLastSyncAt: remote.lastSyncAt
     } : {})
   };
+}
+
+function syncATEMLiveSession(snapshot: AppSnapshot): void {
+  const live = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+  if (atemSessionTransitionPending || (live && atemCurrentSession) || (!live && !atemCurrentSession)) return;
+  atemSessionTransitionPending = true;
+  atemSessionQueue = atemSessionQueue.catch(() => undefined).then(async () => {
+    if (live && !atemCurrentSession) {
+      const state = await atemSessionStore.start(Date.now());
+      atemCurrentSession = state.activeSession;
+      atemRecentSessions = state.sessions;
+    } else if (!live && atemCurrentSession) {
+      const atem = atemMonitor.getSnapshot();
+      const state = await atemSessionStore.finish(Date.now(), currentATEMSessionSegment(atem, atemCurrentSession));
+      atemCurrentSession = state.activeSession;
+      atemRecentSessions = state.sessions;
+    } else {
+      return;
+    }
+    if (!latestSnapshot) return;
+    latestSnapshot = injectATEMState(latestSnapshot);
+    broadcastSnapshot(latestSnapshot);
+    remoteBridge.updateSnapshot(latestSnapshot);
+  }).catch((error) => {
+    console.error(`[atem-session] failed to update live session: ${error instanceof Error ? error.message : String(error)}`);
+  }).finally(() => {
+    atemSessionTransitionPending = false;
+    if (latestSnapshot) syncATEMLiveSession(latestSnapshot);
+  });
+}
+
+function sessionSegmentFromSwitch(entry: ATEMSwitchHistoryEntry): ATEMSessionSegment {
+  return {
+    id: `segment-${entry.id}`,
+    inputId: entry.fromInputId,
+    inputLabel: entry.fromInputLabel,
+    startedAt: entry.startedAt,
+    endedAt: entry.switchedAt,
+    durationSeconds: entry.durationSeconds
+  };
+}
+
+function currentATEMSessionSegment(atem: ReturnType<ATEMMonitor['getSnapshot']>, session: ATEMLiveSession): ATEMSessionSegment | null {
+  if (atem.programInput <= 0 || !atem.programInputStartedAt) return null;
+  const endedAt = Date.now();
+  const startedAt = Math.max(session.startedAt, atem.programInputStartedAt);
+  return {
+    id: `segment-current-${session.id}-${atem.programInput}-${startedAt}`,
+    inputId: atem.programInput,
+    inputLabel: atem.inputLabels[atem.programInput] || `Input ${atem.programInput}`,
+    startedAt,
+    endedAt,
+    durationSeconds: Math.max(0, Math.floor((endedAt - startedAt) / 1000))
+  };
+}
+
+function decorateATEMSession(
+  session: ATEMLiveSession | null,
+  config: AppConfig,
+  atem: ReturnType<ATEMMonitor['getSnapshot']> | null
+): ATEMLiveSession | null {
+  if (!session) return null;
+  const segments = [...session.segments];
+  const current = atem && session.endedAt === null ? currentATEMSessionSegment(atem, session) : null;
+  if (current && current.durationSeconds > 0) segments.push(current);
+  const totals = new Map<number, { inputLabel: string; durationSeconds: number }>();
+  for (const segment of segments) {
+    const item = totals.get(segment.inputId) ?? { inputLabel: segment.inputLabel, durationSeconds: 0 };
+    item.durationSeconds += segment.durationSeconds;
+    totals.set(segment.inputId, item);
+  }
+  const totalDurationSeconds = Array.from(totals.values()).reduce((sum, item) => sum + item.durationSeconds, 0);
+  const usage = Array.from(totals.entries()).map(([inputId, item]) => {
+    const custom = config.atemInputCustomizations[String(inputId)];
+    return {
+      inputId,
+      inputLabel: custom?.name || item.inputLabel,
+      color: custom?.color || '#22C55E',
+      group: custom?.group || '未分组',
+      durationSeconds: item.durationSeconds,
+      percent: totalDurationSeconds > 0 ? (item.durationSeconds / totalDurationSeconds) * 100 : 0
+    };
+  }).sort((a, b) => b.durationSeconds - a.durationSeconds);
+  return { ...session, segments, usage, totalDurationSeconds };
 }
 
 async function handleRemoteCommand(command: RemoteCommand): Promise<void> {
@@ -460,6 +579,7 @@ async function handleRemoteCommand(command: RemoteCommand): Promise<void> {
     }
     if (command.command === 'atem.auto') {
       if (!snapshot.atemConnected || snapshot.atemPreviewInput <= 0) throw new Error('ATEM 未连接或没有 PVW 信号');
+      if (snapshot.config.atemHardCutConfirm && command.payload.confirmed !== true) throw new Error('远程切台缺少二次确认');
       await atemMonitor.autoTransition();
       remoteBridge.sendCommandResult(command.id, true, 'AUTO 切换已执行');
       return;
@@ -512,7 +632,22 @@ function registerATEMHotkeys(): void {
     const registered = globalShortcut.register('Enter', () => {
       const snapshot = latestSnapshot;
       if (snapshot?.atemConnected && snapshot.atemPreviewInput > 0) {
-        void atem.autoTransition().catch((error) => {
+        void (async () => {
+          if (snapshot.config.atemHardCutConfirm) {
+            const target = snapshot.atemInputLabels[snapshot.atemPreviewInput] || `PGM ${snapshot.atemPreviewInput}`;
+            const result = await dialog.showMessageBox({
+              type: 'warning',
+              buttons: ['取消', '确认切换'],
+              defaultId: 0,
+              cancelId: 0,
+              title: '确认全局切台',
+              message: `确认将 ${target} 从 PVW 切换到 PGM 吗？`,
+              detail: '这是全局快捷键触发的直播画面切换。'
+            });
+            if (result.response !== 1) return;
+          }
+          await atem.autoTransition();
+        })().catch((error) => {
           console.error(`[ATEM] global AUTO shortcut failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       }

@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -33,7 +33,7 @@ export class ConfigStore {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
 
-      // V3.2.1 replaces the old wide audio + ATEM window with the compact preview layout.
+      // Reset saved bounds whenever the combined window's fixed layout changes.
       if (numberValue(parsed.floatingWindowLayoutVersion, 0) < DEFAULT_CONFIG.floatingWindowLayoutVersion && config.floatingWindowMode === 'audio_atem') {
         config.floatingWindowBounds = null;
         config.floatingWindowLayoutVersion = DEFAULT_CONFIG.floatingWindowLayoutVersion;
@@ -151,7 +151,8 @@ export class ConfigStore {
       atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal),
       atemHardCutConfirm: booleanValue(merged.atemHardCutConfirm, DEFAULT_CONFIG.atemHardCutConfirm),
       atemCameraTimeAlertEnabled: booleanValue(merged.atemCameraTimeAlertEnabled, DEFAULT_CONFIG.atemCameraTimeAlertEnabled),
-      atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60)
+      atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60),
+      atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations)
     };
   }
 
@@ -348,4 +349,18 @@ function floatingWindowModulesValue(value: unknown): AppConfig['floatingWindowMo
     atem: booleanValue(raw.atem, DEFAULT_CONFIG.floatingWindowModules.atem),
     obsStats: booleanValue(raw.obsStats, DEFAULT_CONFIG.floatingWindowModules.obsStats)
   };
+}
+
+function atemInputCustomizationsValue(value: unknown): Record<string, ATEMInputCustomization> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: Record<string, ATEMInputCustomization> = {};
+  for (const [inputId, customization] of Object.entries(value)) {
+    if (!/^\d{1,5}$/.test(inputId) || !customization || typeof customization !== 'object' || Array.isArray(customization)) continue;
+    const raw = customization as Partial<ATEMInputCustomization>;
+    const name = stringValue(raw.name, '').trim().slice(0, 40);
+    const group = stringValue(raw.group, '').trim().slice(0, 24);
+    const color = /^#[0-9a-f]{6}$/i.test(stringValue(raw.color, '')) ? stringValue(raw.color, '').toUpperCase() : '#22C55E';
+    if (name || group || color !== '#22C55E') result[inputId] = { name, group, color };
+  }
+  return result;
 }

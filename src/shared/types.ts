@@ -16,6 +16,7 @@ export type AlertReminderMode = 'classic' | 'fullscreen';
 export type AlertSoundPreset = 'clear' | 'strong' | 'low' | 'soft';
 export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
 export type RemoteAccessConnectionState = 'disabled' | 'connecting' | 'connected' | 'error';
+export type RemoteRouteType = 'lan' | 'public' | 'custom' | null;
 export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
 export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
 
@@ -73,6 +74,39 @@ export interface ATEMSwitchHistoryEntry {
   toInputLabel: string;
   startedAt: number;
   durationSeconds: number;
+}
+
+export interface ATEMInputCustomization {
+  name: string;
+  color: string;
+  group: string;
+}
+
+export interface ATEMSessionSegment {
+  id: string;
+  inputId: number;
+  inputLabel: string;
+  startedAt: number;
+  endedAt: number;
+  durationSeconds: number;
+}
+
+export interface ATEMSessionUsage {
+  inputId: number;
+  inputLabel: string;
+  color: string;
+  group: string;
+  durationSeconds: number;
+  percent: number;
+}
+
+export interface ATEMLiveSession {
+  id: string;
+  startedAt: number;
+  endedAt: number | null;
+  segments: ATEMSessionSegment[];
+  usage: ATEMSessionUsage[];
+  totalDurationSeconds: number;
 }
 
 export interface InputMonitorSnapshot {
@@ -162,6 +196,8 @@ export interface ATEMStateSnapshot {
   programInputElapsedSeconds: number;
   programInputOverLimit: boolean;
   errorMessage: string | null;
+  reconnectAttempt: number;
+  nextReconnectAt: number | null;
 }
 
 /** ATEM 连接测试结果 (beta) */
@@ -199,6 +235,10 @@ export interface RemoteAccessSnapshot {
   pairUrl: string | null;
   errorMessage: string | null;
   lastConnectedAt: number | null;
+  routeType: RemoteRouteType;
+  latencyMs: number | null;
+  onlineMobileClients: number;
+  lastSyncAt: number | null;
 }
 
 export interface AppConfig {
@@ -245,6 +285,7 @@ export interface AppConfig {
   atemHardCutConfirm: boolean;
   atemCameraTimeAlertEnabled: boolean;
   atemCameraTimeLimitSeconds: number;
+  atemInputCustomizations: Record<string, ATEMInputCustomization>;
 }
 
 export interface InputOption {
@@ -275,6 +316,7 @@ export interface AppSnapshot {
   simulatedLive: boolean;
   activeInputName: string;
   lastLevelDb: number | null;
+  lastAudioMeterReceivedAt: number | null;
   audioSpeaking: boolean;
   silentForSeconds: number;
   secondsUntilAlert: number | null;
@@ -298,17 +340,26 @@ export interface AppSnapshot {
   atemPreviewInput: number;
   atemInputIds: number[];
   atemInputLabels: Record<number, string>;
+  atemInputHardwareLabels: Record<number, string>;
   atemInputCount: number;
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
   atemSwitchHistory: ATEMSwitchHistoryEntry[];
+  atemReconnectAttempt: number;
+  atemNextReconnectAt: number | null;
+  atemCurrentSession: ATEMLiveSession | null;
+  atemRecentSessions: ATEMLiveSession[];
   remoteAccessConnectionState: RemoteAccessConnectionState;
   remoteAccessConnected: boolean;
   remoteAccessActiveServerUrl: string | null;
   remoteAccessPairUrl: string | null;
   remoteAccessErrorMessage: string | null;
   remoteAccessLastConnectedAt: number | null;
+  remoteAccessRouteType: RemoteRouteType;
+  remoteAccessLatencyMs: number | null;
+  remoteAccessOnlineMobileClients: number;
+  remoteAccessLastSyncAt: number | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -334,7 +385,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertPositions: {},
   floatingWindowEnabled: false,
   floatingWindowMode: 'audio',
-  floatingWindowLayoutVersion: 2,
+  floatingWindowLayoutVersion: 3,
   floatingWindowBounds: null,
   floatingWindowModules: {
     audio: true,
@@ -354,5 +405,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 600
+  atemCameraTimeLimitSeconds: 600,
+  atemInputCustomizations: {}
 };

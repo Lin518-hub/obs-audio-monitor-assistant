@@ -109,6 +109,11 @@ test('requires approval before a mobile browser receives access', async () => {
   mobile.clear();
   secondMobile.clear();
 
+  mobile.socket.send(JSON.stringify({ type: 'command', id: 'unconfirmed-auto', command: 'atem.auto', payload: {} }));
+  const unconfirmedResult = await mobile.next();
+  assert.equal(unconfirmedResult.id, 'unconfirmed-auto');
+  assert.equal(unconfirmedResult.ok, false);
+
   desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: -18.25 } }));
   const [meter, secondMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
   assert.equal(meter.type, 'meter');
@@ -116,7 +121,7 @@ test('requires approval before a mobile browser receives access', async () => {
   assert.equal(meter.meter.levelDb, -18.25);
   assert.equal(secondMeter.type, 'meter');
 
-  mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: {} }));
+  mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: { confirmed: true } }));
   const commandResult = await mobile.next();
   assert.equal(commandResult.id, 'client-command-1');
   assert.equal(commandResult.ok, true);
@@ -129,7 +134,7 @@ test('requires approval before a mobile browser receives access', async () => {
   assert.equal(revoked.body.ok, true);
   assert.equal(await revokedClose, 4003);
   assert.equal(secondMobile.socket.readyState, WebSocket.OPEN);
-  secondMobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-2', command: 'atem.auto', payload: {} }));
+  secondMobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-2', command: 'atem.auto', payload: { confirmed: true } }));
   assert.equal((await secondMobile.next()).id, 'client-command-2');
   const denied = await request(`/api/mobile/session?token=${encodeURIComponent(primaryAccessToken)}`);
   assert.equal(denied.response.status, 403);

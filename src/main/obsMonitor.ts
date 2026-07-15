@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import OBSWebSocket, { EventSubscription } from 'obs-websocket-js';
 import { maxInputLevelDb, smoothMeterLevel } from '../shared/audio.js';
 import { isProbablyAudibleInputKind } from '../shared/inputKinds.js';
+import { reconnectBackoffDelay } from '../shared/reconnect.js';
 import {
   deriveStatus,
   initialRuntimeState,
@@ -92,6 +93,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private lastVolumeHistoryBroadcastAt = 0;
   private obsStats: OBSStatsSnapshot = emptyOBSStats();
   private lastTargetMeterAt: number | null = null;
+  private lastAudioMeterReceivedAt: number | null = null;
+  private reconnectAttempt = 0;
   private simulatedLive = false;
   private actualStreaming = false;
   private actualRecording = false;
@@ -118,6 +121,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       simulatedLive: this.simulatedLive,
       activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
       lastLevelDb: this.state.lastLevelDb,
+      lastAudioMeterReceivedAt: this.lastAudioMeterReceivedAt,
       audioSpeaking: this.isAudioSpeaking(now),
       silentForSeconds: silentForSeconds(this.state, now),
       secondsUntilAlert: secondsUntilAlert(this.state, this.config, now),
@@ -142,23 +146,32 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemPreviewInput: 0,
       atemInputIds: [],
       atemInputLabels: {},
+      atemInputHardwareLabels: {},
       atemInputCount: 0,
       atemProgramInputStartedAt: null,
       atemProgramInputElapsedSeconds: 0,
       atemProgramInputOverLimit: false,
       atemSwitchHistory: [],
+      atemReconnectAttempt: 0,
+      atemNextReconnectAt: null,
+      atemCurrentSession: null,
+      atemRecentSessions: [],
       remoteAccessConnectionState: 'disabled',
       remoteAccessConnected: false,
       remoteAccessActiveServerUrl: null,
       remoteAccessPairUrl: null,
       remoteAccessErrorMessage: null,
-      remoteAccessLastConnectedAt: null
+      remoteAccessLastConnectedAt: null,
+      remoteAccessRouteType: null,
+      remoteAccessLatencyMs: null,
+      remoteAccessOnlineMobileClients: 0,
+      remoteAccessLastSyncAt: null
     };
   }
 
   async start(): Promise<void> {
     this.startTicking();
-    await this.connect();
+    await this.connect(true);
   }
 
   async stop(): Promise<void> {
@@ -184,6 +197,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     if (targetKey(previous) !== targetKey(this.config)) {
       this.lastTargetMeterAt = null;
+      this.lastAudioMeterReceivedAt = null;
       this.activeInputName = this.getTargetInputNames()[0] || '';
       this.clearSilentInputStates();
       this.state = {
@@ -209,7 +223,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.emitSnapshot();
 
     if (connectionChanged) {
-      await this.connect();
+      await this.connect(true);
     }
 
     return this.getSnapshot();
@@ -253,7 +267,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   async reconnect(): Promise<AppSnapshot> {
-    await this.connect();
+    await this.connect(true);
     return this.getSnapshot();
   }
 
@@ -390,7 +404,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     return snapshot;
   }
 
-  private async connect(): Promise<void> {
+  private async connect(manual = false): Promise<void> {
+    if (manual) this.reconnectAttempt = 0;
     this.clearReconnect();
     await this.disconnect();
 
@@ -428,6 +443,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       await this.loadInputs();
       await this.pollOutputState();
       await this.pollOBSStats();
+      this.reconnectAttempt = 0;
       this.startOutputPolling();
       this.emitSnapshot();
     } catch (error) {
@@ -616,10 +632,13 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private scheduleReconnect(): void {
-    this.clearReconnect();
+    if (this.reconnectTimer) return;
+    this.reconnectAttempt += 1;
+    const delay = reconnectBackoffDelay(this.reconnectAttempt);
     this.reconnectTimer = setTimeout(() => {
-      void this.connect();
-    }, 5000);
+      this.reconnectTimer = null;
+      void this.connect(false);
+    }, delay);
   }
 
   private startOutputPolling(): void {
@@ -795,6 +814,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     state.lastLevelDb = smoothMeterLevel(state.lastLevelDb, levelDb, previousMeterAt === null ? 50 : now - previousMeterAt);
     state.lastMeterAt = now;
     this.lastTargetMeterAt = Math.max(this.lastTargetMeterAt ?? 0, now);
+    this.lastAudioMeterReceivedAt = Math.max(this.lastAudioMeterReceivedAt ?? 0, now);
 
     const wasConfirmedSpeaking = state.silentSince === null && state.lastAboveThresholdAt !== null;
     const audibleThreshold = this.config.silenceThresholdDb + (wasConfirmedSpeaking ? -THRESHOLD_HYSTERESIS_DB : THRESHOLD_HYSTERESIS_DB);

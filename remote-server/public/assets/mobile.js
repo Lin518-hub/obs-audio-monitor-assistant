@@ -167,7 +167,7 @@ function render() {
 
 function renderInputs(atem) {
   const root = $('atem-inputs');
-  const nextSignature = JSON.stringify([atem.inputIds || [], atem.inputLabels || {}]);
+  const nextSignature = JSON.stringify([atem.inputIds || [], atem.inputLabels || {}, atem.inputMeta || {}]);
   if (inputSignature !== nextSignature) {
     inputSignature = nextSignature;
     root.replaceChildren();
@@ -182,8 +182,10 @@ function renderInputs(atem) {
     }
     button.disabled = commandInFlight;
     button.className = `input-button ${input===atem.programInput?'program':''} ${input===atem.previewInput?'preview':''}`;
+    button.style.setProperty('--input-color', atem.inputMeta?.[input]?.color || '#22C55E');
     button.querySelector('strong').textContent = atem.inputLabels?.[input] || `Input ${input}`;
-    button.querySelector('span').textContent = input===atem.programInput?'正在播出':input===atem.previewInput?'当前预览':'点击选入 PVW';
+    const status = input===atem.programInput?'正在播出':input===atem.previewInput?'当前预览':'点击选入 PVW';
+    button.querySelector('span').textContent = `${atem.inputMeta?.[input]?.group || '未分组'} · ${status}`;
   }
   if (!root.children.length) { const empty=document.createElement('p'); empty.className='safe-tip'; empty.textContent='ATEM 未连接或暂无可用信号源'; root.append(empty); }
 }
@@ -204,5 +206,5 @@ function sendCommand(command,payload={}) {
 document.querySelectorAll('.mobile-tabs button').forEach((button)=>button.addEventListener('click',()=>{document.querySelectorAll('.mobile-tabs button').forEach((item)=>item.classList.toggle('active',item===button));$('monitor-tab').classList.toggle('hidden',button.dataset.tab!=='monitor');$('atem-tab').classList.toggle('hidden',button.dataset.tab!=='atem');}));
 $('auto-transition').addEventListener('click',()=>{const atem=state?.atem||{},labels=atem.inputLabels||{};$('confirm-copy').textContent=`PVW ${atem.previewInput || '--'} ${labels[atem.previewInput]||''} 将切换到 PGM。`;$('confirm-sheet').classList.remove('hidden');});
 $('cancel-auto').addEventListener('click',()=>$('confirm-sheet').classList.add('hidden'));
-$('confirm-auto').addEventListener('click',()=>{$('confirm-sheet').classList.add('hidden');sendCommand('atem.auto');});
+$('confirm-auto').addEventListener('click',()=>{$('confirm-sheet').classList.add('hidden');sendCommand('atem.auto',{confirmed:true});});
 start();

@@ -37,6 +37,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private sendTimer: NodeJS.Timeout | null = null;
   private meterSendTimer: NodeJS.Timeout | null = null;
   private socketConnectTimer: NodeJS.Timeout | null = null;
+  private latencyTimer: NodeJS.Timeout | null = null;
+  private latencyPingSentAt: number | null = null;
   private latestMeterFrame: AudioMeterFrame | null = null;
   private latestSnapshot: AppSnapshot | null = null;
   private enabled = false;
@@ -47,7 +49,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private secret = '';
   private generation = 0;
   private state: RemoteAccessSnapshot = {
-    connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, lastConnectedAt: null
+    connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, lastConnectedAt: null,
+    routeType: null, latencyMs: null, onlineMobileClients: 0, lastSyncAt: null
   };
 
   static createDeviceIdentity(): { uuid: string; secret: string } {
@@ -72,7 +75,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.clearTimers();
     this.closeSocket();
     if (!this.enabled) {
-      this.setState({ connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null });
+      this.setState({ connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, routeType: null, latencyMs: null, onlineMobileClients: 0 });
       return;
     }
     await this.connect(this.generation);
@@ -119,6 +122,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       connectionState: 'connecting',
       connected: false,
       activeServerUrl: null,
+      routeType: null,
       pairUrl: publicPairUrl(this.state.pairUrl),
       errorMessage: null
     });
@@ -138,7 +142,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       controllers.forEach((controller) => controller.abort());
       if (!this.enabled || generation !== this.generation) return;
       this.serverUrl = registered.serverUrl;
-      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: publicPairUrl(registered.pairUrl) });
+      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: publicPairUrl(registered.pairUrl), routeType: remoteRouteType(registered.serverUrl) });
       await this.openSocket(generation);
       return;
     } catch (error) {
@@ -147,7 +151,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     }
 
     if (!this.enabled || generation !== this.generation) return;
-    this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, errorMessage: friendlyError(lastError) });
+    this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, routeType: null, errorMessage: friendlyError(lastError) });
     this.scheduleReconnect(generation);
   }
 
@@ -192,13 +196,21 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       this.socketConnectTimer = null;
       this.setState({ connectionState: 'connected', connected: true, errorMessage: null, lastConnectedAt: Date.now() });
       this.sendState();
+      this.startLatencyMonitor();
     });
     socket.on('message', (raw) => {
       if (socket !== this.socket || generation !== this.generation) return;
       try {
-        const message = JSON.parse(raw.toString()) as { type?: string; pairUrl?: string; id?: string; command?: string; payload?: Record<string, unknown> };
+        const message = JSON.parse(raw.toString()) as { type?: string; pairUrl?: string; id?: string; command?: string; payload?: Record<string, unknown>; sentAt?: number; receivedAt?: number; onlineMobileClients?: number };
         if (message.type === 'registered' && message.pairUrl) {
-          this.setState({ pairUrl: publicPairUrl(message.pairUrl) });
+          this.setState({ pairUrl: publicPairUrl(message.pairUrl), onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0) });
+        } else if (message.type === 'presence') {
+          this.setState({ onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0) });
+        } else if (message.type === 'latency-pong' && Number.isFinite(message.sentAt)) {
+          this.latencyPingSentAt = null;
+          this.setState({ latencyMs: Math.max(0, Date.now() - Number(message.sentAt)) });
+        } else if (message.type === 'state-ack') {
+          this.setState({ lastSyncAt: Number.isFinite(message.receivedAt) ? Number(message.receivedAt) : Date.now() });
         } else if (message.type === 'command' && message.id && (message.command === 'atem.preview' || message.command === 'atem.auto')) {
           this.emit('command', { id: message.id, command: message.command, payload: message.payload ?? {} });
         }
@@ -211,7 +223,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
       this.socketConnectTimer = null;
       this.socket = null;
-      this.setState({ connectionState: 'error', connected: false, errorMessage: '远程服务连接已断开，正在重试' });
+      this.stopLatencyMonitor();
+      this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, routeType: null, errorMessage: '远程服务连接已断开，正在重试', latencyMs: null, onlineMobileClients: 0 });
       this.scheduleReconnect(generation);
     });
     socket.on('error', () => {
@@ -226,6 +239,23 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   private send(payload: unknown): void {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(payload));
+  }
+
+  private startLatencyMonitor(): void {
+    this.stopLatencyMonitor();
+    const ping = () => {
+      const sentAt = Date.now();
+      this.latencyPingSentAt = sentAt;
+      this.send({ type: 'latency-ping', sentAt });
+    };
+    ping();
+    this.latencyTimer = setInterval(ping, 10_000);
+  }
+
+  private stopLatencyMonitor(): void {
+    if (this.latencyTimer) clearInterval(this.latencyTimer);
+    this.latencyTimer = null;
+    this.latencyPingSentAt = null;
   }
 
   private setState(patch: Partial<RemoteAccessSnapshot>): void {
@@ -246,10 +276,13 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     if (this.sendTimer) clearTimeout(this.sendTimer);
     if (this.meterSendTimer) clearTimeout(this.meterSendTimer);
     if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
+    if (this.latencyTimer) clearInterval(this.latencyTimer);
     this.reconnectTimer = null;
     this.sendTimer = null;
     this.meterSendTimer = null;
     this.socketConnectTimer = null;
+    this.latencyTimer = null;
+    this.latencyPingSentAt = null;
   }
 
   private closeSocket(): void {
@@ -260,6 +293,12 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       try { socket.close(); } catch { /* already closed */ }
     }
   }
+}
+
+export function remoteRouteType(serverUrl: string): RemoteAccessSnapshot['routeType'] {
+  if (serverUrl === LAN_REMOTE_SERVER_URL) return 'lan';
+  if (serverUrl === PUBLIC_REMOTE_SERVER_URL) return 'public';
+  return serverUrl ? 'custom' : null;
 }
 
 function normalizeServerUrl(value: string): string {
@@ -355,19 +394,32 @@ function remoteTelemetry(snapshot: AppSnapshot) {
       levelDb: level, thresholdDb: snapshot.config.silenceThresholdDb,
       silentForSeconds: snapshot.silentForSeconds,
       display: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`,
-      hint: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '音频正常' : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`
+      hint: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '音频正常' : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`,
+      lastMeterReceivedAt: snapshot.lastAudioMeterReceivedAt
     },
     atem: {
       connected: snapshot.atemConnected, programInput: snapshot.atemProgramInput, previewInput: snapshot.atemPreviewInput,
       inputIds: snapshot.atemInputIds, inputLabels: snapshot.atemInputLabels,
+      inputMeta: Object.fromEntries(snapshot.atemInputIds.map((inputId) => {
+        const custom = snapshot.config.atemInputCustomizations[String(inputId)];
+        return [inputId, { color: custom?.color || '#22C55E', group: custom?.group || '未分组' }];
+      })),
       elapsedSeconds: snapshot.atemProgramInputElapsedSeconds,
       limitSeconds: snapshot.config.atemCameraTimeLimitSeconds,
       overLimit: snapshot.atemProgramInputOverLimit,
-      recentSwitches: snapshot.atemSwitchHistory.slice(0, 20)
+      recentSwitches: snapshot.atemSwitchHistory.slice(0, 20),
+      currentSession: snapshot.atemCurrentSession,
+      recentSessions: snapshot.atemRecentSessions
     },
     obs: {
       connected: snapshot.connected, streaming: snapshot.streaming, recording: snapshot.recording,
       fps: snapshot.obsStats.activeFps, cpu: snapshot.obsStats.cpuUsage, bitrateKbps: snapshot.obsStats.streamBitrateKbps
+    },
+    service: {
+      routeType: snapshot.remoteAccessRouteType,
+      latencyMs: snapshot.remoteAccessLatencyMs,
+      onlineMobileClients: snapshot.remoteAccessOnlineMobileClients,
+      lastSyncAt: snapshot.remoteAccessLastSyncAt
     }
   };
 }

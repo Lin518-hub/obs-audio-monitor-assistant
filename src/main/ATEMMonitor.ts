@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { Atem, AtemConnectionStatus, Enums } from 'atem-connection';
 import type { AtemState } from 'atem-connection';
 import type { ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMSwitchHistoryEntry, ATEMTestResult } from '../shared/types.js';
+import { reconnectBackoffDelay } from '../shared/reconnect.js';
 
 export type ATEMConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -43,6 +44,8 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private connectionGeneration = 0;
   private programInputStartedAt: number | null = null;
   private cameraTimeLimitSeconds = 600;
+  private reconnectAttempt = 0;
+  private nextReconnectAt: number | null = null;
 
   get enabledState(): boolean {
     return this.enabled;
@@ -64,7 +67,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       ...this.lastState,
       programInputStartedAt: this.programInputStartedAt,
       programInputElapsedSeconds: elapsedSeconds,
-      programInputOverLimit: this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds
+      programInputOverLimit: this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds,
+      reconnectAttempt: this.reconnectAttempt,
+      nextReconnectAt: this.nextReconnectAt
     };
   }
 
@@ -87,13 +92,14 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     }
 
     if (hostChanged || enabledChanged) {
-      await this.connect();
+      await this.connect(true);
     }
 
     return this.getSnapshot();
   }
 
-  async connect(): Promise<ATEMStateSnapshot> {
+  async connect(manual = true): Promise<ATEMStateSnapshot> {
+    if (manual) this.reconnectAttempt = 0;
     const generation = ++this.connectionGeneration;
     this.clearReconnect();
     await this.closeCurrentConnection();
@@ -137,6 +143,8 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     atem.on('connected', () => {
       if (!isCurrentConnection()) return;
       console.log(`[ATEM] connected to ${this.host}`);
+      this.reconnectAttempt = 0;
+      this.nextReconnectAt = null;
       this.connectionState = 'connected';
       this.lastState = {
         ...this.lastState,
@@ -469,7 +477,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       programInputOverLimit: this.programInputStartedAt
         ? now - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
         : false,
-      errorMessage: null
+      errorMessage: null,
+      reconnectAttempt: this.reconnectAttempt,
+      nextReconnectAt: this.nextReconnectAt
     };
 
     this.ensureElapsedTicker();
@@ -481,10 +491,16 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       return;
     }
 
-    this.clearReconnect();
+    if (this.reconnectTimer) return;
+    this.reconnectAttempt += 1;
+    const delay = reconnectBackoffDelay(this.reconnectAttempt);
+    this.nextReconnectAt = Date.now() + delay;
+    this.emitState();
     this.reconnectTimer = setTimeout(() => {
-      void this.connect();
-    }, 5000);
+      this.reconnectTimer = null;
+      this.nextReconnectAt = null;
+      void this.connect(false);
+    }, delay);
   }
 
   private clearReconnect(): void {
@@ -492,6 +508,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.nextReconnectAt = null;
   }
 
   private ensureElapsedTicker(): void {
@@ -735,7 +752,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       programInputStartedAt: null,
       programInputElapsedSeconds: 0,
       programInputOverLimit: false,
-      errorMessage: null
+      errorMessage: null,
+      reconnectAttempt: this.reconnectAttempt,
+      nextReconnectAt: this.nextReconnectAt
     };
   }
 }

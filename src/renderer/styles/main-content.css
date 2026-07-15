@@ -193,8 +193,14 @@
 .atem-source-panel>header span,
 .atem-transition-panel>div>span { color:var(--text-muted); font-size:12px; }
 .atem-source-panel>header em { max-width:340px; color:var(--green-700); font-size:11.5px; font-style:normal; text-align:right; }
+.atem-source-groups { display:flex; flex-direction:column; gap:14px; }
+.atem-source-group { display:flex; flex-direction:column; gap:8px; }
+.atem-source-group-title { display:flex; align-items:center; justify-content:space-between; padding:0 2px; color:var(--text-muted); font-size:11px; }
+.atem-source-group-title span { font-weight:800; }
+.atem-source-group-title b { font-size:10.5px; }
 .atem-source-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
 .atem-source-button { min-width:0; min-height:92px; padding:14px; border:1px solid var(--glass-border); border-radius:var(--r-lg); background:var(--glass-bg); box-shadow:var(--glass-shadow); text-align:left; }
+.atem-source-button::before { content:""; display:block; width:28px; height:4px; margin-bottom:8px; border-radius:var(--r-pill); background:var(--atem-source-color,var(--green-500)); }
 .atem-source-button:hover:not(:disabled) { transform:translateY(-2px); border-color:var(--green-300); background:var(--glass-bg-strong); }
 .atem-source-button>span { display:block; color:var(--text-muted); font-size:10px; font-weight:850; letter-spacing:0; }
 .atem-source-button strong { display:block; margin-top:8px; overflow:hidden; color:var(--text-primary); font-size:14px; font-weight:850; text-overflow:ellipsis; white-space:nowrap; }
@@ -235,6 +241,23 @@
 .atem-history-route>svg { flex:0 0 auto; color:var(--green-600); }
 .atem-history-row>strong { color:var(--text-secondary); font-size:12px; white-space:nowrap; }
 .atem-history-empty { padding:24px 12px; border:1px dashed var(--border-medium); border-radius:var(--r-md); color:var(--text-muted); font-size:12px; text-align:center; }
+.atem-session-panel { display:flex; flex-direction:column; gap:14px; padding:18px; border:1px solid var(--glass-border); border-radius:var(--r-xl); background:var(--glass-bg-strong); box-shadow:var(--glass-shadow); }
+.atem-session-panel>header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.atem-session-panel>header>div { display:flex; flex-direction:column; gap:4px; }
+.atem-session-panel>header strong { display:inline-flex; align-items:center; gap:8px; color:var(--text-primary); font-size:16px; font-weight:850; }
+.atem-session-panel>header span { color:var(--text-muted); font-size:12px; }
+.atem-session-panel select { min-height:36px; max-width:240px; padding:0 32px 0 12px; border:1px solid var(--glass-border); border-radius:var(--r-md); background:var(--glass-bg); color:var(--text-secondary); font-size:11.5px; font-weight:750; }
+.atem-session-timeline { display:flex; width:100%; height:18px; overflow:hidden; border-radius:var(--r-pill); background:var(--neutral-100); box-shadow:inset 0 0 0 1px rgba(148,163,184,.18); }
+.atem-session-timeline>span { min-width:2px; height:100%; opacity:.88; transition:width 360ms var(--ease-out-soft); }
+.atem-session-usage { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; }
+.atem-session-usage article { display:grid; grid-template-columns:8px minmax(0,1fr) auto; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--glass-border); border-radius:var(--r-md); background:rgba(255,255,255,.6); }
+.atem-session-usage article>i { width:8px; height:36px; border-radius:var(--r-pill); }
+.atem-session-usage article>div { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.atem-session-usage article strong { overflow:hidden; color:var(--text-primary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.atem-session-usage article div span { color:var(--text-muted); font-size:10.5px; }
+.atem-session-usage article>b { color:var(--text-primary); font-size:12px; font-variant-numeric:tabular-nums; }
+.atem-session-usage article>em { grid-column:2/-1; height:4px; overflow:hidden; border-radius:var(--r-pill); background:var(--neutral-100); }
+.atem-session-usage article>em span { display:block; height:100%; border-radius:inherit; }
 
 @media (max-width: 1050px) {
   .atem-overview { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -252,6 +275,8 @@
   .atem-history-current span { grid-column:1/-1; }
   .atem-history-row { grid-template-columns:1fr auto; gap:8px 12px; }
   .atem-history-row time { grid-column:1/-1; }
+  .atem-session-panel>header { align-items:flex-start; flex-direction:column; }
+  .atem-session-panel select { max-width:none; width:100%; }
 }
 
 /* ====== Monitor Dashboard Beta ====== */
@@ -839,6 +864,11 @@
 }
 .level-meter-remaining-ok { color: var(--green-700); font-weight: 700; }
 .level-meter-remaining-wait { color: var(--text-muted); font-weight: 600; }
+.level-meter-link-state { display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:center; gap:8px; margin-top:12px; padding:8px 10px; border:1px solid var(--green-200); border-radius:var(--r-sm); background:var(--green-50); color:var(--green-700); font-size:10.5px; }
+.level-meter-link-state span { font-weight:700; }
+.level-meter-link-state strong { font-variant-numeric:tabular-nums; }
+.level-meter-link-state em { overflow:hidden; color:var(--text-muted); font-style:normal; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
+.level-meter-link-state.stale { border-color:rgba(245,158,11,.3); background:var(--yellow-soft); color:var(--yellow-text); }
 
 /* ====== 事件块/项目块(参考图里的 National Ceremony / Green Day 等彩色块) ====== */
 .event-list {
