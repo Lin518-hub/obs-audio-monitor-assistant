@@ -140,3 +140,29 @@ jobs:
             --title "OBS 音频检测助手 最新版" \
             --notes "此版本由 main 分支自动构建发布。包含 Windows 安装包和 Mac app 压缩包。" \
             --latest
+
+  warm-internal-update-cache:
+    name: Warm Internal Update Cache
+    runs-on: ubuntu-latest
+    needs:
+      - release
+    env:
+      UPDATE_SYNC_URL: ${{ secrets.INTERNAL_UPDATE_SYNC_URL }}
+      UPDATE_SYNC_TOKEN: ${{ secrets.INTERNAL_UPDATE_SYNC_TOKEN }}
+
+    steps:
+      - name: Trigger internal update cache
+        if: ${{ env.UPDATE_SYNC_URL != '' && env.UPDATE_SYNC_TOKEN != '' }}
+        run: |
+          curl --fail --show-error --silent \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 20 \
+            --max-time 1800 \
+            -X POST \
+            -H "Authorization: Bearer ${UPDATE_SYNC_TOKEN}" \
+            "${UPDATE_SYNC_URL}"
+
+      - name: Explain polling fallback
+        if: ${{ env.UPDATE_SYNC_URL == '' || env.UPDATE_SYNC_TOKEN == '' }}
+        run: echo "Internal cache webhook is not configured; the server polling task will warm the release automatically."

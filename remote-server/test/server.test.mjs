@@ -14,7 +14,7 @@ let child;
 before(async () => {
   child = spawn(process.execPath, ['src/server.mjs'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: join(root, 'data'), UPDATE_DIR: join(root, 'updates') },
+    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: join(root, 'data'), UPDATE_DIR: join(root, 'updates'), UPDATE_SYNC_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   for (let index = 0; index < 50; index += 1) {

@@ -32,7 +32,8 @@
       <section id="devices-panel" class="admin-panel hidden"><div id="device-list" class="admin-list"></div></section>
       <section id="approvals-panel" class="admin-panel hidden"><div id="approval-list" class="admin-list"></div></section>
       <section id="updates-panel" class="admin-panel hidden">
-        <article class="upload-card"><div><h2>内部更新文件</h2><p>上传安装包、blockmap 与 latest.yml。桌面端可将更新地址设置为本服务器的 /updates/。</p></div><label class="file-button">选择文件<input id="update-files" type="file" multiple></label></article>
+        <article class="upload-card update-sync-card"><div><h2>自动更新缓存</h2><p id="update-sync-copy">正在读取缓存状态...</p></div><button id="sync-updates" class="file-button">立即同步</button></article>
+        <article class="upload-card"><div><h2>手动补充文件</h2><p>通常无需操作。仅在自动下载失败时上传安装包、blockmap 与更新描述文件。</p></div><label class="file-button">选择文件<input id="update-files" type="file" multiple></label></article>
         <div id="upload-progress" class="upload-progress hidden"><i></i><span>正在上传</span></div>
         <div id="update-list" class="admin-list"></div>
       </section>

@@ -88,7 +88,7 @@ OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源
   - 该功能仍处于 Beta 阶段，默认不启用硬件连接。
 
 - **软件更新**
-  - 可优先从直播间内部更新服务器获取安装包，离开内网后自动回退到已配置的镜像或 GitHub Releases。
+  - 直播间内部服务器会提前缓存并校验 GitHub 最新安装包；客户端优先从内部服务器下载，缓存不可用时自动回退到镜像或 GitHub Releases。
   - Windows 版本支持下载后重启安装。
   - macOS 当前未进行 Apple Developer 签名，下载后会打开安装包位置，由用户手动替换 App。
 

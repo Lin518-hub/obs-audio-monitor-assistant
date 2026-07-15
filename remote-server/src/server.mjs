@@ -7,6 +7,7 @@ import { createServer as createNetServer } from 'node:net';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createUpdateCache, parseUpdateReleaseBases } from './update-cache.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = resolve(here, '../public');
@@ -18,10 +19,21 @@ const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${
 const tlsCertFile = process.env.TLS_CERT_FILE ? resolve(process.env.TLS_CERT_FILE) : '';
 const tlsKeyFile = process.env.TLS_KEY_FILE ? resolve(process.env.TLS_KEY_FILE) : '';
 const adminPassword = String(process.env.ADMIN_PASSWORD || '');
+const updateSyncEnabled = !/^(0|false|off)$/i.test(String(process.env.UPDATE_SYNC_ENABLED || 'true'));
+const updateSyncIntervalMs = Math.max(60_000, Number(process.env.UPDATE_SYNC_INTERVAL_MS || 2 * 60 * 1000));
+const updateSyncToken = String(process.env.UPDATE_SYNC_TOKEN || '');
 if (adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters');
 
 await mkdir(dataDir, { recursive: true });
 await mkdir(updateDir, { recursive: true });
+
+const updateCache = createUpdateCache({
+  updateDir,
+  enabled: updateSyncEnabled,
+  intervalMs: updateSyncIntervalMs,
+  releaseBases: parseUpdateReleaseBases(process.env.UPDATE_RELEASE_BASE_URLS)
+});
+await updateCache.initialize();
 
 const emptyData = () => ({ devices: [], requests: [], approvals: [] });
 let data = await loadData();
@@ -233,6 +245,21 @@ async function serveFile(res, file, cache = false) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/api/updates/status') {
+    return json(res, 200, updateCache.getStatus());
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/updates/sync') {
+    const authorization = String(req.headers.authorization || '');
+    const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+    if (!updateSyncToken || !safeEqual(suppliedToken, updateSyncToken)) return json(res, 403, { error: 'update_sync_forbidden' });
+    try {
+      return json(res, 200, await updateCache.sync());
+    } catch (error) {
+      return json(res, 502, { error: error.message, status: updateCache.getStatus() });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/devices/register') {
     if (!allowRequest(req, 'register', 60, 60_000)) return json(res, 429, { error: 'too_many_requests' });
     const body = await readJson(req);
@@ -361,9 +388,16 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/admin/updates') {
       const files = await Promise.all((await readdir(updateDir)).map(async (name) => {
         const info = await stat(join(updateDir, name));
-        return info.isFile() ? { name, size: info.size, updatedAt: info.mtimeMs } : null;
+        return info.isFile() && !name.startsWith('.') ? { name, size: info.size, updatedAt: info.mtimeMs } : null;
       }));
-      return json(res, 200, { files: files.filter(Boolean) });
+      return json(res, 200, { files: files.filter(Boolean), sync: updateCache.getStatus() });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/updates/sync') {
+      try {
+        return json(res, 200, { sync: await updateCache.sync() });
+      } catch (error) {
+        return json(res, 502, { error: error.message, sync: updateCache.getStatus() });
+      }
     }
     const updateMatch = url.pathname.match(/^\/api\/admin\/updates\/([^/]+)$/);
     if (updateMatch) {
@@ -407,7 +441,8 @@ const requestListener = async (req, res) => {
     if (url.pathname === '/health') return json(res, 200, {
       ok: true,
       desktops: desktopSockets.size,
-      mobiles: Array.from(mobileSockets.values()).reduce((sum, sockets) => sum + sockets.size, 0)
+      mobiles: Array.from(mobileSockets.values()).reduce((sum, sockets) => sum + sockets.size, 0),
+      updates: updateCache.getStatus()
     });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname === '/') return redirect(res, '/admin');
@@ -607,6 +642,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}, shutting down remote service`);
   clearInterval(heartbeat);
+  updateCache.stop();
   for (const pending of pendingCommands.values()) clearTimeout(pending.timer);
   pendingCommands.clear();
   for (const socket of wss.clients) socket.terminate();
