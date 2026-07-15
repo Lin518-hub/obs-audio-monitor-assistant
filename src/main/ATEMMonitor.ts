@@ -43,6 +43,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private connectionState: ATEMConnectionState = 'disconnected';
   private connectionGeneration = 0;
   private programInputStartedAt: number | null = null;
+  private liveActive = false;
   private cameraTimeLimitSeconds = 600;
   private reconnectAttempt = 0;
   private nextReconnectAt: number | null = null;
@@ -59,6 +60,30 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     return this.connectionState;
   }
 
+  setLiveActive(active: boolean, now = Date.now()): ATEMStateSnapshot {
+    if (this.liveActive === active) return this.getSnapshot();
+    this.liveActive = active;
+
+    if (!active) {
+      this.programInputStartedAt = null;
+      this.clearElapsedTicker();
+    } else if (this.lastState.connected && this.lastState.programInput > 0) {
+      // Every real or simulated live session starts a fresh camera interval,
+      // even when ATEM was already connected to the same PGM input.
+      this.programInputStartedAt = now;
+      this.ensureElapsedTicker();
+    }
+
+    this.lastState = {
+      ...this.lastState,
+      programInputStartedAt: this.programInputStartedAt,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false
+    };
+    this.emitState();
+    return this.getSnapshot();
+  }
+
   getSnapshot(): ATEMStateSnapshot {
     const elapsedSeconds = this.programInputStartedAt
       ? Math.max(0, Math.floor((Date.now() - this.programInputStartedAt) / 1000))
@@ -67,7 +92,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       ...this.lastState,
       programInputStartedAt: this.programInputStartedAt,
       programInputElapsedSeconds: elapsedSeconds,
-      programInputOverLimit: this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds,
+      programInputOverLimit: this.liveActive && this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds,
       reconnectAttempt: this.reconnectAttempt,
       nextReconnectAt: this.nextReconnectAt
     };
@@ -438,7 +463,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
 
     const now = Date.now();
     const previousProgramInput = this.lastState.programInput;
-    if (programInput > 0 && previousProgramInput > 0 && programInput !== previousProgramInput && this.programInputStartedAt !== null) {
+    if (this.liveActive && programInput > 0 && previousProgramInput > 0 && programInput !== previousProgramInput && this.programInputStartedAt !== null) {
       this.emit('switchRecorded', {
         id: `${now}-${previousProgramInput}-${programInput}-${Math.random().toString(36).slice(2, 8)}`,
         switchedAt: now,
@@ -451,7 +476,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       });
     }
 
-    if (programInput <= 0) {
+    if (!this.liveActive || programInput <= 0) {
       // 0 means that no usable PGM input is active. It must not start a
       // camera timer, otherwise an idle switcher can eventually be reported
       // as an over-time camera.
@@ -474,7 +499,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       programInputElapsedSeconds: this.programInputStartedAt
         ? Math.max(0, Math.floor((now - this.programInputStartedAt) / 1000))
         : 0,
-      programInputOverLimit: this.programInputStartedAt
+      programInputOverLimit: this.liveActive && this.programInputStartedAt
         ? now - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
         : false,
       errorMessage: null,
@@ -482,7 +507,8 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       nextReconnectAt: this.nextReconnectAt
     };
 
-    this.ensureElapsedTicker();
+    if (this.liveActive && this.programInputStartedAt !== null) this.ensureElapsedTicker();
+    else this.clearElapsedTicker();
     this.emitState();
   }
 

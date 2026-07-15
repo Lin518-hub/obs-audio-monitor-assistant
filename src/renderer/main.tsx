@@ -13,7 +13,7 @@ import './styles/windows.css';
 import './styles/dialogs.css';
 import './styles/onboarding.css';
 
-import { Activity, ArrowRight, BarChart3, Cable, Clock3, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Trash2, Video } from 'lucide-react';
+import { Activity, ArrowRight, BarChart3, Cable, Clock3, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Video } from 'lucide-react';
 import { Sidebar, type SidebarPage } from './components/Sidebar';
 import { TopBar, type SaveLabel } from './components/TopBar';
 import { StatusBanner } from './components/StatusBanner';
@@ -32,12 +32,14 @@ import { AlertBackdropApp } from './components/AlertBackdropApp';
 import { PreAlertApp } from './components/PreAlertApp';
 import { FloatingApp } from './components/FloatingApp';
 import { ToastAlertApp } from './components/ToastAlertApp';
+import { StyledSelect } from './components/StyledSelect';
 
 import { useSnapshot } from './hooks/useSnapshot';
 import { useUpdateState } from './hooks/useUpdateState';
 import { useAutoSave } from './hooks/useAutoSave';
 import { formatDb, shouldShowOnboarding } from './utils/status';
 import { APP_VERSION } from './utils/appVersion';
+import { defaultATEMInputColor } from '../shared/atemPalette';
 
 import type { AppConfig, AppSnapshot, TestConnectionResult, VolumeHistoryPoint } from '../shared/types';
 
@@ -389,12 +391,14 @@ function ATEMConsole({
 }) {
   const [operation, setOperation] = useState<{ tone: 'pending' | 'ok' | 'bad'; text: string } | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('current');
+  const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
+  const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
   const limit = Math.max(10, draft.atemCameraTimeLimitSeconds);
   const remaining = Math.max(0, limit - elapsed);
   const progress = Math.min(100, (elapsed / limit) * 100);
-  const warning = draft.atemCameraTimeAlertEnabled && elapsed >= limit * 0.75;
-  const timerTone = snapshot.atemProgramInputOverLimit ? 'danger' : warning ? 'warning' : 'safe';
+  const warning = liveActive && draft.atemCameraTimeAlertEnabled && elapsed >= limit * 0.75;
+  const timerTone = !liveActive ? 'idle' : snapshot.atemProgramInputOverLimit ? 'danger' : warning ? 'warning' : 'safe';
   const query = search.trim().toLowerCase();
   const visibleInputs = snapshot.atemInputIds.filter((inputId) => {
     const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
@@ -414,9 +418,20 @@ function ATEMConsole({
     : sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null;
   const programLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取播出信号';
   const previewLabel = snapshot.atemInputLabels[snapshot.atemPreviewInput] || '未读取预览信号';
-  const visibleSwitchHistory = snapshot.atemSwitchHistory
-    .filter((entry) => !query || `${entry.fromInputId} ${entry.fromInputLabel} ${entry.toInputId} ${entry.toInputLabel}`.toLowerCase().includes(query))
-    .slice(0, 30);
+  const selectedSessionSwitches = (selectedSession?.segments ?? []).slice(0, -1).map((segment, index) => ({
+    id: `${segment.id}-${selectedSession?.segments[index + 1]?.id}`,
+    switchedAt: segment.endedAt,
+    fromInputId: segment.inputId,
+    fromInputLabel: draft.atemInputCustomizations[String(segment.inputId)]?.name || segment.inputLabel,
+    toInputId: selectedSession!.segments[index + 1].inputId,
+    toInputLabel: draft.atemInputCustomizations[String(selectedSession!.segments[index + 1].inputId)]?.name || selectedSession!.segments[index + 1].inputLabel,
+    durationSeconds: segment.durationSeconds
+  })).reverse();
+  const dominantSessionInput = selectedSession?.usage[0] ?? null;
+
+  useEffect(() => {
+    setSessionDetailsOpen(false);
+  }, [selectedSessionId]);
 
   const openATEMFloating = () => {
     onChange('floatingWindowMode', 'audio_atem');
@@ -484,7 +499,7 @@ function ATEMConsole({
           <strong>{formatATEMTime(elapsed)}</strong>
           <div className="atem-timer-progress"><i style={{ width: `${progress}%` }} /></div>
           <footer>
-            <span>{snapshot.atemProgramInputOverLimit ? `已超时 ${formatATEMTime(elapsed - limit)}` : `剩余 ${formatATEMTime(remaining)}`}</span>
+            <span>{!liveActive ? '等待直播、录制或模拟开播' : snapshot.atemProgramInputOverLimit ? `已超时 ${formatATEMTime(elapsed - limit)}` : `剩余 ${formatATEMTime(remaining)}`}</span>
             <button type="button" onClick={onOpenSettings}>阈值 {formatATEMTime(limit)}</button>
           </footer>
         </article>
@@ -509,7 +524,7 @@ function ATEMConsole({
             const isProgram = inputId === snapshot.atemProgramInput;
             const isPreview = inputId === snapshot.atemPreviewInput;
             const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
-            const color = draft.atemInputCustomizations[String(inputId)]?.color || '#22C55E';
+            const color = draft.atemInputCustomizations[String(inputId)]?.color || defaultATEMInputColor(inputId);
             return (
               <button
                 type="button"
@@ -552,74 +567,91 @@ function ATEMConsole({
       <section className="atem-session-panel">
         <header>
           <div><strong><Clock3 size={17} /> 直播机位统计</strong><span>按直播或录制场次保存，自动保留最近 10 场</span></div>
-          {sessions.length > 0 && <select value={selectedSession?.id === snapshot.atemCurrentSession?.id ? 'current' : selectedSession?.id} onChange={(event) => setSelectedSessionId(event.target.value)}>
-            {snapshot.atemCurrentSession && <option value="current">当前直播</option>}
-            {snapshot.atemRecentSessions.map((session, index) => <option key={session.id} value={session.id}>第 {index + 1} 场 · {formatATEMSwitchDate(session.startedAt)}</option>)}
-          </select>}
-        </header>
-        {selectedSession && selectedSession.totalDurationSeconds > 0 ? <>
-          <div className="atem-session-timeline" aria-label="机位切换时间轴">
-            {selectedSession.segments.map((segment) => {
-              const custom = draft.atemInputCustomizations[String(segment.inputId)];
-              const width = Math.max(1.5, segment.durationSeconds / selectedSession.totalDurationSeconds * 100);
-              return <span key={segment.id} style={{ width: `${width}%`, background: custom?.color || '#22C55E' }} title={`${custom?.name || segment.inputLabel} · ${formatATEMDuration(segment.durationSeconds)}`} />;
-            })}
-          </div>
-          <div className="atem-session-usage">
-            {selectedSession.usage.map((item) => <article key={item.inputId}>
-              <i style={{ background: item.color }} />
-              <div><strong>{item.inputLabel}</strong><span>{item.group} · {formatATEMDuration(item.durationSeconds)}</span></div>
-              <b>{item.percent.toFixed(1)}%</b>
-              <em><span style={{ width: `${item.percent}%`, background: item.color }} /></em>
-            </article>)}
-          </div>
-        </> : <div className="atem-history-empty">直播或录制开始后，PGM 机位停留时间会在这里形成时间轴和占比。</div>}
-      </section>
-
-      <section className="atem-history-panel">
-        <header>
-          <div>
-            <strong><Clock3 size={17} /> 机位切换记录</strong>
-            <span>记录每次 PGM 切换方向与上一机位的实际停留时长</span>
-          </div>
-          <button
-            type="button"
-            className="atem-history-clear"
-            disabled={snapshot.atemSwitchHistory.length === 0}
-            onClick={() => {
-              if (window.confirm('确定清空全部机位切换记录吗？')) {
-                void window.obsGuard.clearATEMHistory();
-              }
-            }}
-          >
-            <Trash2 size={14} /> 清空
-          </button>
-        </header>
-
-        <div className="atem-history-current">
-          <span>当前播出</span>
-          <strong>PGM {snapshot.atemProgramInput || '--'} · {programLabel}</strong>
-          <em>已停留 {formatATEMTime(elapsed)}</em>
-        </div>
-
-        <div className="atem-history-list">
-          {visibleSwitchHistory.map((entry) => (
-            <article className="atem-history-row" key={entry.id}>
-              <time>{formatATEMSwitchDate(entry.switchedAt)}</time>
-              <div className="atem-history-route">
-                <span><b>{entry.fromInputLabel}</b><em>PGM {entry.fromInputId}</em></span>
-                <ArrowRight size={16} />
-                <span><b>{entry.toInputLabel}</b><em>PGM {entry.toInputId}</em></span>
-              </div>
-              <strong>停留 {formatATEMDuration(entry.durationSeconds)}</strong>
-            </article>
-          ))}
-          {visibleSwitchHistory.length === 0 && (
-            <div className="atem-history-empty">
-              {query && snapshot.atemSwitchHistory.length > 0 ? '没有符合搜索条件的切换记录' : '完成第一次 PGM 机位切换后，这里会自动生成记录。'}
-            </div>
+          {sessions.length > 0 && (
+            <StyledSelect
+              className="atem-session-select"
+              ariaLabel="选择直播场次"
+              value={selectedSession?.id === snapshot.atemCurrentSession?.id ? 'current' : selectedSession?.id ?? ''}
+              onChange={setSelectedSessionId}
+              options={[
+                ...(snapshot.atemCurrentSession ? [{ value: 'current', label: '当前直播', description: formatATEMSwitchDate(snapshot.atemCurrentSession.startedAt) }] : []),
+                ...snapshot.atemRecentSessions.map((session, index) => ({
+                  value: session.id,
+                  label: `第 ${index + 1} 场直播`,
+                  description: formatATEMSwitchDate(session.startedAt)
+                }))
+              ]}
+            />
           )}
-        </div>
+        </header>
+        {selectedSession && selectedSession.totalDurationSeconds > 0 ? (
+          <>
+            <div className="atem-session-summary">
+              <article>
+                <span>场次时间</span>
+                <strong>{selectedSession.endedAt === null ? '直播进行中' : formatATEMSwitchDate(selectedSession.startedAt)}</strong>
+              </article>
+              <article>
+                <span>已统计时长</span>
+                <strong>{formatATEMDuration(selectedSession.totalDurationSeconds)}</strong>
+              </article>
+              <article>
+                <span>机位切换</span>
+                <strong>{selectedSessionSwitches.length} 次</strong>
+              </article>
+              <article className="dominant">
+                <i style={{ background: dominantSessionInput?.color ?? defaultATEMInputColor(1) }} />
+                <span>主力机位</span>
+                <strong>{dominantSessionInput ? `${dominantSessionInput.inputLabel} · ${dominantSessionInput.percent.toFixed(1)}%` : '暂无数据'}</strong>
+              </article>
+              <button type="button" className="atem-session-details-toggle" onClick={() => setSessionDetailsOpen((open) => !open)}>
+                <ListChecks size={16} /> {sessionDetailsOpen ? '收起场次详情' : '查看时间轴与详情'}
+              </button>
+            </div>
+
+            {sessionDetailsOpen && (
+              <div className="atem-session-details">
+                <section>
+                  <header><strong>机位时间轴</strong><span>{formatATEMDuration(selectedSession.totalDurationSeconds)}</span></header>
+                  <div className="atem-session-timeline" aria-label="机位切换时间轴">
+                    {selectedSession.segments.map((segment) => {
+                      const custom = draft.atemInputCustomizations[String(segment.inputId)];
+                      const width = Math.max(1.5, segment.durationSeconds / selectedSession.totalDurationSeconds * 100);
+                      const color = custom?.color || defaultATEMInputColor(segment.inputId);
+                      return <span key={segment.id} style={{ width: `${width}%`, background: color }} title={`${custom?.name || segment.inputLabel} · ${formatATEMDuration(segment.durationSeconds)}`} />;
+                    })}
+                  </div>
+                  <div className="atem-session-usage">
+                    {selectedSession.usage.map((item) => <article key={item.inputId}>
+                      <i style={{ background: item.color }} />
+                      <div><strong>{item.inputLabel}</strong><span>{item.group} · {formatATEMDuration(item.durationSeconds)}</span></div>
+                      <b>{item.percent.toFixed(1)}%</b>
+                      <em><span style={{ width: `${item.percent}%`, background: item.color }} /></em>
+                    </article>)}
+                  </div>
+                </section>
+
+                <section className="atem-session-switches">
+                  <header><strong>本场切换记录</strong><span>按实际 PGM 切换顺序记录</span></header>
+                  <div className="atem-history-list">
+                    {selectedSessionSwitches.map((entry) => (
+                      <article className="atem-history-row" key={entry.id}>
+                        <time>{formatATEMSwitchDate(entry.switchedAt)}</time>
+                        <div className="atem-history-route">
+                          <span><b>{entry.fromInputLabel}</b><em>PGM {entry.fromInputId}</em></span>
+                          <ArrowRight size={16} />
+                          <span><b>{entry.toInputLabel}</b><em>PGM {entry.toInputId}</em></span>
+                        </div>
+                        <strong>停留 {formatATEMDuration(entry.durationSeconds)}</strong>
+                      </article>
+                    ))}
+                    {selectedSessionSwitches.length === 0 && <div className="atem-history-empty">本场尚未发生机位切换。</div>}
+                  </div>
+                </section>
+              </div>
+            )}
+          </>
+        ) : <div className="atem-history-empty">直播或录制开始后，PGM 机位停留时间会按场次记录在这里。</div>}
       </section>
     </>
   );

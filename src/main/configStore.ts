@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
@@ -162,7 +163,7 @@ export class ConfigStore {
     }
 
     try {
-      if (await safeStorage.isAsyncEncryptionAvailable()) {
+      if (app.isPackaged !== false && await safeStorage.isAsyncEncryptionAvailable()) {
         return `safe:${(await safeStorage.encryptStringAsync(password)).toString('base64')}`;
       }
     } catch {
@@ -179,7 +180,9 @@ export class ConfigStore {
     }
 
     try {
-      if (value.startsWith('safe:') && await safeStorage.isAsyncEncryptionAvailable()) {
+      // Development Electron has a different macOS signing identity. Avoid a
+      // misleading keychain prompt while preserving the encrypted value on disk.
+      if (value.startsWith('safe:') && app.isPackaged !== false && await safeStorage.isAsyncEncryptionAvailable()) {
         return (await safeStorage.decryptStringAsync(Buffer.from(value.slice(5), 'base64'))).result;
       }
 
@@ -359,8 +362,10 @@ function atemInputCustomizationsValue(value: unknown): Record<string, ATEMInputC
     const raw = customization as Partial<ATEMInputCustomization>;
     const name = stringValue(raw.name, '').trim().slice(0, 40);
     const group = stringValue(raw.group, '').trim().slice(0, 24);
-    const color = /^#[0-9a-f]{6}$/i.test(stringValue(raw.color, '')) ? stringValue(raw.color, '').toUpperCase() : '#22C55E';
-    if (name || group || color !== '#22C55E') result[inputId] = { name, group, color };
+    const defaultColor = defaultATEMInputColor(Number(inputId));
+    const storedColor = stringValue(raw.color, '').toUpperCase();
+    const color = /^#[0-9a-f]{6}$/i.test(storedColor) && storedColor !== '#22C55E' ? storedColor : defaultColor;
+    if (name || group || color !== defaultColor) result[inputId] = { name, group, color };
   }
   return result;
 }

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { hostname } from 'node:os';
 import { ProxyAgent } from 'proxy-agent';
 import WebSocket from 'ws';
+import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
@@ -402,7 +403,7 @@ function remoteTelemetry(snapshot: AppSnapshot) {
       inputIds: snapshot.atemInputIds, inputLabels: snapshot.atemInputLabels,
       inputMeta: Object.fromEntries(snapshot.atemInputIds.map((inputId) => {
         const custom = snapshot.config.atemInputCustomizations[String(inputId)];
-        return [inputId, { color: custom?.color || '#22C55E', group: custom?.group || '未分组' }];
+        return [inputId, { color: custom?.color || defaultATEMInputColor(inputId), group: custom?.group || '未分组' }];
       })),
       elapsedSeconds: snapshot.atemProgramInputElapsedSeconds,
       limitSeconds: snapshot.config.atemCameraTimeLimitSeconds,

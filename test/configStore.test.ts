@@ -11,6 +11,7 @@ const electronMock = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   app: {
+    isPackaged: true,
     getPath: () => electronMock.userData
   },
   safeStorage: {
@@ -95,6 +96,21 @@ describe('ConfigStore', () => {
     expect(saved.atemInputCustomizations).toEqual({
       1: { name: '主播近景', color: '#12AB34', group: '主播组' }
     });
+  });
+
+  it('migrates the previous shared green ATEM default to distinct Morandi colors', async () => {
+    const store = new ConfigStore();
+    const saved = await store.save({
+      ...DEFAULT_CONFIG,
+      atemInputCustomizations: {
+        1: { name: '一号机', color: '#22C55E', group: '主播组' },
+        2: { name: '二号机', color: '#22C55E', group: '主播组' }
+      }
+    });
+
+    expect(saved.atemInputCustomizations['1'].color).not.toBe('#22C55E');
+    expect(saved.atemInputCustomizations['2'].color).not.toBe('#22C55E');
+    expect(saved.atemInputCustomizations['1'].color).not.toBe(saved.atemInputCustomizations['2'].color);
   });
 
   it('securely persists the OBS password only when requested', async () => {

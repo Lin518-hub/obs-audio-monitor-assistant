@@ -10,6 +10,8 @@ import { ATEMSessionStore } from './ATEMSessionStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates, type RemoteCommand } from './RemoteBridge.js';
+import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
+import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,6 +67,7 @@ let atemCurrentSession: ATEMLiveSession | null = null;
 let atemRecentSessions: ATEMLiveSession[] = [];
 let atemSessionQueue: Promise<void> = Promise.resolve();
 let atemSessionTransitionPending = false;
+let pendingATEMSessionStop: { endedAt: number; state: ReturnType<ATEMMonitor['getSnapshot']> } | null = null;
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
 let remoteBridge: RemoteBridge;
@@ -73,7 +76,8 @@ let isQuitting = false;
 let tray: Tray | null = null;
 let latestSnapshot: AppSnapshot | null = null;
 let updateState: UpdateSnapshot | null = null;
-let updateCheckInFlight: Promise<UpdateSnapshot> | null = null;
+const updateCheckQueue = new LatestTaskQueue<UpdateSnapshot>();
+let activeUpdaterGeneration: number | null = null;
 let updateInitialTimer: NodeJS.Timeout | null = null;
 let updateCheckTimer: NodeJS.Timeout | null = null;
 let downloadedUpdateFilePath: string | null = null;
@@ -171,6 +175,16 @@ async function initializeApp(): Promise<void> {
   screen.on('display-metrics-changed', refreshDisplays);
 
   monitor.on('snapshot', (snapshot) => {
+    const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+    const previousLiveActive = latestSnapshot
+      ? latestSnapshot.streaming || latestSnapshot.recording || latestSnapshot.simulatedLive
+      : false;
+    if (!liveActive && (previousLiveActive || atemCurrentSession) && !pendingATEMSessionStop) {
+      // Capture the final interval before setLiveActive(false) resets the
+      // visible timer. The session store still needs this last camera span.
+      pendingATEMSessionStop = { endedAt: Date.now(), state: atemMonitor.getSnapshot() };
+    }
+    atemMonitor.setLiveActive(liveActive);
     const incoming = injectATEMState(snapshot);
     latestSnapshot = preserveSnapshotHistory(incoming);
     broadcastSnapshot(latestSnapshot);
@@ -348,7 +362,9 @@ function registerIpc(): void {
     return snapshot;
   });
   ipcMain.handle('monitor:set-simulated-live', (_event, enabled: boolean) => {
-    const snapshot = injectATEMState(monitor.setSimulatedLive(enabled));
+    const monitorSnapshot = monitor.setSimulatedLive(enabled);
+    atemMonitor.setLiveActive(monitorSnapshot.streaming || monitorSnapshot.recording || monitorSnapshot.simulatedLive);
+    const snapshot = injectATEMState(monitorSnapshot);
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
     updateTray(snapshot);
@@ -488,8 +504,11 @@ function syncATEMLiveSession(snapshot: AppSnapshot): void {
       atemCurrentSession = state.activeSession;
       atemRecentSessions = state.sessions;
     } else if (!live && atemCurrentSession) {
-      const atem = atemMonitor.getSnapshot();
-      const state = await atemSessionStore.finish(Date.now(), currentATEMSessionSegment(atem, atemCurrentSession));
+      const stop = pendingATEMSessionStop;
+      const endedAt = stop?.endedAt ?? Date.now();
+      const finalSegment = stop ? currentATEMSessionSegment(stop.state, atemCurrentSession, endedAt) : null;
+      const state = await atemSessionStore.finish(endedAt, finalSegment);
+      pendingATEMSessionStop = null;
       atemCurrentSession = state.activeSession;
       atemRecentSessions = state.sessions;
     } else {
@@ -518,9 +537,12 @@ function sessionSegmentFromSwitch(entry: ATEMSwitchHistoryEntry): ATEMSessionSeg
   };
 }
 
-function currentATEMSessionSegment(atem: ReturnType<ATEMMonitor['getSnapshot']>, session: ATEMLiveSession): ATEMSessionSegment | null {
+function currentATEMSessionSegment(
+  atem: ReturnType<ATEMMonitor['getSnapshot']>,
+  session: ATEMLiveSession,
+  endedAt = Date.now()
+): ATEMSessionSegment | null {
   if (atem.programInput <= 0 || !atem.programInputStartedAt) return null;
-  const endedAt = Date.now();
   const startedAt = Math.max(session.startedAt, atem.programInputStartedAt);
   return {
     id: `segment-current-${session.id}-${atem.programInput}-${startedAt}`,
@@ -553,7 +575,7 @@ function decorateATEMSession(
     return {
       inputId,
       inputLabel: custom?.name || item.inputLabel,
-      color: custom?.color || '#22C55E',
+      color: custom?.color || defaultATEMInputColor(inputId),
       group: custom?.group || '未分组',
       durationSeconds: item.durationSeconds,
       percent: totalDurationSeconds > 0 ? (item.durationSeconds / totalDurationSeconds) * 100 : 0
@@ -683,6 +705,9 @@ function initializeUpdater(): void {
   autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.on('checking-for-update', () => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     const state = getUpdateState();
     setUpdateState({
       status: 'checking',
@@ -692,6 +717,9 @@ function initializeUpdater(): void {
     });
   });
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     const state = getUpdateState();
     downloadedUpdateFilePath = null;
     setUpdateState({
@@ -706,6 +734,9 @@ function initializeUpdater(): void {
     });
   });
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     const state = getUpdateState();
     downloadedUpdateFilePath = null;
     setUpdateState({
@@ -720,6 +751,9 @@ function initializeUpdater(): void {
     });
   });
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     setUpdateState({
       status: 'downloading',
       percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : null,
@@ -728,6 +762,9 @@ function initializeUpdater(): void {
     });
   });
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     const version = info.version ?? getUpdateState().availableVersion;
     const manualInstall = usesManualMacInstall();
     setUpdateState({
@@ -744,6 +781,9 @@ function initializeUpdater(): void {
     });
   });
   autoUpdater.on('error', (error: Error) => {
+    if (!isCurrentUpdaterEvent()) {
+      return;
+    }
     const errorMessage = formatUpdateError(error);
     setUpdateState({
       status: 'error',
@@ -760,6 +800,10 @@ function initializeUpdater(): void {
   updateCheckTimer = setInterval(() => {
     void checkForUpdates(false);
   }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+function isCurrentUpdaterEvent(): boolean {
+  return activeUpdaterGeneration !== null && updateCheckQueue.isCurrent(activeUpdaterGeneration);
 }
 
 function getUpdateState(): UpdateSnapshot {
@@ -830,22 +874,34 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
     return current;
   }
 
-  if (updateCheckInFlight) {
-    return updateCheckInFlight;
-  }
-
-  updateCheckInFlight = (async () => {
-    const candidates = resolveUpdateCandidates(currentUpdateConfig());
-    if (candidates.length === 0) {
-      const source = resolveConfiguredUpdateSource();
-    return setUpdateState({
-      status: 'error',
+  if (updateCheckQueue.isBusy && !updateCheckQueue.isRunningCurrentGeneration) {
+    const source = resolveConfiguredUpdateSource();
+    setUpdateState({
+      status: 'checking',
       source: source.id,
       sourceLabel: source.label,
       sourceUrl: source.url,
       attemptedSources: [],
-      downloadedFilePath: null,
       percent: null,
+      errorMessage: null,
+      message: `更新源已切换为 ${source.label}，正在等待上一项检查结束...`
+    });
+  }
+
+  return updateCheckQueue.run(async (generation) => {
+    activeUpdaterGeneration = generation;
+    const config = currentUpdateConfig();
+    const candidates = resolveUpdateCandidates(config);
+    if (candidates.length === 0) {
+      const source = resolveConfiguredUpdateSource();
+      return setUpdateState({
+        status: 'error',
+        source: source.id,
+        sourceLabel: source.label,
+        sourceUrl: source.url,
+        attemptedSources: [],
+        downloadedFilePath: null,
+        percent: null,
         errorMessage: '阿里云镜像源尚未配置',
         lastCheckedAt: Date.now(),
         message: '请先填写阿里云 OSS/CDN 镜像地址，或切换到 GitHub / GitHub 加速源'
@@ -856,6 +912,9 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
     let lastError: unknown = null;
 
     for (const candidate of candidates) {
+      if (!updateCheckQueue.isCurrent(generation)) {
+        return getUpdateState();
+      }
       attemptedSources.push(candidate.label);
       autoUpdater.setFeedURL(candidate.feed);
       setUpdateState({
@@ -871,6 +930,9 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
 
       try {
         const result = await autoUpdater.checkForUpdates();
+        if (!updateCheckQueue.isCurrent(generation)) {
+          return getUpdateState();
+        }
         const latest = getUpdateState();
         if (latest.status === 'checking') {
           const version = result?.updateInfo.version ?? latest.availableVersion ?? null;
@@ -884,13 +946,19 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
         }
         return getUpdateState();
       } catch (error) {
+        if (!updateCheckQueue.isCurrent(generation)) {
+          return getUpdateState();
+        }
         lastError = error;
-        if (currentUpdateConfig().updateSource !== 'auto') {
+        if (config.updateSource !== 'auto') {
           break;
         }
       }
     }
 
+    if (!updateCheckQueue.isCurrent(generation)) {
+      return getUpdateState();
+    }
     const errorMessage = formatUpdateError(lastError);
     return setUpdateState({
       status: 'error',
@@ -900,10 +968,6 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
       lastCheckedAt: Date.now(),
       message: attemptedSources.length > 1 ? `${errorMessage}；已尝试 ${attemptedSources.join('、')}` : errorMessage
     });
-  })();
-
-  return updateCheckInFlight.finally(() => {
-    updateCheckInFlight = null;
   });
 }
 
@@ -924,6 +988,8 @@ function currentUpdateConfig(): AppConfig {
 }
 
 function refreshUpdateSourceState(config: AppConfig): void {
+  updateCheckQueue.invalidate();
+  activeUpdaterGeneration = null;
   const source = resolveConfiguredUpdateSource(config);
   downloadedUpdateFilePath = null;
   setUpdateState({
@@ -1053,6 +1119,7 @@ async function downloadUpdate(): Promise<UpdateSnapshot> {
   }
 
   try {
+    activeUpdaterGeneration = updateCheckQueue.currentGeneration;
     setUpdateState({
       status: 'downloading',
       percent: 0,

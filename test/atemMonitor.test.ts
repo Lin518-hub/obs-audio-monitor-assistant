@@ -94,8 +94,52 @@ describe('ATEMMonitor connection lifecycle', () => {
       connectionState: 'connected',
       programInput: 1,
       previewInput: 2,
-      inputCount: 2
+      inputCount: 2,
+      programInputStartedAt: null,
+      programInputElapsedSeconds: 0
     });
+    await monitor.stop();
+  });
+
+  it('starts and resets the current camera timer with the live session', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+
+    const firstLiveStartedAt = Date.now() - 4_000;
+    monitor.setLiveActive(true, firstLiveStartedAt);
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInput: 1,
+      programInputStartedAt: firstLiveStartedAt
+    });
+    expect(monitor.getSnapshot().programInputElapsedSeconds).toBeGreaterThanOrEqual(4);
+
+    monitor.setLiveActive(false);
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInputStartedAt: null,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false
+    });
+
+    const secondLiveStartedAt = Date.now();
+    monitor.setLiveActive(true, secondLiveStartedAt);
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInputStartedAt: secondLiveStartedAt,
+      programInputElapsedSeconds: 0
+    });
+    await monitor.stop();
+  });
+
+  it('does not record camera switches outside live or simulated live mode', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    const updateState = (monitor as unknown as { updateStateFromATEM: (next: unknown) => void }).updateStateFromATEM.bind(monitor);
+    const records: Array<{ fromInputId: number; toInputId: number }> = [];
+    monitor.on('switchRecorded', (entry) => records.push(entry));
+
+    updateState({ ...atemMock.state, video: { mixEffects: [{ programInput: 2, previewInput: 1 }] } });
+
+    expect(records).toHaveLength(0);
+    expect(monitor.getSnapshot().programInputStartedAt).toBeNull();
     await monitor.stop();
   });
 
@@ -130,6 +174,7 @@ describe('ATEMMonitor connection lifecycle', () => {
   it('does not start a camera timer when no PGM input is active', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
     const updateState = (monitor as unknown as { updateStateFromATEM: (next: unknown) => void }).updateStateFromATEM.bind(monitor);
 
     updateState({ ...atemMock.state, video: { mixEffects: [{ programInput: 0, previewInput: 2 }] } });
@@ -146,6 +191,7 @@ describe('ATEMMonitor connection lifecycle', () => {
   it('records the previous camera duration and the destination on a PGM switch', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
     const updateState = (monitor as unknown as { updateStateFromATEM: (next: unknown) => void }).updateStateFromATEM.bind(monitor);
     const internals = monitor as unknown as { programInputStartedAt: number | null };
     internals.programInputStartedAt = Date.now() - 125_000;

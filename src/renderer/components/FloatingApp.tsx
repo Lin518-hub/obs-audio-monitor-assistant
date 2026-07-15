@@ -108,6 +108,7 @@ const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string
   const isAudioNormal = audioState === 'normal' || audioState === 'confirming';
   const levelPercent = dbLevelPercent(meterLevelDb);
   const timerState = atemTimerState(snapshot);
+  const liveActive = isLiveSession(snapshot);
   const cameraLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取机位';
   const audioPrompt = isAudioNormal
     ? { tone: 'safe', label: '音频正常' }
@@ -130,7 +131,7 @@ const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string
         </div>
         <div className={`floating-combo-camera ${timerState.tone}`}>
           <span>当前机位</span>
-          <strong>{formatFloatingTime(snapshot.atemProgramInputElapsedSeconds)}</strong>
+          <strong>{liveActive ? formatFloatingTime(snapshot.atemProgramInputElapsedSeconds) : '00:00'}</strong>
           <em>PGM {snapshot.atemProgramInput || '--'} · {cameraLabel}</em>
         </div>
       </div>
@@ -187,6 +188,7 @@ const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string; me
   const hasModule = modules.audio || modules.atem || modules.obsStats;
   const moduleCount = Number(modules.audio) + Number(modules.atem) + Number(modules.obsStats);
   const timerState = atemTimerState(snapshot);
+  const liveActive = isLiveSession(snapshot);
 
   return (
     <section className={`floating-multi-grid modules-${Math.max(1, moduleCount)}`}>
@@ -209,7 +211,7 @@ const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string; me
         <article className={`floating-multi-card ${timerState.tone}`}>
           <header><span><Video size={13} /> ATEM 当前机位</span><strong>{timerState.label}</strong></header>
           <div className="floating-multi-primary-value">
-            <strong>{formatFloatingTime(snapshot.atemProgramInputElapsedSeconds)}</strong>
+            <strong>{liveActive ? formatFloatingTime(snapshot.atemProgramInputElapsedSeconds) : '00:00'}</strong>
             <b>PGM {snapshot.atemProgramInput || '--'} · {snapshot.atemInputLabels[snapshot.atemProgramInput] || '未读取机位'}</b>
           </div>
           <footer><span>{timerState.hint}</span><em>{snapshot.atemConnected ? '已连接' : '未连接'}</em></footer>
@@ -239,6 +241,7 @@ const formatFloatingTime = (seconds: number): string => {
 
 const atemTimerState = (snapshot: AppSnapshot): { tone: string; label: string; hint: string } => {
   if (!snapshot.atemConnected) return { tone: '', label: '未连接', hint: '等待 ATEM 连接' };
+  if (!isLiveSession(snapshot)) return { tone: '', label: '等待开播', hint: '等待直播/录制' };
   if (!snapshot.config.atemCameraTimeAlertEnabled) return { tone: '', label: '仅计时', hint: '机位提醒已关闭' };
   const limit = Math.max(10, snapshot.config.atemCameraTimeLimitSeconds);
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
@@ -251,6 +254,9 @@ const atemTimerState = (snapshot: AppSnapshot): { tone: string; label: string; h
   }
   return { tone: '', label: '计时中', hint: `剩余 ${formatFloatingTime(remaining)}` };
 };
+
+const isLiveSession = (snapshot: AppSnapshot): boolean =>
+  snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
 
 const interpolateRgb = (from: [number, number, number], to: [number, number, number], progress: number): string => {
   const amount = Math.max(0, Math.min(1, progress));

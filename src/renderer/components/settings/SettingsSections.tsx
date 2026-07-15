@@ -24,6 +24,7 @@ import {
   Wifi
 } from 'lucide-react';
 import QRCode from 'qrcode';
+import { defaultATEMInputColor } from '../../../shared/atemPalette';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
@@ -40,6 +41,7 @@ import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
 import { SourcePicker } from './SourcePicker';
+import { MorandiColorPicker, StyledSelect } from '../StyledSelect';
 
 interface SectionProps {
   icon: React.ComponentType<{ size?: number }>;
@@ -369,10 +371,6 @@ export const ATEMSection: React.FC<{
     }
   }, [draft.atemHost]);
 
-  const handleReconnect = React.useCallback(async () => {
-    await window.obsGuard.atemReconnect();
-  }, []);
-
   const connectionStatusLabel = () => {
     if (snapshot.atemConnectionState === 'connecting') return { text: '正在连接…', tone: '' };
     if (snapshot.atemConnectionState === 'error') return { text: '连接失败', tone: 'warn' };
@@ -412,26 +410,37 @@ export const ATEMSection: React.FC<{
                 onChange={(e) => { onChange('atemHost', e.target.value); setTestResult(null); }}
                 placeholder="192.168.1.240"
               />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => void handleTestConnection()}
-                disabled={testing || !draft.atemHost}
-              >
-                <RefreshCw size={14} className={testing ? 'spin' : ''} />
-                {testing ? '检测中…' : '检测连接'}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => void handleScanNetwork()}
-                disabled={scanning}
-              >
-                <Route size={14} className={scanning ? 'spin' : ''} />
-                {scanning ? '查找中…' : '查找导播台'}
-              </button>
+              {!snapshot.atemConnected && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => void handleTestConnection()}
+                  disabled={testing || !draft.atemHost}
+                >
+                  <RefreshCw size={14} className={testing ? 'spin' : ''} />
+                  {testing ? '连接中…' : '连接导播台'}
+                </button>
+              )}
             </div>
           </div>
+
+          {!snapshot.atemConnected && (
+            <details className="settings-action-drawer">
+              <summary><Route size={14} />不知道 IP？查找局域网导播台</summary>
+              <div>
+                <p>只在自动连接失败或不知道导播台地址时使用，扫描可能需要一些时间。</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void handleScanNetwork()}
+                  disabled={scanning}
+                >
+                  <Route size={14} className={scanning ? 'spin' : ''} />
+                  {scanning ? '正在查找…' : '开始查找'}
+                </button>
+              </div>
+            </details>
+          )}
 
           {testResult && (
             <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>
@@ -500,101 +509,105 @@ export const ATEMSection: React.FC<{
                 </>
               )}
             </span>
-            {(snapshot.atemConnectionState === 'error' || (!snapshot.atemConnected && snapshot.atemConnectionState === 'disconnected')) && (
-              <button type="button" className="btn-ghost" onClick={() => void handleReconnect()}>
-                <RefreshCw size={12} /> 重连
-              </button>
-            )}
-          </div>
-
-          <div className="settings-subgroup atem-timer-settings">
-            <div className="settings-subgroup-title">机位计时提醒</div>
-            <ToggleRow
-              id="atem-camera-timer"
-              title="启用单机位超时提醒"
-              description="同一 PGM 机位停留过久时，在 ATEM 页面和小浮窗中变色提示"
-              checked={draft.atemCameraTimeAlertEnabled}
-              onChange={(v) => onChange('atemCameraTimeAlertEnabled', v)}
-            />
-            <div className="settings-field">
-              <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
-              <NumberField
-                value={draft.atemCameraTimeLimitSeconds}
-                min={10}
-                max={3600}
-                step={10}
-                suffix="秒"
-                onChange={(v) => onChange('atemCameraTimeLimitSeconds', v)}
-              />
-            </div>
-            <ToggleRow
-              id="atem-floating-module"
-              title="在小浮窗显示当前机位"
-              description="自动切换到音频 + 机位小浮窗，一体显示音频、PGM 机位和已使用时间"
-              checked={draft.floatingWindowMode === 'audio_atem' || (draft.floatingWindowMode === 'multifunction' && draft.floatingWindowModules.atem)}
-              onChange={(v) => {
-                onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v });
-                if (v) {
-                  onChange('floatingWindowMode', 'audio_atem');
-                  onChange('floatingWindowEnabled', true);
-                } else if (draft.floatingWindowMode === 'audio_atem') {
-                  onChange('floatingWindowMode', 'audio');
-                }
-              }}
-            />
-          </div>
-
-          <div className="settings-subgroup atem-control-settings">
-            <div className="settings-subgroup-title">切台保护</div>
-            <ToggleRow
-              id="atem-hotkey-global"
-              title="全局切台快捷键"
-              description="Num1–8 只选择 PVW，Enter 执行 AUTO 切换；开启后在其他软件中按 Enter 也会触发，请在直播前确认"
-              tone="danger"
-              checked={draft.atemHotkeyGlobal}
-              onChange={(v) => onChange('atemHotkeyGlobal', v)}
-            />
-            <ToggleRow
-              id="atem-hardcut-confirm"
-              title="危险切台二次确认"
-              description="AUTO、Hard Cut、全局 Enter 与移动端切换前均需明确确认"
-              checked={draft.atemHardCutConfirm}
-              onChange={(v) => onChange('atemHardCutConfirm', v)}
-            />
           </div>
 
           {snapshot.atemConnected && snapshot.atemInputCount > 0 && (
-            <div className="atem-customization-list">
-              <div className="settings-subgroup-title">机位名称、颜色与分组</div>
-              {snapshot.atemInputIds.map((num) => {
-                const key = String(num);
-                const hardwareLabel = snapshot.atemInputHardwareLabels[num] || `Input ${num}`;
-                const custom = draft.atemInputCustomizations[key] || { name: '', color: '#22C55E', group: '' };
-                const isProgram = num === snapshot.atemProgramInput;
-                const isPreview = num === snapshot.atemPreviewInput;
-                const updateCustomization = (patch: Partial<typeof custom>) => onChange('atemInputCustomizations', {
-                  ...draft.atemInputCustomizations,
-                  [key]: { ...custom, ...patch }
-                });
-                return (
-                  <div
-                    key={num}
-                    className={`atem-customization-row ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
-                  >
-                    <div className="atem-customization-source"><i style={{ background: custom.color }} /><strong>{num}</strong><span>{hardwareLabel}</span></div>
-                    <input className="input" value={custom.name} onChange={(event) => updateCustomization({ name: event.target.value })} placeholder="自定义名称" aria-label={`${hardwareLabel} 自定义名称`} />
-                    <input className="input" value={custom.group} onChange={(event) => updateCustomization({ group: event.target.value })} placeholder="分组，如 主播" aria-label={`${hardwareLabel} 分组`} />
-                    <input className="atem-color-input" type="color" value={custom.color} onChange={(event) => updateCustomization({ color: event.target.value })} aria-label={`${hardwareLabel} 颜色`} />
-                  </div>
-                );
-              })}
-            </div>
+            <details className="settings-action-drawer settings-content-drawer">
+              <summary>机位名称、颜色与分组</summary>
+              <div className="atem-customization-list">
+                {snapshot.atemInputIds.map((num) => {
+                  const key = String(num);
+                  const hardwareLabel = snapshot.atemInputHardwareLabels[num] || `Input ${num}`;
+                  const custom = draft.atemInputCustomizations[key] || { name: '', color: defaultATEMInputColor(num), group: '' };
+                  const isProgram = num === snapshot.atemProgramInput;
+                  const isPreview = num === snapshot.atemPreviewInput;
+                  const updateCustomization = (patch: Partial<typeof custom>) => onChange('atemInputCustomizations', {
+                    ...draft.atemInputCustomizations,
+                    [key]: { ...custom, ...patch }
+                  });
+                  return (
+                    <div
+                      key={num}
+                      className={`atem-customization-row ${isProgram ? 'program' : isPreview ? 'preview' : ''}`}
+                    >
+                      <div className="atem-customization-source"><i style={{ background: custom.color }} /><strong>{num}</strong><span>{hardwareLabel}</span></div>
+                      <input className="input" value={custom.name} onChange={(event) => updateCustomization({ name: event.target.value })} placeholder="自定义名称" aria-label={`${hardwareLabel} 自定义名称`} />
+                      <input className="input" value={custom.group} onChange={(event) => updateCustomization({ group: event.target.value })} placeholder="分组，如 主播" aria-label={`${hardwareLabel} 分组`} />
+                      <MorandiColorPicker value={custom.color} onChange={(color) => updateCustomization({ color })} ariaLabel={`${hardwareLabel} 颜色`} />
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
           )}
         </>
       )}
     </Section>
   );
 };
+
+export const ATEMRulesSection: React.FC<{
+  draft: AppConfig;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+}> = ({ draft, onChange }) => (
+  <Section id="settings-atem-rules" icon={Video} title="机位检测规则" description="单机位停留提醒与切台保护">
+    <ToggleRow
+      id="atem-camera-timer"
+      title="启用单机位超时提醒"
+      description="直播、录制或模拟开播后从零计时；同一 PGM 机位停留过久时仅在页面和小浮窗变色提示"
+      checked={draft.atemCameraTimeAlertEnabled}
+      onChange={(value) => onChange('atemCameraTimeAlertEnabled', value)}
+    />
+    {draft.atemCameraTimeAlertEnabled && (
+      <div className="settings-progressive-block">
+        <div className="settings-field">
+          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
+          <NumberField
+            value={draft.atemCameraTimeLimitSeconds}
+            min={10}
+            max={3600}
+            step={10}
+            suffix="秒"
+            onChange={(value) => onChange('atemCameraTimeLimitSeconds', value)}
+          />
+        </div>
+        <ToggleRow
+          id="atem-floating-module"
+          title="在小浮窗显示当前机位"
+          description="启用音频 + 机位模式，一体显示 PGM 机位和已使用时间"
+          checked={draft.floatingWindowMode === 'audio_atem' || (draft.floatingWindowMode === 'multifunction' && draft.floatingWindowModules.atem)}
+          onChange={(value) => {
+            onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: value });
+            if (value) {
+              onChange('floatingWindowMode', 'audio_atem');
+              onChange('floatingWindowEnabled', true);
+            } else if (draft.floatingWindowMode === 'audio_atem') {
+              onChange('floatingWindowMode', 'audio');
+            }
+          }}
+        />
+      </div>
+    )}
+    <div className="settings-subgroup atem-control-settings">
+      <div className="settings-subgroup-title">切台保护</div>
+      <ToggleRow
+        id="atem-hardcut-confirm"
+        title="危险切台二次确认"
+        description="AUTO、Hard Cut、全局 Enter 与移动端切换前均需明确确认"
+        checked={draft.atemHardCutConfirm}
+        onChange={(value) => onChange('atemHardCutConfirm', value)}
+      />
+      <ToggleRow
+        id="atem-hotkey-global"
+        title="全局切台快捷键"
+        description="Num1–8 选择 PVW，Enter 执行 AUTO；只建议固定导播工作站开启"
+        tone="danger"
+        checked={draft.atemHotkeyGlobal}
+        onChange={(value) => onChange('atemHotkeyGlobal', value)}
+      />
+    </div>
+  </Section>
+);
 
 // ====== 2. 目标音源 ======
 export const AudioSourceSection: React.FC<{
@@ -628,7 +641,7 @@ export const RulesSection: React.FC<{
   draft: AppConfig;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, onChange }) => (
-  <Section id="settings-rules" icon={Timer} title="报警规则" description="连续静音达到时长后报警">
+  <Section id="settings-rules" icon={Timer} title="音频静音规则" description="每个音源独立计时，任一路超时都会报警">
     <div className="settings-field-row">
       <div className="settings-field">
         <label className="settings-field-label" htmlFor="rule-duration">静音时长</label>
@@ -640,8 +653,16 @@ export const RulesSection: React.FC<{
       </div>
     </div>
     <p className="settings-section-hint">
-      默认 120 秒报警,90 秒先预警。口播密集可缩短静音时长,访谈或活动直播可适当延长。阈值拖动也可在主界面电平表上完成。
+      当前选择的每个音源都会单独判断，不取平均值。口播密集可缩短静音时长，访谈或活动直播可适当延长；阈值也可在主界面电平表上拖动调整。
     </p>
+  </Section>
+);
+
+export const AlertExperienceSection: React.FC<{
+  draft: AppConfig;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+}> = ({ draft, onChange }) => (
+  <Section id="settings-alerts" icon={AlertTriangle} title="提醒方式" description="正式报警、预警浮窗和声音">
     <div className="settings-field">
       <span className="settings-field-label">正式报警样式</span>
       <AlertStylePicker
@@ -665,27 +686,33 @@ export const RulesSection: React.FC<{
         checked={draft.preAlertEnabled}
         onChange={(v) => onChange('preAlertEnabled', v)}
       />
-      <div className={`settings-field settings-prealert-ratio ${draft.preAlertEnabled ? '' : 'disabled'}`}>
-        <label className="settings-field-label" htmlFor="rule-prealert-ratio">预警触发比例</label>
-        <NumberField
-          value={Math.round((draft.preAlertRatio ?? 0.75) * 100)}
-          min={50}
-          max={95}
-          step={5}
-          suffix="%"
-          onChange={(v) => onChange('preAlertRatio', v / 100)}
+      {draft.preAlertEnabled && (
+        <div className="settings-progressive-block">
+          <div className="settings-field settings-prealert-ratio">
+            <label className="settings-field-label" htmlFor="rule-prealert-ratio">预警触发比例</label>
+            <NumberField
+              value={Math.round((draft.preAlertRatio ?? 0.75) * 100)}
+              min={50}
+              max={95}
+              step={5}
+              suffix="%"
+              onChange={(v) => onChange('preAlertRatio', v / 100)}
+            />
+          </div>
+          <p className="settings-section-hint">例如正式报警为 120 秒，75% 会在静音 90 秒时出现预警浮窗。</p>
+        </div>
+      )}
+    </div>
+    {draft.alertSoundEnabled && (
+      <div className="settings-subgroup settings-sound-group">
+        <div className="settings-subgroup-title">提示音类型</div>
+        <AlertSoundPicker
+          value={draft.alertSoundPreset}
+          onChange={(v) => onChange('alertSoundPreset', v)}
         />
+        <p className="settings-section-hint">正式报警后循环播放，确认或单次忽略后立即停止；声音通过系统默认扬声器输出。</p>
       </div>
-      <p className="settings-section-hint">例如正式报警为 120 秒,75% 会在静音 90 秒时出现预警浮窗。</p>
-    </div>
-    <div className="settings-subgroup settings-sound-group">
-      <div className="settings-subgroup-title">提示音类型</div>
-      <AlertSoundPicker
-        value={draft.alertSoundPreset}
-        onChange={(v) => onChange('alertSoundPreset', v)}
-      />
-      <p className="settings-section-hint">正式报警后会循环播放提示音,确认或单次忽略后立即停止。声音通过系统默认扬声器输出,点击“试听”可先确认音量和音色。</p>
-    </div>
+    )}
   </Section>
 );
 
@@ -715,20 +742,20 @@ export const DisplaySection: React.FC<{
       />
       {draft.alertDisplayMode === 'display_id' && (
         <div className="settings-field">
-          <label className="settings-field-label" htmlFor="display-id">弹出屏幕</label>
-          <select
-            id="display-id"
-            className="input"
-            value={draft.alertDisplayId ?? ''}
-            onChange={(e) => onChange('alertDisplayId', e.target.value ? Number(e.target.value) : null)}
-          >
-            <option value="">选择屏幕</option>
-            {snapshot.displays.map((display) => (
-              <option value={display.id} key={display.id}>
-                {display.label} - {display.bounds.width}x{display.bounds.height}
-              </option>
-            ))}
-          </select>
+          <span className="settings-field-label">弹出屏幕</span>
+          <StyledSelect
+            value={draft.alertDisplayId === null ? '' : String(draft.alertDisplayId)}
+            ariaLabel="弹出屏幕"
+            onChange={(value) => onChange('alertDisplayId', value ? Number(value) : null)}
+            options={[
+              { value: '', label: '选择屏幕' },
+              ...snapshot.displays.map((display) => ({
+                value: String(display.id),
+                label: display.label,
+                description: `${display.bounds.width} × ${display.bounds.height}`
+              }))
+            ]}
+          />
         </div>
       )}
       <ToggleRow
@@ -742,13 +769,13 @@ export const DisplaySection: React.FC<{
   );
 };
 
-// ====== 5. 系统 ======
-export const SystemSection: React.FC<{
+// ====== 5. 小浮窗 ======
+export const FloatingWindowSection: React.FC<{
   draft: AppConfig;
   snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, snapshot, onChange }) => (
-  <Section id="settings-system" icon={Power} title="窗口与后台" description="浮窗、后台运行和开机自启">
+  <Section id="settings-window" icon={Monitor} title="小浮窗" description="置顶状态条、显示模式与监看模块">
     <ToggleRow
       id="system-floating"
       title="小浮窗置顶显示"
@@ -756,53 +783,70 @@ export const SystemSection: React.FC<{
       checked={draft.floatingWindowEnabled}
       onChange={(v) => onChange('floatingWindowEnabled', v)}
     />
+    {draft.floatingWindowEnabled && (
+      <div className="settings-progressive-block">
+        <div className="settings-field">
+          <span className="settings-field-label">小浮窗模式</span>
+          <FloatingModePicker
+            value={draft.floatingWindowMode}
+            onChange={(v) => onChange('floatingWindowMode', v)}
+          />
+        </div>
+        {draft.floatingWindowMode === 'multifunction' ? (
+          <div className="settings-subgroup">
+            <div className="settings-subgroup-title">多功能模块</div>
+            <ToggleRow
+              id="floating-module-audio"
+              title="音频守护"
+              description="显示当前检测状态、静音倒计时和电平"
+              checked={draft.floatingWindowModules.audio}
+              onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, audio: v })}
+            />
+            <ToggleRow
+              id="floating-module-atem"
+              title="ATEM 当前机位"
+              description="显示 PGM 机位和当前机位持续时间"
+              checked={draft.floatingWindowModules.atem}
+              onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v })}
+            />
+            <ToggleRow
+              id="floating-module-stats"
+              title="OBS 性能摘要"
+              description="显示 FPS、CPU 和推流码率"
+              checked={draft.floatingWindowModules.obsStats}
+              onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, obsStats: v })}
+            />
+          </div>
+        ) : draft.floatingWindowMode === 'audio_atem' ? (
+          <div className="settings-hint">音频、PGM 机位和已使用时间会在同一个固定比例面板中显示。</div>
+        ) : (
+          <div className="settings-hint">仅显示音频状态和实时电平，保持最小占用。</div>
+        )}
+      </div>
+    )}
+    <p className="settings-section-hint">
+      当前检测到 {snapshot.displays.length} 个屏幕，小浮窗与设置主窗口相互独立。
+    </p>
+  </Section>
+);
+
+export const BackgroundSection: React.FC<{
+  draft: AppConfig;
+  snapshot: AppSnapshot;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+}> = ({ draft, snapshot, onChange }) => (
+  <Section id="settings-system" icon={Power} title="后台运行" description="开机启动与关闭主窗口后的行为">
     <ToggleRow
       id="system-autolaunch"
       title="开机自动启动"
-      description="开机后在后台运行,直播前无需手动打开"
+      description="开机后在后台运行，直播前无需手动打开"
       checked={draft.autoLaunch}
-      onChange={(v) => onChange('autoLaunch', v)}
+      onChange={(value) => onChange('autoLaunch', value)}
     />
-    <div className="settings-field">
-      <span className="settings-field-label">小浮窗模式</span>
-      <FloatingModePicker
-        value={draft.floatingWindowMode}
-        onChange={(v) => onChange('floatingWindowMode', v)}
-      />
+    <div className="settings-hint">
+      关闭主窗口只会隐藏界面，检测仍会在托盘或菜单栏中继续运行；需要彻底退出时请使用托盘菜单。
     </div>
-    {draft.floatingWindowMode === 'multifunction' ? (
-      <div className="settings-subgroup">
-        <div className="settings-subgroup-title">多功能模块</div>
-        <ToggleRow
-          id="floating-module-audio"
-          title="音频守护"
-          description="显示当前检测状态、静音倒计时和电平"
-          checked={draft.floatingWindowModules.audio}
-          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, audio: v })}
-        />
-        <ToggleRow
-          id="floating-module-atem"
-          title="ATEM 当前机位"
-          description="显示 PGM 机位和当前机位持续时间"
-          checked={draft.floatingWindowModules.atem}
-          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, atem: v })}
-        />
-        <ToggleRow
-          id="floating-module-stats"
-          title="OBS 性能摘要"
-          description="显示 FPS、CPU 和推流码率"
-          checked={draft.floatingWindowModules.obsStats}
-          onChange={(v) => onChange('floatingWindowModules', { ...draft.floatingWindowModules, obsStats: v })}
-        />
-      </div>
-    ) : draft.floatingWindowMode === 'audio_atem' ? (
-      <div className="settings-hint">当前为音频 + 机位模式，小浮窗会固定比例显示音频状态、PGM 机位和持续时间。</div>
-    ) : (
-      <div className="settings-hint">当前为音频提醒模式,小浮窗只显示音频状态和电平,不会被其他模块挤压。</div>
-    )}
-    <p className="settings-section-hint">
-      当前检测到 {snapshot.displays.length} 个屏幕。关闭主窗口后软件仍会在托盘或菜单栏后台运行。
-    </p>
+    <p className="settings-section-hint">当前检测到 {snapshot.displays.length} 个屏幕，配置更改会实时保存。</p>
   </Section>
 );
 
@@ -902,76 +946,80 @@ export const RemoteAccessSection: React.FC<{
 
 // ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{
+  mode?: 'all' | 'tests' | 'support';
   snapshot: AppSnapshot;
   testingConnection: boolean;
   testResult: TestConnectionResult | null;
   onTestConnection: () => void;
   onOpenManual: () => void;
   onReset: () => void;
-}> = ({ snapshot, testingConnection, testResult, onTestConnection, onOpenManual, onReset }) => (
-  <Section id="settings-diagnostics" icon={TestTube2} title="诊断测试" description="本地调试与维护工具">
+}> = ({ mode = 'all', snapshot, testingConnection, testResult, onTestConnection, onOpenManual, onReset }) => (
+  <Section id="settings-diagnostics" icon={TestTube2} title={mode === 'support' ? '帮助与恢复' : '诊断测试'} description={mode === 'support' ? '说明书和危险维护操作' : '本地调试与连接验证'}>
     <div className="diagnostics-grid">
-      <button type="button" className={`diagnostic-item ${snapshot.simulatedLive ? 'active' : ''}`} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
-        <span className="diagnostic-item-icon"><Play size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">{snapshot.simulatedLive ? '关闭模拟开播' : '模拟开播检测'}</span>
-          <span className="diagnostic-item-sub">OBS 未推流时测试静音逻辑</span>
-        </span>
-      </button>
-
-      <button type="button" className="diagnostic-item" onClick={onTestConnection} disabled={testingConnection}>
-        <span className="diagnostic-item-icon"><TestTube2 size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">{testingConnection ? '测试中…' : '测试 OBS 连接'}</span>
-          <span className="diagnostic-item-sub">读取状态和音源列表</span>
-        </span>
-      </button>
-
-      <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.refreshInputs()}>
-        <span className="diagnostic-item-icon"><RefreshCw size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">刷新音源列表</span>
-          <span className="diagnostic-item-sub">从 OBS 重新读取</span>
-        </span>
-      </button>
-
-      <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.testAlert()}>
-        <span className="diagnostic-item-icon"><AlertTriangle size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">测试报警弹窗</span>
-          <span className="diagnostic-item-sub">查看弹窗与声音效果</span>
-        </span>
-      </button>
-
-      {snapshot.preAlertVisible && (
-        <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.dismissPreAlert()}>
-          <span className="diagnostic-item-icon"><BellOff size={16} /></span>
-          <span className="diagnostic-item-body">
-            <span className="diagnostic-item-title">关闭当前预报警</span>
-            <span className="diagnostic-item-sub">本次静音段不再预警</span>
-          </span>
-        </button>
+      {mode !== 'support' && (
+        <>
+          <button type="button" className={`diagnostic-item ${snapshot.simulatedLive ? 'active' : ''}`} onClick={() => void window.obsGuard.setSimulatedLive(!snapshot.simulatedLive)}>
+            <span className="diagnostic-item-icon"><Play size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">{snapshot.simulatedLive ? '关闭模拟开播' : '模拟开播检测'}</span>
+              <span className="diagnostic-item-sub">OBS 未推流时测试静音逻辑</span>
+            </span>
+          </button>
+          <button type="button" className="diagnostic-item" onClick={onTestConnection} disabled={testingConnection}>
+            <span className="diagnostic-item-icon"><TestTube2 size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">{testingConnection ? '测试中…' : '测试 OBS 连接'}</span>
+              <span className="diagnostic-item-sub">读取状态和音源列表</span>
+            </span>
+          </button>
+          <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.refreshInputs()}>
+            <span className="diagnostic-item-icon"><RefreshCw size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">刷新音源列表</span>
+              <span className="diagnostic-item-sub">从 OBS 重新读取</span>
+            </span>
+          </button>
+          <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.testAlert()}>
+            <span className="diagnostic-item-icon"><AlertTriangle size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">测试报警弹窗</span>
+              <span className="diagnostic-item-sub">查看弹窗与声音效果</span>
+            </span>
+          </button>
+          {snapshot.preAlertVisible && (
+            <button type="button" className="diagnostic-item" onClick={() => void window.obsGuard.dismissPreAlert()}>
+              <span className="diagnostic-item-icon"><BellOff size={16} /></span>
+              <span className="diagnostic-item-body">
+                <span className="diagnostic-item-title">关闭当前预报警</span>
+                <span className="diagnostic-item-sub">本次静音段不再预警</span>
+              </span>
+            </button>
+          )}
+        </>
       )}
 
-      <button type="button" className="diagnostic-item" onClick={onOpenManual}>
-        <span className="diagnostic-item-icon"><BookOpen size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">查看说明书</span>
-          <span className="diagnostic-item-sub">完整功能与操作说明</span>
-        </span>
-      </button>
-
-      <button type="button" className="diagnostic-item danger" onClick={onReset}>
-        <span className="diagnostic-item-icon"><Trash2 size={16} /></span>
-        <span className="diagnostic-item-body">
-          <span className="diagnostic-item-title">恢复出厂设置</span>
-          <span className="diagnostic-item-sub">清空设置和历史</span>
-        </span>
-      </button>
+      {mode !== 'tests' && (
+        <>
+          <button type="button" className="diagnostic-item" onClick={onOpenManual}>
+            <span className="diagnostic-item-icon"><BookOpen size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">查看说明书</span>
+              <span className="diagnostic-item-sub">完整功能与操作说明</span>
+            </span>
+          </button>
+          <button type="button" className="diagnostic-item danger" onClick={onReset}>
+            <span className="diagnostic-item-icon"><Trash2 size={16} /></span>
+            <span className="diagnostic-item-body">
+              <span className="diagnostic-item-title">恢复出厂设置</span>
+              <span className="diagnostic-item-sub">清空设置和历史，操作前会再次确认</span>
+            </span>
+          </button>
+        </>
+      )}
     </div>
 
-    {testingConnection && <div className="diagnostic-result pending">正在测试 OBS WebSocket 连接…</div>}
-    {!testingConnection && testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
+    {mode !== 'support' && testingConnection && <div className="diagnostic-result pending">正在测试 OBS WebSocket 连接…</div>}
+    {mode !== 'support' && !testingConnection && testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
   </Section>
 );
 
@@ -1098,46 +1146,49 @@ export const UpdatesSection: React.FC<{
         )}
       </div>
 
-      <div className="settings-field">
-        <span className="settings-field-label">更新源策略</span>
-        <div className="update-source-grid">
-          {[
-            { value: 'auto', title: '自动选择', desc: draft.aliyunUpdateBaseUrl ? '阿里云优先，失败后切换加速源和 GitHub' : '加速源优先，失败后切换 GitHub', icon: <Route size={16} /> },
-            { value: 'lan', title: '内部服务器', desc: '使用手机远程服务中的更新目录', icon: <Wifi size={16} /> },
-            { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
-            { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },
-            { value: 'ghproxy_net', title: 'ghproxy.net', desc: '备用公共加速代理', icon: <Download size={16} /> },
-            { value: 'aliyun', title: '阿里云镜像', desc: '使用你的 OSS/CDN 镜像地址', icon: <Cloud size={16} /> }
-          ].map((item) => (
-            <button
-              type="button"
-              key={item.value}
-              className={`update-source-option ${draft.updateSource === item.value ? 'active' : ''}`}
-              onClick={() => onChange('updateSource', item.value as AppConfig['updateSource'])}
-            >
-              <span className="update-source-option-icon">{item.icon}</span>
-              <span>
-                <strong>{item.title}</strong>
-                <em>{item.desc}</em>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <details className="settings-action-drawer settings-content-drawer">
+        <summary><Route size={14} />高级更新线路</summary>
+        <div className="settings-advanced-update">
+          <div className="settings-field">
+            <span className="settings-field-label">更新源策略</span>
+            <div className="update-source-grid">
+              {[
+                { value: 'auto', title: '自动选择', desc: draft.aliyunUpdateBaseUrl ? '阿里云优先，失败后切换加速源和 GitHub' : '加速源优先，失败后切换 GitHub', icon: <Route size={16} /> },
+                { value: 'lan', title: '内部服务器', desc: '使用手机远程服务中的更新目录', icon: <Wifi size={16} /> },
+                { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
+                { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },
+                { value: 'ghproxy_net', title: 'ghproxy.net', desc: '备用公共加速代理', icon: <Download size={16} /> },
+                { value: 'aliyun', title: '阿里云镜像', desc: '使用你的 OSS/CDN 镜像地址', icon: <Cloud size={16} /> }
+              ].map((item) => (
+                <button
+                  type="button"
+                  key={item.value}
+                  className={`update-source-option ${draft.updateSource === item.value ? 'active' : ''}`}
+                  onClick={() => onChange('updateSource', item.value as AppConfig['updateSource'])}
+                >
+                  <span className="update-source-option-icon">{item.icon}</span>
+                  <span>
+                    <strong>{item.title}</strong>
+                    <em>{item.desc}</em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-      <div className="settings-field">
-        <label className="settings-field-label" htmlFor="aliyun-update-url">阿里云 OSS/CDN 镜像地址</label>
-        <input
-          id="aliyun-update-url"
-          className="input"
-          value={draft.aliyunUpdateBaseUrl}
-          onChange={(event) => onChange('aliyunUpdateBaseUrl', event.target.value)}
-          placeholder="例如 https://your-bucket.oss-cn-hangzhou.aliyuncs.com/obs-audio-monitor-assistant/latest/"
-        />
-        <p className="settings-section-hint">
-          这个地址应直接包含 latest.yml、latest-mac.yml、安装包和 blockmap 文件。当前阿里云公开 mirrors 并不通用同步本仓库 Release，建议用你自己的 OSS 或 CDN。
-        </p>
-      </div>
+          <div className="settings-field">
+            <label className="settings-field-label" htmlFor="aliyun-update-url">阿里云 OSS/CDN 镜像地址</label>
+            <input
+              id="aliyun-update-url"
+              className="input"
+              value={draft.aliyunUpdateBaseUrl}
+              onChange={(event) => onChange('aliyunUpdateBaseUrl', event.target.value)}
+              placeholder="例如 https://your-bucket.oss-cn-hangzhou.aliyuncs.com/obs-audio-monitor-assistant/latest/"
+            />
+            <p className="settings-section-hint">地址中应直接包含更新描述文件、安装包和 blockmap；没有自建镜像时保持自动选择即可。</p>
+          </div>
+        </div>
+      </details>
     </Section>
   );
 };
