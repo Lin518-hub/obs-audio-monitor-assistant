@@ -1145,6 +1145,60 @@
 .about-row { display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); padding:10px 14px; border-radius:var(--r-sm); background:var(--glass-bg-soft); border:1px solid var(--glass-border); font-size:12.5px; }
 .about-row>span { color:var(--text-secondary); font-weight:600; flex:0 0 auto; min-width:92px; white-space:nowrap; }
 .about-row>strong { color:var(--text-primary); font-weight:700; text-align:right; min-width:0; flex:1; overflow-wrap:anywhere; }
+.about-version-trigger { width:100%; font:inherit; text-align:left; cursor:default; transition:background 160ms var(--ease-out-soft), border-color 160ms var(--ease-out-soft); }
+.about-version-trigger:hover { background:var(--glass-bg); border-color:var(--border-medium); }
+.about-version-trigger:focus-visible { outline:2px solid var(--green-500); outline-offset:2px; }
+
+.developer-mode-status {
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr) auto;
+  align-items:center;
+  gap:var(--s-3);
+  padding:var(--s-3);
+  border:1px solid var(--green-200);
+  border-radius:var(--r-lg);
+  background:linear-gradient(135deg, var(--green-50), var(--glass-bg));
+}
+.developer-mode-status-icon { width:40px; height:40px; display:grid; place-items:center; color:var(--green-700); background:var(--green-100); border-radius:var(--r-md); }
+.developer-mode-status-copy { display:flex; flex-direction:column; min-width:0; gap:2px; }
+.developer-mode-status-copy strong { color:var(--text-primary); font-size:13.5px; font-weight:800; }
+.developer-mode-status-copy em { color:var(--text-secondary); font-size:12px; font-style:normal; line-height:1.45; }
+
+.developer-dialog-backdrop {
+  position:fixed;
+  inset:0;
+  z-index:260;
+  display:grid;
+  place-items:center;
+  padding:20px;
+  background:rgba(15,23,42,0.28);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  animation:stg-fade-in 180ms var(--ease-out-soft) both;
+}
+.developer-dialog {
+  position:relative;
+  width:min(420px, 92vw);
+  padding:24px;
+  border:1px solid var(--glass-border);
+  border-radius:var(--r-xl);
+  background:var(--glass-bg-strong);
+  box-shadow:var(--glass-shadow-xl);
+  display:grid;
+  grid-template-columns:48px minmax(0,1fr);
+  gap:16px;
+  animation:stg-modal-in 260ms cubic-bezier(0.16,1,0.3,1) both;
+}
+.developer-dialog-close { position:absolute; top:14px; right:14px; }
+.developer-dialog-icon { width:48px; height:48px; display:grid; place-items:center; color:var(--green-700); background:var(--green-100); border:1px solid var(--green-200); border-radius:var(--r-md); }
+.developer-dialog-heading { display:flex; flex-direction:column; gap:4px; padding-right:38px; }
+.developer-dialog-heading strong { color:var(--text-primary); font-size:18px; font-weight:850; }
+.developer-dialog-heading span { color:var(--text-secondary); font-size:12.5px; line-height:1.5; }
+.developer-dialog-field { grid-column:1/-1; display:flex; flex-direction:column; gap:7px; }
+.developer-dialog-field>span { color:var(--text-secondary); font-size:12px; font-weight:700; }
+.developer-dialog .input-error { border-color:#fca5a5; box-shadow:0 0 0 3px rgba(239,68,68,0.08); }
+.developer-dialog-error { grid-column:1/-1; margin-top:-8px; color:var(--red-text); font-size:12px; font-weight:650; }
+.developer-dialog-actions { grid-column:1/-1; display:flex; justify-content:flex-end; gap:8px; }
 
 .update-source-grid {
   display:grid;
@@ -1342,6 +1396,10 @@
   .diagnostics-grid { grid-template-columns:1fr; }
   .about-row { align-items:flex-start; gap:var(--s-2); flex-direction:column; }
   .about-row>strong { text-align:left; }
+  .developer-mode-status { grid-template-columns:40px minmax(0,1fr); }
+  .developer-mode-status .btn-secondary { grid-column:1/-1; width:100%; }
+  .developer-dialog { grid-template-columns:42px minmax(0,1fr); padding:20px; gap:13px; }
+  .developer-dialog-icon { width:42px; height:42px; }
   .remote-metrics-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .atem-customization-row { grid-template-columns:1fr 38px; }
   .atem-customization-source { grid-column:1/-1; }

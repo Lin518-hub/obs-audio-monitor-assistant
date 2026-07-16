@@ -15,15 +15,8 @@ import {
 
 export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types.js';
 
-export interface RemoteCommand {
-  id: string;
-  command: 'atem.preview' | 'atem.auto';
-  payload: Record<string, unknown>;
-}
-
 interface RemoteBridgeEvents {
   stateChanged: [RemoteAccessSnapshot];
-  command: [RemoteCommand];
 }
 
 const SEND_INTERVAL_MS = 400;
@@ -100,10 +93,6 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         this.send({ type: 'meter', meter: this.latestMeterFrame });
       }
     }, METER_SEND_INTERVAL_MS);
-  }
-
-  sendCommandResult(id: string, ok: boolean, message: string): void {
-    this.send({ type: 'command-result', id, ok, message });
   }
 
   async stop(): Promise<void> {
@@ -212,8 +201,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
           this.setState({ latencyMs: Math.max(0, Date.now() - Number(message.sentAt)) });
         } else if (message.type === 'state-ack') {
           this.setState({ lastSyncAt: Number.isFinite(message.receivedAt) ? Number(message.receivedAt) : Date.now() });
-        } else if (message.type === 'command' && message.id && (message.command === 'atem.preview' || message.command === 'atem.auto')) {
-          this.emit('command', { id: message.id, command: message.command, payload: message.payload ?? {} });
+        } else if (message.type === 'command' && message.id) {
+          this.send({ type: 'command-result', id: message.id, ok: false, message: '手机远程当前仅支持监看' });
         }
       } catch {
         // Ignore malformed server messages.

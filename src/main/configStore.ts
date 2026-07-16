@@ -144,6 +144,7 @@ export class ConfigStore {
       remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
       remoteDeviceUuid,
       remoteDeviceSecret,
+      developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       updateSource: updateSourceValue(merged.updateSource),
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),

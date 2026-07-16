@@ -43,6 +43,7 @@ describe('ConfigStore', () => {
         bad: { x: Number.NaN, y: 10 }
       },
       floatingWindowEnabled: 'yes',
+      developerModeEnabled: 'yes',
       floatingWindowBounds: { x: 5.4, y: 8.6, width: 100, height: 999 }
     } as unknown as AppConfig);
 
@@ -54,6 +55,7 @@ describe('ConfigStore', () => {
     expect(saved.alertDisplayId).toBeNull();
     expect(saved.alertPositions).toEqual({ 1: { x: 13, y: 48 } });
     expect(saved.floatingWindowEnabled).toBe(false);
+    expect(saved.developerModeEnabled).toBe(false);
     expect(saved.floatingWindowBounds).toEqual({ x: 5, y: 9, width: 170, height: 520 });
   });
 
@@ -81,6 +83,19 @@ describe('ConfigStore', () => {
     const reloaded = await new ConfigStore().load();
 
     expect(reloaded.silenceDurationSeconds).toBe(300);
+  });
+
+  it('persists developer mode until it is explicitly disabled', async () => {
+    const store = new ConfigStore();
+    await store.save({
+      ...DEFAULT_CONFIG,
+      developerModeEnabled: true
+    });
+
+    expect((await new ConfigStore().load()).developerModeEnabled).toBe(true);
+
+    await store.update({ developerModeEnabled: false });
+    expect((await new ConfigStore().load()).developerModeEnabled).toBe(false);
   });
 
   it('normalizes custom ATEM names, colors and groups', async () => {

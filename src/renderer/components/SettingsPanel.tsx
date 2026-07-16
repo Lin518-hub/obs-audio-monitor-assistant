@@ -66,7 +66,7 @@ interface TabItem {
 }
 
 const tabs: TabItem[] = [
-  { id: 'devices', label: '连接与设备', description: 'OBS、音源、ATEM、手机', icon: Cable },
+  { id: 'devices', label: '连接与设备', description: 'OBS、音源与ATEM', icon: Cable },
   { id: 'rules', label: '检测规则', description: '静音、机位与多音源', icon: ShieldCheck },
   { id: 'alerts', label: '提醒与窗口', description: '报警、声音、浮窗与多屏', icon: BellRing },
   { id: 'system', label: '系统与更新', description: '后台、更新与本地数据', icon: Settings2 },
@@ -177,6 +177,15 @@ const selectedSourceSummary = (draft: AppConfig) => {
   return `${names.length} 个音源独立守护`;
 };
 
+const DEVELOPER_PASSWORD_SHA256 = '36135da9586652aa0bdefee628001c4c4eb6901e278a44233a23cd2811eadc19';
+const DEVELOPER_CLICK_GAP_MS = 1600;
+
+const sha256 = async (value: string): Promise<string> => {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
 export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   const {
     open,
@@ -198,7 +207,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   } = props;
   const [active, setActive] = useState<SectionId>('devices');
   const [closing, setClosing] = useState(false);
+  const [developerDialogOpen, setDeveloperDialogOpen] = useState(false);
+  const [developerPassword, setDeveloperPassword] = useState('');
+  const [developerPasswordError, setDeveloperPasswordError] = useState('');
+  const [developerUnlocking, setDeveloperUnlocking] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const developerClicksRef = useRef({ count: 0, lastAt: 0 });
 
   const handleClose = useCallback(() => {
     if (closing) return;
@@ -208,10 +222,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') handleClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (developerDialogOpen) {
+        setDeveloperDialogOpen(false);
+        setDeveloperPassword('');
+        setDeveloperPasswordError('');
+        return;
+      }
+      handleClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, handleClose]);
+  }, [open, developerDialogOpen, handleClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -221,6 +244,43 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [active]);
+
+  const handleAboutVersionClick = useCallback(() => {
+    if (draft.developerModeEnabled) return;
+    const now = performance.now();
+    const previous = developerClicksRef.current;
+    const count = now - previous.lastAt <= DEVELOPER_CLICK_GAP_MS ? previous.count + 1 : 1;
+    developerClicksRef.current = { count, lastAt: now };
+    if (count < 10) return;
+    developerClicksRef.current = { count: 0, lastAt: 0 };
+    setDeveloperPassword('');
+    setDeveloperPasswordError('');
+    setDeveloperDialogOpen(true);
+  }, [draft.developerModeEnabled]);
+
+  const handleDeveloperUnlock = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (developerUnlocking) return;
+    setDeveloperUnlocking(true);
+    try {
+      if (await sha256(developerPassword) !== DEVELOPER_PASSWORD_SHA256) {
+        setDeveloperPasswordError('密码不正确，请重新输入。');
+        return;
+      }
+      onChangeDraft('developerModeEnabled', true);
+      setDeveloperDialogOpen(false);
+      setDeveloperPassword('');
+      setDeveloperPasswordError('');
+    } finally {
+      setDeveloperUnlocking(false);
+    }
+  }, [developerPassword, developerUnlocking, onChangeDraft]);
+
+  const closeDeveloperDialog = useCallback(() => {
+    setDeveloperDialogOpen(false);
+    setDeveloperPassword('');
+    setDeveloperPasswordError('');
+  }, []);
 
   if (!open && !closing) return null;
 
@@ -310,16 +370,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 >
                   <ATEMSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
-                <SettingsDisclosure
-                  icon={Smartphone}
-                  title="手机远程"
-                  description="扫码申请、线路与访问状态"
-                  summary={draft.remoteAccessEnabled ? (snapshot.remoteAccessConnected ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · ${snapshot.remoteAccessOnlineMobileClients} 台在线` : '已启用 · 等待服务') : '未启用'}
-                  defaultOpen={focusSection === 'remote'}
-                  tone={snapshot.remoteAccessConnected ? 'success' : draft.remoteAccessEnabled ? 'warning' : 'default'}
-                >
-                  <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
-                </SettingsDisclosure>
+                {draft.developerModeEnabled && (
+                  <SettingsDisclosure
+                    icon={Smartphone}
+                    title="手机远程"
+                    description="扫码申请、线路与访问状态"
+                    summary={draft.remoteAccessEnabled ? (snapshot.remoteAccessConnected ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · ${snapshot.remoteAccessOnlineMobileClients} 台在线` : '已启用 · 等待服务') : '未启用'}
+                    defaultOpen={focusSection === 'remote'}
+                    tone={snapshot.remoteAccessConnected ? 'success' : draft.remoteAccessEnabled ? 'warning' : 'default'}
+                  >
+                    <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+                  </SettingsDisclosure>
+                )}
               </>
             )}
 
@@ -411,13 +473,23 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   description="版本与当前守护对象"
                   summary={`v${appVersion}`}
                 >
-                  <AboutSection appVersion={appVersion} targetName={snapshotTargetName(snapshot)} />
+                  <AboutSection appVersion={appVersion} targetName={snapshotTargetName(snapshot)} onVersionClick={handleAboutVersionClick} />
                 </SettingsDisclosure>
               </>
             )}
 
             {active === 'maintenance' && (
               <>
+                {draft.developerModeEnabled && (
+                  <div className="developer-mode-status" role="status">
+                    <span className="developer-mode-status-icon"><ShieldCheck size={18} /></span>
+                    <span className="developer-mode-status-copy">
+                      <strong>开发者模式已启用</strong>
+                      <em>手机远程功能已显示，原有远程配置保持不变。</em>
+                    </span>
+                    <button type="button" className="btn-secondary" onClick={() => onChangeDraft('developerModeEnabled', false)}>关闭开发者模式</button>
+                  </div>
+                )}
                 <SettingsDisclosure
                   icon={TestTube2}
                   title="检测与调试"
@@ -441,6 +513,38 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
           </div>
         </section>
       </div>
+      {developerDialogOpen && (
+        <div className="developer-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget) closeDeveloperDialog(); }}>
+          <form className="developer-dialog" onSubmit={(event) => void handleDeveloperUnlock(event)}>
+            <button type="button" className="close-btn developer-dialog-close" onClick={closeDeveloperDialog} aria-label="关闭"><X size={17} /></button>
+            <span className="developer-dialog-icon"><ShieldCheck size={22} /></span>
+            <div className="developer-dialog-heading">
+              <strong>启用开发者模式</strong>
+              <span>输入开发者密码后，将显示手机远程功能。</span>
+            </div>
+            <label className="developer-dialog-field">
+              <span>开发者密码</span>
+              <input
+                autoFocus
+                className={`input ${developerPasswordError ? 'input-error' : ''}`}
+                type="password"
+                autoComplete="off"
+                value={developerPassword}
+                onChange={(event) => {
+                  setDeveloperPassword(event.target.value);
+                  if (developerPasswordError) setDeveloperPasswordError('');
+                }}
+                placeholder="请输入密码"
+              />
+            </label>
+            {developerPasswordError && <div className="developer-dialog-error" role="alert">{developerPasswordError}</div>}
+            <div className="developer-dialog-actions">
+              <button type="button" className="btn-secondary" onClick={closeDeveloperDialog}>取消</button>
+              <button type="submit" className="btn-primary" disabled={!developerPassword || developerUnlocking}>{developerUnlocking ? '验证中…' : '启用'}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

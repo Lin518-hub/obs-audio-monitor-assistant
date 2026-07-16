@@ -9,7 +9,7 @@ import { ATEMHistoryStore } from './atemHistoryStore.js';
 import { ATEMSessionStore } from './ATEMSessionStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
-import { RemoteBridge, remoteServerCandidates, type RemoteCommand } from './RemoteBridge.js';
+import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
@@ -147,9 +147,6 @@ async function initializeApp(): Promise<void> {
     if (!latestSnapshot) return;
     latestSnapshot = injectATEMState(latestSnapshot);
     broadcastSnapshot(latestSnapshot);
-  });
-  remoteBridge.on('command', (command) => {
-    void handleRemoteCommand(command);
   });
   remoteBridge.updateSnapshot(latestSnapshot);
   void remoteBridge.configure(config);
@@ -582,34 +579,6 @@ function decorateATEMSession(
     };
   }).sort((a, b) => b.durationSeconds - a.durationSeconds);
   return { ...session, segments, usage, totalDurationSeconds };
-}
-
-async function handleRemoteCommand(command: RemoteCommand): Promise<void> {
-  const snapshot = latestSnapshot;
-  if (!snapshot?.config.remoteAccessEnabled) {
-    remoteBridge.sendCommandResult(command.id, false, '电脑未启用远程访问');
-    return;
-  }
-  try {
-    if (command.command === 'atem.preview') {
-      const input = Number(command.payload.input);
-      if (!snapshot.atemConnected) throw new Error('ATEM 当前未连接');
-      if (!Number.isInteger(input) || !snapshot.atemInputIds.includes(input)) throw new Error('目标信号源不可用');
-      await atemMonitor.changePreviewInput(input);
-      remoteBridge.sendCommandResult(command.id, true, '已选入 PVW');
-      return;
-    }
-    if (command.command === 'atem.auto') {
-      if (!snapshot.atemConnected || snapshot.atemPreviewInput <= 0) throw new Error('ATEM 未连接或没有 PVW 信号');
-      if (snapshot.config.atemHardCutConfirm && command.payload.confirmed !== true) throw new Error('远程切台缺少二次确认');
-      await atemMonitor.autoTransition();
-      remoteBridge.sendCommandResult(command.id, true, 'AUTO 切换已执行');
-      return;
-    }
-    remoteBridge.sendCommandResult(command.id, false, '不支持的远程操作');
-  } catch (error) {
-    remoteBridge.sendCommandResult(command.id, false, error instanceof Error ? error.message : '远程操作失败');
-  }
 }
 
 function preserveSnapshotHistory(snapshot: AppSnapshot): AppSnapshot {

@@ -98,10 +98,6 @@ test('requires approval before a mobile browser receives access', async () => {
   const wsBase = base.replace('http:', 'ws:');
   const desktop = trackedSocket(`${wsBase}/ws/desktop?uuid=${encodeURIComponent(uuid)}&secret=${'1'.repeat(64)}`);
   await desktop.open();
-  desktop.socket.on('message', (raw) => {
-    const message = JSON.parse(raw.toString());
-    if (message.type === 'command') desktop.socket.send(JSON.stringify({ type: 'command-result', id: message.id, ok: true, message: 'done' }));
-  });
   const mobile = trackedSocket(`${wsBase}/ws/mobile?token=${encodeURIComponent(primaryAccessToken)}`);
   const secondMobile = trackedSocket(`${wsBase}/ws/mobile?token=${encodeURIComponent(secondStatus.body.accessToken)}`);
   await Promise.all([mobile.open(), secondMobile.open()]);
@@ -113,6 +109,7 @@ test('requires approval before a mobile browser receives access', async () => {
   const unconfirmedResult = await mobile.next();
   assert.equal(unconfirmedResult.id, 'unconfirmed-auto');
   assert.equal(unconfirmedResult.ok, false);
+  assert.equal(unconfirmedResult.message, '手机远程当前仅支持监看');
 
   desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: -18.25 } }));
   const [meter, secondMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
@@ -124,7 +121,8 @@ test('requires approval before a mobile browser receives access', async () => {
   mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: { confirmed: true } }));
   const commandResult = await mobile.next();
   assert.equal(commandResult.id, 'client-command-1');
-  assert.equal(commandResult.ok, true);
+  assert.equal(commandResult.ok, false);
+  assert.equal(commandResult.message, '手机远程当前仅支持监看');
   await assert.rejects(secondMobile.next(120), /message_timeout/);
 
   const overview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
@@ -135,7 +133,9 @@ test('requires approval before a mobile browser receives access', async () => {
   assert.equal(await revokedClose, 4003);
   assert.equal(secondMobile.socket.readyState, WebSocket.OPEN);
   secondMobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-2', command: 'atem.auto', payload: { confirmed: true } }));
-  assert.equal((await secondMobile.next()).id, 'client-command-2');
+  const secondCommandResult = await secondMobile.next();
+  assert.equal(secondCommandResult.id, 'client-command-2');
+  assert.equal(secondCommandResult.ok, false);
   const denied = await request(`/api/mobile/session?token=${encodeURIComponent(primaryAccessToken)}`);
   assert.equal(denied.response.status, 403);
   secondMobile.socket.close();

@@ -896,11 +896,11 @@ export const RemoteAccessSection: React.FC<{
   };
 
   return (
-    <Section id="settings-remote" icon={QrCode} title="手机远程访问" description="扫码申请、移动监看和安全切台">
+    <Section id="settings-remote" icon={QrCode} title="手机远程访问" description="扫码申请、移动监看和访问审批">
       <ToggleRow
         id="remote-access-enabled"
         title="启用手机扫码访问"
-        description="电脑主动连接远程服务；手机必须经过管理员审批后才能查看或操作"
+        description="电脑主动连接远程服务；手机必须经过管理员审批后才能查看监控状态"
         checked={draft.remoteAccessEnabled}
         onChange={(value) => onChange('remoteAccessEnabled', value)}
       />
@@ -939,7 +939,7 @@ export const RemoteAccessSection: React.FC<{
           <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
         </div>
       </div>
-      <div className="settings-hint warn">远程切台属于高风险操作。移动端仅允许选择 PVW 和确认后的 AUTO，不开放远程 Hard Cut；公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
+      <div className="settings-hint warn">手机端仅提供只读监看，不允许远程切换 ATEM。公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
     </Section>
   );
 };
@@ -1197,11 +1197,14 @@ export const UpdatesSection: React.FC<{
 export const AboutSection: React.FC<{
   appVersion: string;
   targetName: string;
-}> = ({ appVersion, targetName }) => (
+  onVersionClick?: () => void;
+}> = ({ appVersion, targetName, onVersionClick }) => (
   <Section id="settings-about" icon={Info} title="关于" description="OBS 音频检测助手">
     <div className="about-list">
       <div className="about-row"><span>产品名称</span><strong>OBS 音频检测助手</strong></div>
-      <div className="about-row"><span>当前版本</span><strong>v{appVersion}</strong></div>
+      <button type="button" className="about-row about-version-trigger" onClick={onVersionClick}>
+        <span>当前版本</span><strong>v{appVersion}</strong>
+      </button>
       <div className="about-row"><span>当前音源</span><strong>{targetName}</strong></div>
       <div className="about-row"><span>更新方式</span><strong>GitHub / 镜像源自动更新</strong></div>
     </div>

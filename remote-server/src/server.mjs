@@ -39,7 +39,6 @@ const emptyData = () => ({ devices: [], requests: [], approvals: [] });
 let data = await loadData();
 const desktopSockets = new Map();
 const mobileSockets = new Map();
-const pendingCommands = new Map();
 const adminSessions = new Map();
 const loginAttempts = new Map();
 const requestLimits = new Map();
@@ -540,16 +539,6 @@ wss.on('connection', (socket, req, url) => {
               levelDb: Number.isFinite(levelDb) ? Math.max(-100, Math.min(12, levelDb)) : null
             }
           });
-        } else if (message.type === 'command-result') {
-          const pending = pendingCommands.get(cleanText(message.id, 80));
-          if (pending) {
-            clearTimeout(pending.timer);
-            pendingCommands.delete(cleanText(message.id, 80));
-            pending.socket.commandInFlight = false;
-            if (pending.socket.readyState === WebSocket.OPEN) {
-              pending.socket.send(JSON.stringify({ ...message, id: pending.clientCommandId }));
-            }
-          }
         }
       } catch { /* ignore malformed desktop message */ }
     });
@@ -567,7 +556,6 @@ wss.on('connection', (socket, req, url) => {
   if (!device) return socket.close(4004, 'device_not_found');
   const sockets = mobileSockets.get(device.uuid) || new Set();
   socket.approvalId = approval.id;
-  socket.commandInFlight = false;
   sockets.add(socket);
   mobileSockets.set(device.uuid, sockets);
   notifyDesktopPresence(device.uuid);
@@ -579,34 +567,15 @@ wss.on('connection', (socket, req, url) => {
       const message = JSON.parse(raw.toString());
       if (message.type !== 'command') return;
       const clientCommandId = cleanText(message.id, 80);
-      if (!clientCommandId) return socket.send(JSON.stringify({ type: 'command-result', id: '', ok: false, message: '操作编号无效' }));
-      if (socket.commandInFlight) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '上一项操作仍在执行' }));
-      const allowed = ['atem.preview', 'atem.auto'];
-      if (!allowed.includes(message.command)) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '不允许的远程操作' }));
-      if (message.command === 'atem.auto' && message.payload?.confirmed !== true) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '请先完成二次确认' }));
-      const desktop = desktopSockets.get(device.uuid);
-      if (!desktop || desktop.readyState !== WebSocket.OPEN) return socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '电脑当前离线' }));
-      socket.commandInFlight = true;
-      const relayId = token(12);
-      const timer = setTimeout(() => {
-        const pending = pendingCommands.get(relayId);
-        pendingCommands.delete(relayId);
-        socket.commandInFlight = false;
-        if (pending?.socket.readyState === WebSocket.OPEN) {
-          pending.socket.send(JSON.stringify({ type: 'command-result', id: clientCommandId, ok: false, message: '电脑响应超时' }));
-        }
-      }, 12_000);
-      pendingCommands.set(relayId, { socket, clientCommandId, timer });
-      desktop.send(JSON.stringify({ type: 'command', id: relayId, command: message.command, payload: message.payload || {} }));
+      socket.send(JSON.stringify({
+        type: 'command-result',
+        id: clientCommandId,
+        ok: false,
+        message: '手机远程当前仅支持监看'
+      }));
     } catch { /* ignore malformed mobile message */ }
   });
   socket.on('close', () => {
-    for (const [id, pending] of pendingCommands) {
-      if (pending.socket === socket) {
-        clearTimeout(pending.timer);
-        pendingCommands.delete(id);
-      }
-    }
     sockets.delete(socket);
     if (sockets.size === 0) mobileSockets.delete(device.uuid);
     notifyDesktopPresence(device.uuid);
@@ -643,8 +612,6 @@ async function shutdown(signal) {
   console.log(`Received ${signal}, shutting down remote service`);
   clearInterval(heartbeat);
   updateCache.stop();
-  for (const pending of pendingCommands.values()) clearTimeout(pending.timer);
-  pendingCommands.clear();
   for (const socket of wss.clients) socket.terminate();
 
   await Promise.race([

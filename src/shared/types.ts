@@ -275,6 +275,7 @@ export interface AppConfig {
   remoteServerUrl: string;
   remoteDeviceUuid: string;
   remoteDeviceSecret: string;
+  developerModeEnabled: boolean;
   autoLaunch: boolean;
   updateSource: UpdateSource;
   aliyunUpdateBaseUrl: string;
@@ -396,6 +397,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteServerUrl: 'https://obs.huaweilive.top:8088',
   remoteDeviceUuid: '',
   remoteDeviceSecret: '',
+  developerModeEnabled: false,
   autoLaunch: false,
   updateSource: 'auto',
   aliyunUpdateBaseUrl: '',
