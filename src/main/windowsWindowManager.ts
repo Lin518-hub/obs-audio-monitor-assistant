@@ -39,7 +39,14 @@ if (-not $ok) { throw '无法移动目标窗口' }
     });
   }
 
-  async launchElevated(target: string, launchUrl: string, placement?: { bounds: PreflightRect; windowState: PreflightWindowState }, processExecutable = target): Promise<void> {
+  async launchElevated(
+    target: string,
+    launchUrl: string,
+    placement?: { bounds: PreflightRect; windowState: PreflightWindowState },
+    processExecutable = target,
+    shortcutArgs = '',
+    cwd = ''
+  ): Promise<void> {
     if (process.platform !== 'win32') throw new Error('管理员启动仅支持 Windows');
     const processName = basename(processExecutable).replace(/\.(?:exe|lnk)$/i, '');
     const innerScript = `${WINDOW_API_SOURCE}\n${ELEVATED_LAUNCH_SCRIPT}`;
@@ -47,6 +54,8 @@ if (-not $ok) { throw '无法移动目标窗口' }
     const payload = Buffer.from(JSON.stringify({
       target,
       launchUrl,
+      shortcutArgs,
+      cwd,
       processName,
       placement: placement ? {
         ...placement.bounds,
@@ -199,8 +208,12 @@ $payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:
 $payload = ConvertFrom-Json $payloadJson
 $before = @((Get-Process -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id))
 $arguments = @()
+if ($payload.shortcutArgs) { $arguments += [string]$payload.shortcutArgs }
 if ($payload.launchUrl) { $arguments += [string]$payload.launchUrl }
-if ($arguments.Count -gt 0) { Start-Process -FilePath $payload.target -ArgumentList $arguments } else { Start-Process -FilePath $payload.target }
+$start = @{ FilePath = [string]$payload.target }
+if ($arguments.Count -gt 0) { $start.ArgumentList = $arguments }
+if ($payload.cwd -and (Test-Path -LiteralPath $payload.cwd)) { $start.WorkingDirectory = [string]$payload.cwd }
+Start-Process @start
 if ($payload.placement) {
   $deadline = [DateTime]::UtcNow.AddSeconds(20)
   do {

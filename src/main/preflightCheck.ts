@@ -1,10 +1,10 @@
-import { screen, shell } from 'electron';
+import { screen, shell, type ShortcutDetails } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { discoverPreflightApps } from './preflightDiscovery.js';
 import { WindowsWindowManager, selectMainWindow, selectOBSProjectorWindow, type WindowsTopLevelWindow } from './windowsWindowManager.js';
-import { findPreflightProcess, findPreflightProcesses, parsePosixProcessList, parseWindowsProcessJson, parseWindowsTaskList, type ProcessEntry } from '../shared/preflight.js';
+import { browserNewWindowArgument, findPreflightProcess, findPreflightProcesses, parsePosixProcessList, parseWindowsProcessJson, parseWindowsTaskList, type ProcessEntry } from '../shared/preflight.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../shared/windowPlacement.js';
 import {
   PREFLIGHT_APP_IDS,
@@ -44,7 +44,7 @@ export class PreflightCheckService {
 
     const apps = await Promise.all(PREFLIGHT_APP_IDS.map(async (id): Promise<PreflightAppStatus> => {
       const configuredPath = configs[id].path.trim();
-      const resolvedPath = await resolveShortcutTarget(configuredPath);
+      const resolvedPath = shortcutDetails(configuredPath)?.target ?? '';
       const running = findPreflightProcess(id, processes, configuredPath, resolvedPath);
       if (running) {
         return {
@@ -92,7 +92,7 @@ export class PreflightCheckService {
     const captured: PreflightPlacementTarget[] = [];
 
     for (const id of PREFLIGHT_APP_IDS) {
-      if (!settings.apps[id].restoreWindowPosition) continue;
+      if (!settings.apps[id].enabled || !settings.apps[id].restoreWindowPosition) continue;
       try {
         const windows = await this.windowsForApp(id, settings.apps, processes);
         const mainWindow = selectMainWindow(windows);
@@ -126,14 +126,18 @@ export class PreflightCheckService {
     const restored: PreflightPlacementTarget[] = [];
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
 
-    if (current?.state !== 'running') {
+    const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
+    if (current?.state !== 'running' || shouldOpenBrowserPage) {
       try {
         const placement = settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
+        const existingHandles = placement && id === 'browser'
+          ? await this.appWindowHandles(id, settings.apps)
+          : undefined;
         await this.launchConfiguredApp(id, settings.apps, placement);
         launched.push(id);
         if (id !== 'cosmic_cat' && placement) {
           try {
-            await this.waitAndRestoreApp(id, settings.apps, placement);
+            await this.waitAndRestoreApp(id, settings.apps, placement, existingHandles);
             restored.push(id);
           } catch (error) {
             restoreFailures[id] = errorMessage(error, '窗口位置恢复失败');
@@ -156,11 +160,18 @@ export class PreflightCheckService {
     const launched: PreflightAppId[] = [];
     const restored: PreflightPlacementTarget[] = [];
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
+    const existingWindowHandles: Partial<Record<PreflightAppId, Set<string>>> = {};
 
     for (const id of PREFLIGHT_APP_IDS) {
-      if (!settings.apps[id].enabled || before.apps.find((app) => app.id === id)?.state === 'running') continue;
+      if (!settings.apps[id].enabled) continue;
+      const alreadyRunning = before.apps.find((app) => app.id === id)?.state === 'running';
+      const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
+      if (alreadyRunning && !shouldOpenBrowserPage) continue;
       try {
         const placement = settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
+        if (placement && id === 'browser') {
+          existingWindowHandles[id] = await this.appWindowHandles(id, settings.apps);
+        }
         await this.launchConfiguredApp(id, settings.apps, placement);
         launched.push(id);
       } catch (error) {
@@ -176,7 +187,7 @@ export class PreflightCheckService {
         return;
       }
       try {
-        await this.waitAndRestoreApp(id, settings.apps, placement);
+        await this.waitAndRestoreApp(id, settings.apps, placement, existingWindowHandles[id]);
         restored.push(id);
       } catch (error) {
         restoreFailures[id] = errorMessage(error, '窗口位置恢复失败');
@@ -222,31 +233,63 @@ export class PreflightCheckService {
     const config = configs[id];
     const target = config.path.trim();
     if (id === 'cosmic_cat' && process.platform !== 'win32') throw new Error('宇宙猫检测的管理员启动仅支持 Windows');
+    const launchUrl = id === 'browser' ? validatedLaunchUrl(config.launchUrl) : '';
+    if (!target && launchUrl) {
+      await shell.openExternal(launchUrl);
+      return;
+    }
     if (!target) throw new Error('请先设置快捷方式或程序路径');
     if (!existsSync(target)) throw new Error('快捷方式或程序路径已失效');
 
-    const launchUrl = id === 'browser' ? validatedLaunchUrl(config.launchUrl) : '';
-    const resolvedShortcutTarget = await resolveShortcutTarget(target);
+    const shortcut = shortcutDetails(target);
+    if (process.platform === 'win32' && target.toLowerCase().endsWith('.lnk') && !shortcut) {
+      throw new Error('无法解析此快捷方式，请重新选择有效的 .lnk 文件');
+    }
+    const resolvedShortcutTarget = shortcut?.target ?? '';
     if (id === 'cosmic_cat') {
       const resolved = placement ? resolveWindowPlacement(placement, placementDisplays()) : undefined;
-      await this.windows.launchElevated(target, launchUrl, resolved, resolvedShortcutTarget || target);
+      await this.windows.launchElevated(
+        resolvedShortcutTarget || target,
+        launchUrl,
+        resolved,
+        resolvedShortcutTarget || target,
+        shortcut?.args ?? '',
+        shortcut?.cwd ?? ''
+      );
       return;
     }
 
     if (process.platform === 'win32' && launchUrl) {
-      await launchWindowsPathWithUrl(resolvedShortcutTarget || target, launchUrl);
+      await launchWindowsPathWithUrl(
+        resolvedShortcutTarget || target,
+        launchUrl,
+        shortcut?.args ?? '',
+        shortcut?.cwd ?? '',
+        browserNewWindowArgument(resolvedShortcutTarget || target)
+      );
+      return;
+    }
+    if (launchUrl) {
+      await shell.openExternal(launchUrl);
       return;
     }
     const result = await shell.openPath(target);
     if (result) throw new Error(result);
   }
 
-  private async waitAndRestoreApp(id: PreflightAppId, configs: PreflightAppConfigs, placement: PreflightWindowPlacement): Promise<void> {
+  private async waitAndRestoreApp(
+    id: PreflightAppId,
+    configs: PreflightAppConfigs,
+    placement: PreflightWindowPlacement,
+    excludedHandles?: Set<string>
+  ): Promise<void> {
     if (process.platform !== 'win32') return;
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       const windows = await this.windowsForApp(id, configs, await readProcessList());
-      const mainWindow = selectMainWindow(windows);
+      const mainWindow = selectMainWindow(excludedHandles
+        ? windows.filter((window) => !excludedHandles.has(window.handle))
+        : windows);
       if (mainWindow) {
         await this.restoreWindow(mainWindow, placement);
         return;
@@ -257,9 +300,15 @@ export class PreflightCheckService {
   }
 
   private async windowsForApp(id: PreflightAppId, configs: PreflightAppConfigs, processes: ProcessEntry[]): Promise<WindowsTopLevelWindow[]> {
-    const resolvedPath = await resolveShortcutTarget(configs[id].path);
+    const resolvedPath = shortcutDetails(configs[id].path)?.target ?? '';
     const matches = findPreflightProcesses(id, processes, configs[id].path, resolvedPath);
     return this.windows.listWindows(matches.map((process) => process.pid));
+  }
+
+  private async appWindowHandles(id: PreflightAppId, configs: PreflightAppConfigs): Promise<Set<string>> {
+    if (process.platform !== 'win32') return new Set();
+    const windows = await this.windowsForApp(id, configs, await readProcessList(true));
+    return new Set(windows.map((window) => window.handle));
   }
 }
 
@@ -313,20 +362,27 @@ async function queryProcessList(): Promise<ProcessEntry[]> {
   return parsePosixProcessList(stdout);
 }
 
-async function resolveShortcutTarget(path: string): Promise<string> {
-  if (process.platform !== 'win32' || !path.toLowerCase().endsWith('.lnk')) return '';
+function shortcutDetails(path: string): ShortcutDetails | null {
+  if (process.platform !== 'win32' || !path.toLowerCase().endsWith('.lnk')) return null;
   try {
-    return shell.readShortcutLink(path).target;
+    const details = shell.readShortcutLink(path);
+    return details.target ? details : null;
   } catch {
-    return '';
+    return null;
   }
 }
 
-async function launchWindowsPathWithUrl(target: string, launchUrl: string): Promise<void> {
-  const payload = JSON.stringify({ target, launchUrl });
+async function launchWindowsPathWithUrl(target: string, launchUrl: string, shortcutArgs: string, cwd: string, windowArgument: string): Promise<void> {
+  const payload = JSON.stringify({ target, launchUrl, shortcutArgs, cwd, windowArgument });
   const command = `
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_LAUNCH
-Start-Process -FilePath $payload.target -ArgumentList @([string]$payload.launchUrl)
+$arguments = @()
+if ($payload.shortcutArgs) { $arguments += [string]$payload.shortcutArgs }
+if ($payload.windowArgument) { $arguments += [string]$payload.windowArgument }
+$arguments += [string]$payload.launchUrl
+$start = @{ FilePath = [string]$payload.target; ArgumentList = $arguments }
+if ($payload.cwd -and (Test-Path -LiteralPath $payload.cwd)) { $start.WorkingDirectory = [string]$payload.cwd }
+Start-Process @start
 `;
   const encoded = Buffer.from(command, 'utf16le').toString('base64');
   await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {

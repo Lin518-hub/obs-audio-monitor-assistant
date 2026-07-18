@@ -138,6 +138,15 @@ export function normalizeProcessName(value: string): string {
     .replace(/[\s_\-().]/g, '');
 }
 
+export function browserNewWindowArgument(executablePath: string): string {
+  const name = normalizeProcessName(portableBasename(executablePath));
+  if (['chrome', 'googlechrome', 'msedge', 'microsoftedge', '360chrome', '360se', 'qqbrowser'].includes(name)) {
+    return '--new-window';
+  }
+  if (name === 'firefox') return '-new-window';
+  return '';
+}
+
 function portableBasename(value: string): string {
   return value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 }

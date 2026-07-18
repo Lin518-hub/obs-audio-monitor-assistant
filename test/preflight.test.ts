@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  browserNewWindowArgument,
   findPreflightProcess,
   normalizeProcessName,
   parsePosixProcessList,
@@ -83,5 +84,11 @@ describe('preflight process detection', () => {
   it('normalizes punctuation and executable extensions consistently', () => {
     expect(normalizeProcessName('Software Control.exe')).toBe('softwarecontrol');
     expect(normalizeProcessName('抖音直播伴侣.EXE')).toBe('抖音直播伴侣');
+  });
+
+  it('selects a safe new-window argument for supported browsers', () => {
+    expect(browserNewWindowArgument('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')).toBe('--new-window');
+    expect(browserNewWindowArgument('C:\\Program Files\\Mozilla Firefox\\firefox.exe')).toBe('-new-window');
+    expect(browserNewWindowArgument('C:\\Browser\\custom.exe')).toBe('');
   });
 });

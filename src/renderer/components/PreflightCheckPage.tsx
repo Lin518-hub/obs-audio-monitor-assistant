@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -9,10 +9,12 @@ import {
   FolderOpen,
   Globe2,
   LoaderCircle,
+  MapPin,
   MonitorPlay,
   Play,
   RadioTower,
   ScanSearch,
+  Save,
   ShieldCheck,
   SlidersHorizontal
 } from 'lucide-react';
@@ -54,44 +56,70 @@ interface PreflightCheckPageProps {
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }
 
-type BusyState = 'check' | 'discover' | 'all' | 'projector' | PreflightAppId | null;
+type BusyState = 'discover' | 'all' | 'layout' | 'projector' | PreflightAppId | null;
 
 export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange }) => {
   const [result, setResult] = useState<PreflightCheckResult | null>(null);
   const [busy, setBusy] = useState<BusyState>(null);
   const [expanded, setExpanded] = useState<Set<PreflightAppId>>(() => new Set());
   const [draggingId, setDraggingId] = useState<PreflightAppId | null>(null);
+  const [checking, setChecking] = useState(true);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const checkInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
   const settings = useMemo<PreflightSettings>(() => ({
     apps: draft.preflightApps,
     projector: draft.preflightProjector,
     windowPlacements: draft.preflightWindowPlacements
   }), [draft.preflightApps, draft.preflightProjector, draft.preflightWindowPlacements]);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
-  const runCheck = useCallback(async (nextSettings = settings) => {
-    setBusy('check');
-    setNotice(null);
+  const runCheck = useCallback(async (nextSettings?: PreflightSettings, showProgress = false) => {
+    if (checkInFlightRef.current) return;
+    checkInFlightRef.current = true;
+    if (showProgress) setChecking(true);
     try {
-      setResult(await window.obsGuard.checkPreflightApps(nextSettings));
+      const next = await window.obsGuard.checkPreflightApps(nextSettings ?? settingsRef.current);
+      if (mountedRef.current) setResult(next);
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '检测系统进程失败' });
+      if (showProgress && mountedRef.current) {
+        setNotice({ tone: 'error', text: error instanceof Error ? error.message : '检测系统进程失败' });
+      }
     } finally {
-      setBusy(null);
+      checkInFlightRef.current = false;
+      if (showProgress && mountedRef.current) setChecking(false);
     }
-  }, [settings]);
+  }, []);
 
   useEffect(() => {
-    void runCheck();
-  }, []); // 页面首次打开时检测一次，之后由用户手动重试。
+    mountedRef.current = true;
+    void runCheck(settingsRef.current, true);
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void runCheck();
+    };
+    const interval = window.setInterval(refresh, 2_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      mountedRef.current = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [runCheck]);
 
   const enabledIds = useMemo(() => Object.entries(draft.preflightApps)
     .filter(([, config]) => config.enabled)
     .map(([id]) => id as PreflightAppId), [draft.preflightApps]);
   const runningCount = enabledIds.filter((id) => result?.apps.find((app) => app.id === id)?.state === 'running').length;
-  const configuredCount = enabledIds.filter((id) => Boolean(draft.preflightApps[id].path.trim())).length;
-  const savedLayoutCount = enabledIds.filter((id) => draft.preflightApps[id].restoreWindowPosition && draft.preflightWindowPlacements[id]).length;
+  const configuredCount = enabledIds.filter((id) => Boolean(draft.preflightApps[id].path.trim())
+    || (id === 'browser' && Boolean(draft.preflightApps.browser.launchUrl.trim()))).length;
+  const savedLayoutCount = enabledIds.filter((id) => draft.preflightApps[id].restoreWindowPosition && draft.preflightWindowPlacements[id]).length
+    + (draft.preflightProjector.enabled && draft.preflightProjector.restoreWindowPosition && draft.preflightWindowPlacements.obs_projector ? 1 : 0);
+  const selectedLayoutCount = enabledIds.filter((id) => draft.preflightApps[id].restoreWindowPosition).length
+    + (draft.preflightProjector.enabled && draft.preflightProjector.restoreWindowPosition ? 1 : 0);
   const ready = enabledIds.length > 0 && runningCount === enabledIds.length;
-  const isWindows = result?.platform === 'windows';
   const query = search.trim().toLocaleLowerCase('zh-CN');
   const visibleIds = (Object.keys(APP_META) as PreflightAppId[]).filter((id) => {
     const meta = APP_META[id];
@@ -177,7 +205,8 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     try {
       let launchSettings = settings;
       const missingPath = enabledIds.some((id) => !settings.apps[id].path.trim()
-        && result?.apps.find((app) => app.id === id)?.state !== 'running');
+        && (result?.apps.find((app) => app.id === id)?.state !== 'running'
+          || (id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim()))));
       if (missingPath) {
         const discovery = await window.obsGuard.discoverPreflightApps();
         const merged = mergeDiscoveredPaths(settings, discovery.discovered, false);
@@ -212,6 +241,30 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       setNotice({ tone: projector.state === 'failed' ? 'error' : 'success', text: projector.message });
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : '打开节目输出投影失败' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const captureLayout = async () => {
+    setBusy('layout');
+    setNotice(null);
+    try {
+      const captured = await window.obsGuard.capturePreflightLayout(settings);
+      onChange('preflightWindowPlacements', captured.placements);
+      const failures = Object.values(captured.failures).filter(Boolean);
+      if (captured.captured.length === 0) {
+        setNotice({
+          tone: 'warning',
+          text: failures[0] || '没有可保存的窗口。请先打开软件，并选择下方需要恢复位置的项目。'
+        });
+      } else if (failures.length > 0) {
+        setNotice({ tone: 'warning', text: `已保存 ${captured.captured.length} 个窗口位置；${failures.join('；')}` });
+      } else {
+        setNotice({ tone: 'success', text: `已保存 ${captured.captured.length} 个窗口位置，下次由助手启动时会自动恢复。` });
+      }
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '保存当前布局失败' });
     } finally {
       setBusy(null);
     }
@@ -268,10 +321,6 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
           <p className="page-header-subtitle">检查、启动并恢复一套固定的 Windows 开播布局</p>
         </div>
         <div className="preflight-header-actions">
-          <button type="button" className="preflight-scan-button" onClick={() => void scanApps()} disabled={busy !== null}>
-            {busy === 'discover' ? <LoaderCircle size={17} className="spinning" /> : <ScanSearch size={17} />}
-            {busy === 'discover' ? '正在扫描' : '一键扫描软件'}
-          </button>
           <button type="button" className="btn-primary preflight-launch-all" onClick={() => void launchAll()} disabled={busy !== null || enabledIds.length === 0}>
             {busy === 'all' ? <LoaderCircle size={17} className="spinning" /> : <Play size={17} />}
             {busy === 'all' ? '正在准备' : '一键开播准备'}
@@ -293,12 +342,65 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
         </div>
       </section>
 
+      <section className="preflight-layout" aria-label="固定窗口位置">
+        <div className="preflight-layout-heading">
+          <div className="preflight-layout-icon"><MapPin size={20} /></div>
+          <div>
+            <strong>固定窗口位置</strong>
+            <span>选择要恢复的软件，摆好当前窗口后保存一次；只移动之后由助手新启动的窗口。</span>
+          </div>
+          <button type="button" className="preflight-layout-save" onClick={() => void captureLayout()} disabled={busy !== null || selectedLayoutCount === 0}>
+            {busy === 'layout' ? <LoaderCircle size={16} className="spinning" /> : <Save size={16} />}
+            {busy === 'layout' ? '正在保存' : '保存当前布局'}
+          </button>
+        </div>
+        <div className="preflight-layout-options">
+          {enabledIds.map((id) => {
+            const enabled = draft.preflightApps[id].restoreWindowPosition;
+            const placement = draft.preflightWindowPlacements[id];
+            return (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enabled}
+                className={`preflight-layout-option ${enabled ? 'active' : ''}`}
+                onClick={() => updateApps(id, { restoreWindowPosition: !enabled })}
+                key={id}
+              >
+                <span className="preflight-layout-check">{enabled && <Check size={13} />}</span>
+                <span>{appDisplayName(id, draft.preflightApps[id].customLabel)}</span>
+                <small>{placement ? `已保存 ${formatShortTime(placement.capturedAt)}` : enabled ? '等待保存' : '不恢复'}</small>
+              </button>
+            );
+          })}
+          {draft.preflightProjector.enabled && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={draft.preflightProjector.restoreWindowPosition}
+              className={`preflight-layout-option ${draft.preflightProjector.restoreWindowPosition ? 'active' : ''}`}
+              onClick={() => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition: !draft.preflightProjector.restoreWindowPosition })}
+            >
+              <span className="preflight-layout-check">{draft.preflightProjector.restoreWindowPosition && <Check size={13} />}</span>
+              <span>OBS 节目投影</span>
+              <small>{draft.preflightWindowPlacements.obs_projector ? `已保存 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : '等待保存'}</small>
+            </button>
+          )}
+        </div>
+      </section>
+
       {notice && <div className="preflight-notice" data-tone={notice.tone}>{notice.text}</div>}
 
       <section className="preflight-list" aria-label="开播程序检查清单">
         <div className="preflight-list-heading">
           <div><h2>准备项目</h2><p>只展开需要调整的项目；配置会实时保存。</p></div>
-          <span>{enabledIds.length} 项已选择</span>
+          <div className="preflight-list-heading-actions">
+            <span>{enabledIds.length} 项已选择</span>
+            <button type="button" className="preflight-scan-button compact" onClick={() => void scanApps()} disabled={busy !== null}>
+              {busy === 'discover' ? <LoaderCircle size={15} className="spinning" /> : <ScanSearch size={15} />}
+              {busy === 'discover' ? '正在扫描' : '自动发现'}
+            </button>
+          </div>
         </div>
 
         <div className="preflight-list-rows">
@@ -307,7 +409,8 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
             const config = draft.preflightApps[id];
             const appStatus = result?.apps.find((app) => app.id === id) ?? null;
             const isRunning = appStatus?.state === 'running';
-            const cannotLaunch = appStatus?.state === 'unsupported' || (!config.path && !isRunning);
+            const canOpenBrowserPage = id === 'browser' && Boolean(config.launchUrl.trim());
+            const cannotLaunch = appStatus?.state === 'unsupported' || (!config.path && !canOpenBrowserPage && !isRunning);
             const placement = draft.preflightWindowPlacements[id];
             const Icon = meta.Icon;
             const isExpanded = expanded.has(id);
@@ -322,11 +425,11 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                     </div>
                     <span>{meta.description}</span>
                     <span className="preflight-path" title={config.path || '尚未设置快捷方式'}>
-                      {config.path ? `${SOURCE_LABELS[config.pathSource]} · ${fileName(config.path)}` : '尚未设置快捷方式'}
+                      {config.path ? `${SOURCE_LABELS[config.pathSource]} · ${fileName(config.path)}` : canOpenBrowserPage ? '使用系统默认浏览器' : '尚未设置快捷方式'}
                       {' · '}{config.restoreWindowPosition ? placement ? `固定位置 ${formatShortTime(placement.capturedAt)}` : '固定位置未保存' : '不恢复位置'}
                     </span>
                   </div>
-                  <StatusPill status={appStatus} checking={busy === 'check'} />
+                  <StatusPill status={appStatus} checking={checking && !result} />
                   <label className="preflight-included-control" title={config.enabled ? '已加入一键开播准备' : '未加入一键开播准备'}>
                     <span>{config.enabled ? '参与准备' : '已跳过'}</span>
                     <button type="button" role="switch" aria-checked={config.enabled} className={`preflight-include-switch ${config.enabled ? 'on' : ''}`} onClick={() => updateApps(id, { enabled: !config.enabled })}><span /></button>
@@ -351,17 +454,12 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                     </div>
                     <div>
                       <button type="button" className="preflight-tool-button" onClick={() => void pickTarget(id)}><FolderOpen size={16} />{config.path ? '更改' : '选择程序'}</button>
-                      <button type="button" className="preflight-tool-button" onClick={() => void launchOne(id)} disabled={busy !== null || isRunning || cannotLaunch}>
-                        {busy === id ? <LoaderCircle size={16} className="spinning" /> : <Play size={16} />}{isRunning ? '正在运行' : '单独打开'}
+                      <button type="button" className="preflight-tool-button primary" onClick={() => void launchOne(id)} disabled={busy !== null || (isRunning && !canOpenBrowserPage) || cannotLaunch}>
+                        {busy === id ? <LoaderCircle size={16} className="spinning" /> : id === 'browser' && canOpenBrowserPage ? <ExternalLink size={16} /> : <Play size={16} />}
+                        {id === 'browser' && canOpenBrowserPage ? '打开直播页面' : isRunning ? '正在运行' : '单独打开'}
                       </button>
                     </div>
                   </div>
-                  <SettingSwitch
-                    title="恢复固定位置"
-                    description={isWindows ? '只移动本次由助手新启动的窗口' : '配置会保存，并在 Windows 实机上生效'}
-                    checked={config.restoreWindowPosition}
-                    onChange={(checked) => updateApps(id, { restoreWindowPosition: checked })}
-                  />
                   {id === 'douyin' && (
                     <label className="preflight-inline-field">
                       <span>平台备注</span>
@@ -378,7 +476,6 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                     <div className="preflight-projector-settings">
                       <div className="preflight-projector-heading"><MonitorPlay size={18} /><div><strong>节目输出投影</strong><span>通过 OBS WebSocket 打开窗口化节目输出</span></div></div>
                       <SettingSwitch title="一键准备时自动打开" description="默认关闭；失败不会影响其他软件启动" checked={draft.preflightProjector.enabled} onChange={(enabled) => onChange('preflightProjector', { ...draft.preflightProjector, enabled })} />
-                      <SettingSwitch title="恢复投影位置" description={draft.preflightWindowPlacements.obs_projector ? `已保存于 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : '打开投影后可使用“保存当前布局”记录位置'} checked={draft.preflightProjector.restoreWindowPosition} onChange={(restoreWindowPosition) => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition })} />
                       <button type="button" className="preflight-projector-button" onClick={() => void openProjector()} disabled={busy !== null}>
                         {busy === 'projector' ? <LoaderCircle size={16} className="spinning" /> : <ExternalLink size={16} />}打开或重试投影
                       </button>
