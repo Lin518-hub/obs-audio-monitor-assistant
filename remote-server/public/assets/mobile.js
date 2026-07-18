@@ -12,8 +12,9 @@ const randomId = () => {
 };
 const clientId = localStorage.obsRemoteClientId || (localStorage.obsRemoteClientId = randomId());
 let device = null, requestId = null, accessToken = null, socket = null, state = null, pollTimer = null, socketRetryTimer = null;
-let socketRetryCount = 0, socketGeneration = 0, pipRenderTimer = null, pipStream = null, fallbackPipActive = false;
-let pipStarting = false, pipCaptureRenderer = null, pipSourceStream = null, pipPeerConnections = null;
+let socketRetryCount = 0, socketGeneration = 0, pipRenderTimer = null, pipVideoSyncTimer = null, fallbackPipActive = false;
+let pipStarting = false, pipVideoPrepared = false, pipCaptionTrack = null, pipCaptionKey = '', pipFrameKey = '';
+let pipVideoThresholdDb = -55, pipLastSeekAt = 0;
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandaloneApp = navigator.standalone === true || globalThis.matchMedia?.('(display-mode: standalone)').matches === true;
 const defaultClientName = () => {
@@ -138,11 +139,46 @@ function connectSocket() {
 
 function setOnline(online) { $('online-chip').textContent = online ? '电脑在线' : '电脑离线'; $('online-chip').classList.toggle('offline', !online); }
 function setPill(element, text, tone='') { element.textContent = text; element.className = `state-pill ${tone}`; }
+function audioPresentation(audio = {}) {
+  const phase = audio.phase || (audio.ready ? (audio.tone === 'danger' ? 'alert' : audio.display === '正在讲话' ? 'speaking' : 'silent') : 'idle');
+  if (phase === 'alert') return { label: '报警', tone: 'danger' };
+  if (phase === 'silent') return { label: '静音计时', tone: audio.tone === 'danger' ? 'danger' : 'warning' };
+  if (phase === 'speaking') return { label: '音频正常', tone: audio.tone || 'safe' };
+  return { label: '未就绪', tone: '' };
+}
+const PIP_LEVEL_STEPS = 40;
+const PIP_LEVEL_CELLS = PIP_LEVEL_STEPS + 1;
+const PIP_THRESHOLD_MIN_DB = -90;
+const PIP_THRESHOLD_MAX_DB = -5;
+const PIP_THRESHOLD_STEP_DB = 5;
+const PIP_CELL_DURATION = 0.2;
+const PIP_SYNC_MIN_INTERVAL_MS = 120;
+function pipThresholdAssetDb(value) {
+  const threshold = Math.max(PIP_THRESHOLD_MIN_DB, Math.min(PIP_THRESHOLD_MAX_DB, Number(value) || -55));
+  return Math.max(PIP_THRESHOLD_MIN_DB, Math.min(PIP_THRESHOLD_MAX_DB, Math.round(threshold / PIP_THRESHOLD_STEP_DB) * PIP_THRESHOLD_STEP_DB));
+}
+function pipVideoSource(thresholdDb) {
+  return `/assets/pip-audio-threshold-${Math.abs(thresholdDb)}.mp4?v=3.6.0`;
+}
+function pipVisualMode(audio = {}) {
+  const view = audioPresentation(audio);
+  if (view.label === '未就绪') return 0;
+  if (view.label === '音频正常') return 1;
+  if (view.label === '报警') return 6;
+  const limit = Math.max(10, Number(audio.silenceDurationSeconds) || 120);
+  const silent = Math.max(0, Number(audio.silentForSeconds) || 0);
+  const ratio = Math.min(1, silent / limit);
+  if (limit - silent <= 10) return 6;
+  if (ratio >= 0.75) return 5;
+  if (ratio >= 0.5) return 4;
+  if (ratio >= 0.25) return 3;
+  return 2;
+}
 function renderMeter(meter) {
   if (!state) return;
   state.audio ||= {};
   if (typeof meter.activeInputName === 'string' && meter.activeInputName) state.audio.inputName = meter.activeInputName;
-  state.audio.levelDb = typeof meter.levelDb === 'number' ? meter.levelDb : null;
+  state.audio.levelDb = typeof meter.levelDb === 'number' && Number.isFinite(meter.levelDb) ? meter.levelDb : null;
   $('audio-input').textContent = state.audio.inputName || '未选择音源';
   $('audio-db').textContent = state.audio.levelDb == null ? '-- dB' : `${state.audio.levelDb.toFixed(1)} dB`;
   $('audio-level').style.transform = `scaleX(${levelPct(state.audio.levelDb) / 100})`;
@@ -154,7 +190,8 @@ function render() {
   $('device-subtitle').textContent = device?.roomName || device?.label || '远程监看'; setOnline(Boolean(state.desktopOnline ?? true));
   $('audio-input').textContent = audio.inputName || '未选择音源'; $('audio-status').textContent = audio.display || '--'; $('audio-db').textContent = audio.levelDb == null ? '-- dB' : `${audio.levelDb.toFixed(1)} dB`;
   $('audio-level').style.transform = `scaleX(${levelPct(audio.levelDb) / 100})`; $('audio-threshold').style.left = `${levelPct(audio.thresholdDb)}%`; $('audio-hint').textContent = audio.hint || '等待状态'; $('audio-silence').textContent = audio.silentForSeconds ? `${audio.silentForSeconds}s` : '';
-  setPill($('audio-state-chip'), audio.tone === 'danger' ? '报警' : audio.tone === 'warning' ? '静音计时' : audio.ready ? '音频正常' : '未就绪', audio.tone || '');
+  const audioView = audioPresentation(audio);
+  setPill($('audio-state-chip'), audioView.label, audioView.tone);
   const labels = atem.inputLabels || {}; $('camera-number').textContent = `PGM ${atem.programInput || '--'}`; $('camera-name').textContent = labels[atem.programInput] || '未读取机位'; $('camera-time').textContent = formatTime(atem.elapsedSeconds);
   const limit = Math.max(10, atem.limitSeconds || 600), progress = Math.min(100,(atem.elapsedSeconds||0)/limit*100); $('camera-progress').style.width = `${progress}%`; $('camera-hint').textContent = atem.overLimit ? `已超时 ${formatTime(atem.elapsedSeconds-limit)}` : `剩余 ${formatTime(limit-(atem.elapsedSeconds||0))}`; $('preview-summary').textContent = `PVW ${atem.previewInput || '--'}`;
   setPill($('camera-state-chip'), !atem.connected ? '未连接' : atem.overLimit ? '机位超时' : '计时中', atem.overLimit ? 'danger' : atem.elapsedSeconds >= limit*.75 ? 'warning' : '');
@@ -194,7 +231,8 @@ function drawPipFrame() {
   const level = levelPct(audio.levelDb) / 100;
   const threshold = levelPct(audio.thresholdDb) / 100;
   const audioTone = audio.tone === 'danger' ? '#ef4444' : audio.tone === 'warning' ? '#eab308' : '#22c55e';
-  const statusText = audio.tone === 'danger' ? '麦克风无声' : audio.tone === 'warning' ? '静音计时中' : audio.ready ? '音频正常' : '等待音频';
+  const audioView = audioPresentation(audio);
+  const statusText = audioView.label === '报警' ? '麦克风无声' : audioView.label === '静音计时' ? '静音计时中' : audioView.label === '音频正常' ? '音频正常' : '等待音频';
   const glow = audio.tone === 'danger' ? 'rgba(239,68,68,.2)' : audio.tone === 'warning' ? 'rgba(234,179,8,.18)' : 'rgba(34,197,94,.18)';
 
   context.clearRect(0, 0, width, height);
@@ -255,91 +293,102 @@ function drawPipFrame() {
   context.font = '700 13px -apple-system, BlinkMacSystemFont, sans-serif';
   context.fillText(audio.silentForSeconds ? `已静音 ${audio.silentForSeconds}s` : '实时麦克风监测', width - 24, 205);
 
-  pipCaptureRenderer?.render();
+  syncPipVideoFrame();
+  updatePipCaption();
 }
 
-function createWebGLCaptureRenderer(source, target) {
-  const gl = target.getContext('webgl', {
-    alpha: false,
-    antialias: false,
-    depth: false,
-    preserveDrawingBuffer: true,
-    powerPreference: 'low-power'
-  }) || target.getContext('experimental-webgl', { alpha: false, preserveDrawingBuffer: true });
-  if (!gl) return null;
+function syncPipVideoFrame(force = false) {
+  const video = $('pip-video');
+  if (video.readyState < HTMLMediaElement.HAVE_METADATA || !Number.isFinite(video.duration)) return;
+  const current = performance.now();
+  if (!force && current - pipLastSeekAt < PIP_SYNC_MIN_INTERVAL_MS) return;
+  const audio = state?.audio || {};
+  const mode = pipVisualMode(audio);
+  const levelIndex = Math.round(levelPct(audio.levelDb) / 100 * PIP_LEVEL_STEPS);
+  const cell = mode * PIP_LEVEL_CELLS + levelIndex;
+  const start = cell * PIP_CELL_DURATION;
+  const target = start + 0.06;
+  const end = start + PIP_CELL_DURATION - 0.06;
+  const key = `${mode}:${levelIndex}`;
+  if (!force && key === pipFrameKey && video.currentTime >= start && video.currentTime <= end) return;
+  pipFrameKey = key;
+  pipLastSeekAt = current;
+  video.currentTime = Math.min(target, Math.max(0, video.duration - 0.1));
+}
 
-  const compileShader = (type, sourceCode) => {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, sourceCode);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error('pip_webgl_shader_failed');
-    return shader;
-  };
-  try {
-    const program = gl.createProgram();
-    gl.attachShader(program, compileShader(gl.VERTEX_SHADER, `
-      attribute vec2 position;
-      attribute vec2 textureCoordinate;
-      varying vec2 texturePosition;
-      void main() {
-        gl_Position = vec4(position, 0.0, 1.0);
-        texturePosition = textureCoordinate;
-      }
-    `));
-    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, `
-      precision mediump float;
-      varying vec2 texturePosition;
-      uniform sampler2D frame;
-      void main() {
-        gl_FragColor = texture2D(frame, texturePosition);
-      }
-    `));
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('pip_webgl_link_failed');
-    gl.useProgram(program);
+function startPipVideoSync() {
+  clearInterval(pipVideoSyncTimer);
+  syncPipVideoFrame(true);
+  pipVideoSyncTimer = setInterval(syncPipVideoFrame, 120);
+}
 
-    const bindAttribute = (name, values) => {
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STATIC_DRAW);
-      const location = gl.getAttribLocation(program, name);
-      gl.enableVertexAttribArray(location);
-      gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
-    };
-    bindAttribute('position', [-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]);
-    bindAttribute('textureCoordinate', [0,1, 1,1, 0,0, 0,0, 1,1, 1,0]);
+function stopPipVideoSync() {
+  clearInterval(pipVideoSyncTimer);
+  pipVideoSyncTimer = null;
+}
 
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.viewport(0, 0, target.width, target.height);
+function ensurePipCaptionTrack() {
+  if (pipCaptionTrack) return pipCaptionTrack;
+  const video = $('pip-video');
+  if (typeof video.addTextTrack !== 'function') return null;
+  pipCaptionTrack = video.addTextTrack('captions', '麦克风状态', 'zh-CN');
+  pipCaptionTrack.mode = 'showing';
+  return pipCaptionTrack;
+}
 
-    return {
-      canvas: target,
-      render() {
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        gl.flush();
-      }
-    };
-  } catch {
-    return null;
+function updatePipCaption() {
+  const track = ensurePipCaptionTrack();
+  if (!track || typeof globalThis.VTTCue !== 'function') return;
+  const audio = state?.audio || {};
+  const inputName = audio.inputName || '未选择麦克风';
+  const audioView = audioPresentation(audio);
+  const status = audioView.label === '报警' ? '麦克风无声' : audioView.label === '静音计时' ? '静音计时中' : audioView.label === '音频正常' ? '音频正常' : '等待音频';
+  const level = audio.levelDb == null ? '-- dB' : `${audio.levelDb.toFixed(1)} dB`;
+  const key = `${inputName}|${status}|${level}`;
+  if (key === pipCaptionKey) return;
+  pipCaptionKey = key;
+  for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+  const cue = new VTTCue(0, 86_400, `${inputName}\n${status}  ${level}`);
+  cue.align = 'center';
+  cue.line = 'auto';
+  track.addCue(cue);
+}
+
+function configurePipVideo() {
+  const video = $('pip-video');
+  const nextThresholdDb = pipThresholdAssetDb(state?.audio?.thresholdDb);
+  const systemPipActive = document.pictureInPictureElement === video || video.webkitPresentationMode === 'picture-in-picture';
+  if (nextThresholdDb !== pipVideoThresholdDb && !systemPipActive) {
+    video.pause();
+    pipVideoThresholdDb = nextThresholdDb;
+    pipVideoPrepared = false;
+    pipFrameKey = '';
+    video.src = pipVideoSource(nextThresholdDb);
+    video.load();
   }
+  video.muted = true;
+  video.defaultMuted = true;
+  video.autoplay = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.setAttribute('playsinline', '');
+  video.setAttribute('webkit-playsinline', '');
+  video.removeAttribute('disablepictureinpicture');
+  ensurePipCaptionTrack();
+  updatePipCaption();
+  return video;
 }
 
-function getPipCaptureRenderer() {
-  if (pipCaptureRenderer) return pipCaptureRenderer;
-  const source = $('pip-canvas');
-  const target = $('pip-stream-canvas');
-  pipCaptureRenderer = createWebGLCaptureRenderer(source, target) || {
-    canvas: source,
-    render() { /* The source canvas is already current. */ }
+function primePipVideo() {
+  const video = configurePipVideo();
+  const markReady = () => {
+    if (video.videoWidth > 0) pipVideoPrepared = true;
+    updatePipCaption();
   };
-  return pipCaptureRenderer;
+  video.addEventListener('loadedmetadata', markReady);
+  video.addEventListener('canplay', markReady);
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) markReady();
+  void video.play().then(markReady).catch(() => { /* The first tap will start playback. */ });
 }
 
 function setPipButton(active, label = '画中画') {
@@ -355,23 +404,20 @@ function stopPipRenderer() {
 }
 
 function releasePipStream() {
-  pipPeerConnections?.forEach((connection) => connection.close());
-  pipPeerConnections = null;
-  if (pipStream && pipStream !== pipSourceStream) pipStream.getTracks().forEach((track) => track.stop());
-  if (pipSourceStream) pipSourceStream.getTracks().forEach((track) => track.stop());
-  pipStream = null;
-  pipSourceStream = null;
   const video = $('pip-video');
   video.pause();
-  video.srcObject = null;
+  stopPipVideoSync();
+  pipVideoPrepared = video.readyState >= HTMLMediaElement.HAVE_METADATA && video.videoWidth > 0;
+  $('pip-media').classList.remove('pip-ready');
 }
 
-function leaveFallbackPip() {
+function closePipSurface() {
   fallbackPipActive = false;
-  $('pip-media').classList.remove('fallback-active');
+  $('pip-media').classList.remove('fallback-active', 'pip-ready');
   $('pip-media').setAttribute('aria-hidden', 'true');
   setPipButton(false);
   stopPipRenderer();
+  releasePipStream();
 }
 
 function useInlinePipFallback(message) {
@@ -406,90 +452,30 @@ function waitForVideoMetadata(video, timeoutMs = 3200) {
   });
 }
 
-function startPipRenderer() {
-  stopPipRenderer();
-  drawPipFrame();
-  pipRenderTimer = setInterval(drawPipFrame, 200);
-}
-
-function waitForIceGathering(connection, timeoutMs = 2600) {
-  if (connection.iceGatheringState === 'complete') return Promise.resolve();
-  return new Promise((resolve) => {
-    const timeout = setTimeout(finish, timeoutMs);
-    const finish = () => {
-      clearTimeout(timeout);
-      connection.removeEventListener('icegatheringstatechange', handleChange);
-      resolve();
-    };
-    const handleChange = () => {
-      if (connection.iceGatheringState === 'complete') finish();
-    };
-    connection.addEventListener('icegatheringstatechange', handleChange);
-  });
-}
-
-async function createLoopbackVideoStream(sourceStream) {
-  if (typeof RTCPeerConnection !== 'function') return sourceStream;
-  const sender = new RTCPeerConnection({ iceServers: [] });
-  const receiver = new RTCPeerConnection({ iceServers: [] });
-  pipPeerConnections = [sender, receiver];
-
-  const remoteStreamPromise = new Promise((resolve) => {
-    receiver.addEventListener('track', (event) => {
-      resolve(event.streams[0] || new MediaStream([event.track]));
-    }, { once: true });
-  });
-
-  const track = sourceStream.getVideoTracks()[0];
-  const transceiver = sender.addTransceiver(track, { direction: 'sendonly', streams: [sourceStream] });
-  if (typeof transceiver.setCodecPreferences === 'function' && globalThis.RTCRtpSender?.getCapabilities) {
-    const codecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
-    const h264 = codecs.filter((codec) => /video\/h264/i.test(codec.mimeType));
-    if (h264.length) transceiver.setCodecPreferences([...h264, ...codecs.filter((codec) => !h264.includes(codec))]);
-  }
-
-  await sender.setLocalDescription(await sender.createOffer());
-  await waitForIceGathering(sender);
-  await receiver.setRemoteDescription(sender.localDescription);
-  await receiver.setLocalDescription(await receiver.createAnswer());
-  await waitForIceGathering(receiver);
-  await sender.setRemoteDescription(receiver.localDescription);
-  return Promise.race([
-    remoteStreamPromise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('pip_webrtc_timeout')), 5000))
-  ]);
-}
-
 async function preparePipVideo() {
-  const video = $('pip-video');
-  const renderer = getPipCaptureRenderer();
-  if (typeof renderer.canvas.captureStream !== 'function') throw new Error('canvas_stream_unsupported');
-
-  releasePipStream();
-  drawPipFrame();
-  renderer.render();
-  pipSourceStream = renderer.canvas.captureStream(isIOS ? 5 : 8);
-  const videoTrack = pipSourceStream.getVideoTracks()[0];
-  if (!videoTrack) throw new Error('pip_video_track_missing');
-  pipStream = isIOS ? await createLoopbackVideoStream(pipSourceStream) : pipSourceStream;
-
-  video.muted = true;
-  video.defaultMuted = true;
-  video.autoplay = true;
-  video.playsInline = true;
-  video.setAttribute('playsinline', '');
-  video.setAttribute('webkit-playsinline', '');
-  video.removeAttribute('disablepictureinpicture');
-  video.srcObject = pipStream;
-  startPipRenderer();
+  const video = configurePipVideo();
+  if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.videoWidth <= 0) {
+    video.load();
+    await waitForVideoMetadata(video, 6000);
+  }
   await video.play();
-  await waitForVideoMetadata(video);
-  renderer.render();
+  startPipVideoSync();
+  updatePipCaption();
+  pipVideoPrepared = true;
   return video;
 }
 
 async function enterSystemPip(video) {
   let standardError = null;
+  if (isIOS && typeof video.webkitSetPresentationMode === 'function') {
+    const supportsPip = typeof video.webkitSupportsPresentationMode !== 'function'
+      || video.webkitSupportsPresentationMode('picture-in-picture');
+    if (supportsPip) {
+      video.webkitSetPresentationMode('picture-in-picture');
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (video.webkitPresentationMode === 'picture-in-picture') return true;
+    }
+  }
   if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') {
     try {
       await video.requestPictureInPicture();
@@ -498,7 +484,7 @@ async function enterSystemPip(video) {
       standardError = error;
     }
   }
-  if (typeof video.webkitSetPresentationMode === 'function') {
+  if (!isIOS && typeof video.webkitSetPresentationMode === 'function') {
     const supportsPip = typeof video.webkitSupportsPresentationMode !== 'function'
       || video.webkitSupportsPresentationMode('picture-in-picture');
     if (supportsPip) {
@@ -512,15 +498,15 @@ async function enterSystemPip(video) {
 
 function pipFallbackMessage(error) {
   if (isStandaloneApp && isIOS) return '主屏幕 Web App 暂不支持系统画中画，请用 Safari 打开链接；已使用页面内悬浮窗';
-  if (isIOS && error?.message === 'canvas_stream_unsupported') return '当前 iPhone 系统版本无法生成动态画中画，已使用页面内悬浮窗';
-  if (isIOS) return '系统画中画未启用，请在 Safari 中打开并检查画中画设置；已使用页面内悬浮窗';
+  if (isIOS && error?.message === 'pip_video_failed') return '画中画视频加载失败，请刷新页面重试；已使用页面内悬浮窗';
+  if (isIOS) return '此 Safari 未允许网页进入系统画中画，已使用页面内悬浮监看';
   return '系统画中画不可用，已切换为页面内悬浮监看';
 }
 
 async function openPictureInPicture() {
   const video = $('pip-video');
   if (pipStarting) return;
-  if (fallbackPipActive) return leaveFallbackPip();
+  if (fallbackPipActive) return closePipSurface();
   if (video.webkitPresentationMode === 'picture-in-picture') {
     video.webkitSetPresentationMode('inline');
     return;
@@ -529,11 +515,23 @@ async function openPictureInPicture() {
     await document.exitPictureInPicture();
     return;
   }
+  configurePipVideo();
   pipStarting = true;
   $('pip-monitor').disabled = true;
-  setPipButton(false, '正在准备');
+  setPipButton(false, pipVideoPrepared ? '正在打开' : '正在准备');
   try {
-    await enterSystemPip(await preparePipVideo());
+    if (isIOS && !pipVideoPrepared) {
+      await preparePipVideo();
+      $('pip-media').classList.add('pip-ready');
+      $('pip-media').setAttribute('aria-hidden', 'false');
+      setPipButton(false, '再次点击进入');
+      toast('视频已准备好，请再次点击“再次点击进入”打开系统画中画');
+      return;
+    }
+    const video = pipVideoPrepared ? $('pip-video') : await preparePipVideo();
+    await enterSystemPip(video);
+    $('pip-media').classList.remove('pip-ready');
+    $('pip-media').setAttribute('aria-hidden', 'true');
     setPipButton(true, '画中画中');
   } catch (error) {
     releasePipStream();
@@ -545,14 +543,16 @@ async function openPictureInPicture() {
 }
 
 $('pip-monitor').addEventListener('click', () => void openPictureInPicture());
-$('pip-fallback-close').addEventListener('click', leaveFallbackPip);
+$('pip-fallback-close').addEventListener('click', closePipSurface);
 $('pip-video').addEventListener('enterpictureinpicture', () => setPipButton(true, '画中画中'));
+$('pip-video').addEventListener('enterpictureinpicture', startPipVideoSync);
 $('pip-video').addEventListener('leavepictureinpicture', () => { setPipButton(false); stopPipRenderer(); releasePipStream(); });
 $('pip-video').addEventListener('webkitpresentationmodechanged', (event) => {
-  if (event.target.webkitPresentationMode === 'picture-in-picture') setPipButton(true, '画中画中');
+  if (event.target.webkitPresentationMode === 'picture-in-picture') { setPipButton(true, '画中画中'); startPipVideoSync(); }
   else if (!pipStarting) { setPipButton(false); stopPipRenderer(); releasePipStream(); }
 });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && (document.pictureInPictureElement || $('pip-video').webkitPresentationMode === 'picture-in-picture')) drawPipFrame();
+  if (!document.hidden && (document.pictureInPictureElement || $('pip-video').webkitPresentationMode === 'picture-in-picture')) updatePipCaption();
 });
 start();
+primePipVideo();

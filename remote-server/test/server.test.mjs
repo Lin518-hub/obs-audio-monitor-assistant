@@ -105,6 +105,21 @@ test('requires approval before a mobile browser receives access', async () => {
   mobile.clear();
   secondMobile.clear();
 
+  desktop.socket.send(JSON.stringify({
+    type: 'state',
+    state: {
+      desktopOnline: true,
+      audio: { ready: false, tone: 'safe', levelDb: null, lastMeterReceivedAt: null, silentForSeconds: 0, display: '正在讲话', hint: '音频正常' },
+      obs: { connected: true, streaming: false, recording: false }
+    }
+  }));
+  const [waitingState, secondWaitingState] = await Promise.all([mobile.next(), secondMobile.next()]);
+  assert.equal(waitingState.type, 'state');
+  assert.equal(waitingState.state.audio.levelDb, null);
+  assert.equal(waitingState.state.audio.ready, false);
+  assert.equal(waitingState.state.audio.display, '等待音频数据');
+  assert.equal(secondWaitingState.state.audio.display, '等待音频数据');
+
   mobile.socket.send(JSON.stringify({ type: 'command', id: 'unconfirmed-auto', command: 'atem.auto', payload: {} }));
   const unconfirmedResult = await mobile.next();
   assert.equal(unconfirmedResult.id, 'unconfirmed-auto');
@@ -117,6 +132,12 @@ test('requires approval before a mobile browser receives access', async () => {
   assert.equal(meter.meter.activeInputName, 'Mic');
   assert.equal(meter.meter.levelDb, -18.25);
   assert.equal(secondMeter.type, 'meter');
+
+  desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: null } }));
+  const [emptyMeter, secondEmptyMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
+  assert.equal(emptyMeter.type, 'meter');
+  assert.equal(emptyMeter.meter.levelDb, null);
+  assert.equal(secondEmptyMeter.meter.levelDb, null);
 
   mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: { confirmed: true } }));
   const commandResult = await mobile.next();
@@ -140,4 +161,15 @@ test('requires approval before a mobile browser receives access', async () => {
   assert.equal(denied.response.status, 403);
   secondMobile.socket.close();
   desktop.socket.close();
+});
+
+test('serves the native picture-in-picture video with byte ranges', async () => {
+  const response = await fetch(`${base}/assets/pip-audio-threshold-55.mp4`, {
+    headers: { Range: 'bytes=0-99' }
+  });
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('content-type'), 'video/mp4');
+  assert.equal(response.headers.get('accept-ranges'), 'bytes');
+  assert.match(response.headers.get('content-range') || '', /^bytes 0-99\/\d+$/);
+  assert.equal((await response.arrayBuffer()).byteLength, 100);
 });

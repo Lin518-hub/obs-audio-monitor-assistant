@@ -289,6 +289,16 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     return this.inputs;
   }
 
+  async openProgramProjector(): Promise<void> {
+    if (!this.obs || !this.state.connected) {
+      throw new Error('OBS WebSocket 尚未连接');
+    }
+    await this.obs.call('OpenVideoMixProjector', {
+      videoMixType: 'OBS_WEBSOCKET_VIDEO_MIX_TYPE_PROGRAM',
+      monitorIndex: -1
+    });
+  }
+
   handleAlertAction(action: AlertAction): AppSnapshot {
     if (this.testAlertRestore) {
       this.state = this.testAlertRestore.state;

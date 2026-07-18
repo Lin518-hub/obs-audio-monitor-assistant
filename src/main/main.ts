@@ -10,9 +10,17 @@ import { ATEMSessionStore } from './ATEMSessionStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
+import { PreflightCheckService } from './preflightCheck.js';
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
-import { DEFAULT_CONFIG, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { isPreflightAppId } from '../shared/preflight.js';
+import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+
+// GUI/background launches can outlive the terminal that originally owned
+// stdout/stderr. Diagnostic writes must not crash Electron after that pipe closes.
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on('error', (_error: NodeJS.ErrnoException) => undefined);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -71,6 +79,7 @@ let pendingATEMSessionStop: { endedAt: number; state: ReturnType<ATEMMonitor['ge
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
 let remoteBridge: RemoteBridge;
+let preflightCheckService: PreflightCheckService;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
@@ -141,6 +150,7 @@ async function initializeApp(): Promise<void> {
 
   atemMonitor = new ATEMMonitor();
   remoteBridge = new RemoteBridge();
+  preflightCheckService = new PreflightCheckService();
   latestSnapshot = injectATEMState(monitor.getSnapshot());
 
   remoteBridge.on('stateChanged', () => {
@@ -409,6 +419,50 @@ function registerIpc(): void {
   ipcMain.handle('update:check', () => checkForUpdates(true));
   ipcMain.handle('update:download', () => downloadUpdate());
   ipcMain.handle('update:install', () => installDownloadedUpdate());
+  ipcMain.handle('preflight:check', (_event, settings: unknown) => {
+    return preflightCheckService.check(preflightSettingsValue(settings).apps);
+  });
+  ipcMain.handle('preflight:launch-all', async (_event, settings: unknown) => {
+    const resolvedSettings = preflightSettingsValue(settings);
+    const result = await preflightCheckService.launchAll(resolvedSettings);
+    result.projector = await executePreflightProjector(resolvedSettings, false);
+    return result;
+  });
+  ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown) => {
+    if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
+    return preflightCheckService.launch(id, preflightSettingsValue(settings));
+  });
+  ipcMain.handle('preflight:discover', () => {
+    return preflightCheckService.discover();
+  });
+  ipcMain.handle('preflight:capture-layout', (_event, settings: unknown) => {
+    return preflightCheckService.captureLayout(preflightSettingsValue(settings));
+  });
+  ipcMain.handle('preflight:open-projector', (_event, settings: unknown) => {
+    return executePreflightProjector(preflightSettingsValue(settings), true);
+  });
+  ipcMain.handle('preflight:pick-target', async (_event, id: unknown) => {
+    if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
+    const labels = {
+      obs: 'OBS',
+      douyin: '抖音直播伴侣',
+      browser: '浏览器',
+      software_control: 'Software Control',
+      cosmic_cat: '宇宙猫检测'
+    } as const;
+    const options: Electron.OpenDialogOptions = {
+      title: `选择 ${labels[id]} 的快捷方式或程序`,
+      buttonLabel: '使用此程序',
+      properties: ['openFile'],
+      filters: process.platform === 'win32'
+        ? [{ name: '程序或快捷方式', extensions: ['exe', 'lnk', 'bat', 'cmd'] }, { name: '所有文件', extensions: ['*'] }]
+        : [{ name: '应用程序', extensions: ['app'] }, { name: '所有文件', extensions: ['*'] }]
+    };
+    const result = settingsWindow && !settingsWindow.isDestroyed()
+      ? await dialog.showOpenDialog(settingsWindow, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
   ipcMain.handle('atem:get-state', () => atemMonitor.getSnapshot());
   ipcMain.handle('atem:history-clear', async () => {
     atemSwitchHistory = await atemHistoryStore.clear();
@@ -439,6 +493,135 @@ function registerIpc(): void {
     latestSnapshot = merged;
     broadcastSnapshot(merged);
   });
+}
+
+function preflightConfigsValue(value: unknown): PreflightAppConfigs {
+  const fallback = (latestSnapshot ?? monitor.getSnapshot()).config.preflightApps;
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<Record<keyof PreflightAppConfigs, unknown>>
+    : {};
+  return Object.fromEntries(PREFLIGHT_APP_IDS.map((id) => {
+    const item = raw[id] && typeof raw[id] === 'object' && !Array.isArray(raw[id])
+      ? raw[id] as { enabled?: unknown; path?: unknown; restoreWindowPosition?: unknown; pathSource?: unknown; customLabel?: unknown; launchUrl?: unknown }
+      : {};
+    return [id, {
+      enabled: typeof item.enabled === 'boolean' ? item.enabled : fallback[id].enabled,
+      path: typeof item.path === 'string' ? item.path.trim().slice(0, 2048) : fallback[id].path,
+      restoreWindowPosition: typeof item.restoreWindowPosition === 'boolean' ? item.restoreWindowPosition : fallback[id].restoreWindowPosition,
+      pathSource: preflightPathSourceValue(item.pathSource, fallback[id].pathSource),
+      customLabel: typeof item.customLabel === 'string' ? item.customLabel.trim().slice(0, 32) : fallback[id].customLabel,
+      launchUrl: id === 'browser' && typeof item.launchUrl === 'string' ? item.launchUrl.trim().slice(0, 2048) : fallback[id].launchUrl
+    }];
+  })) as unknown as PreflightAppConfigs;
+}
+
+function preflightSettingsValue(value: unknown): PreflightSettings {
+  const fallbackConfig = (latestSnapshot ?? monitor.getSnapshot()).config;
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { apps?: unknown; projector?: unknown; windowPlacements?: unknown }
+    : {};
+  const projectorRaw = raw.projector && typeof raw.projector === 'object' && !Array.isArray(raw.projector)
+    ? raw.projector as { enabled?: unknown; restoreWindowPosition?: unknown }
+    : {};
+  return {
+    apps: preflightConfigsValue(raw.apps),
+    projector: {
+      enabled: typeof projectorRaw.enabled === 'boolean' ? projectorRaw.enabled : fallbackConfig.preflightProjector.enabled,
+      restoreWindowPosition: typeof projectorRaw.restoreWindowPosition === 'boolean'
+        ? projectorRaw.restoreWindowPosition
+        : fallbackConfig.preflightProjector.restoreWindowPosition
+    },
+    windowPlacements: preflightWindowPlacementsValue(raw.windowPlacements, fallbackConfig.preflightWindowPlacements)
+  };
+}
+
+function preflightWindowPlacementsValue(value: unknown, fallback: PreflightWindowPlacements): PreflightWindowPlacements {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
+  const result: PreflightWindowPlacements = {};
+  for (const target of [...PREFLIGHT_APP_IDS, 'obs_projector'] as const) {
+    const placement = preflightWindowPlacementValue((value as Record<string, unknown>)[target]);
+    if (placement) result[target] = placement;
+  }
+  return result;
+}
+
+function preflightWindowPlacementValue(value: unknown): PreflightWindowPlacement | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const workArea = preflightRectValue(raw.capturedWorkArea, false);
+  const normalized = preflightRectValue(raw.normalizedBounds, true);
+  if (!workArea || !normalized) return null;
+  return {
+    displayId: Number.isInteger(raw.displayId) ? Number(raw.displayId) : null,
+    displayLabel: typeof raw.displayLabel === 'string' ? raw.displayLabel.slice(0, 160) : '',
+    capturedWorkArea: workArea,
+    normalizedBounds: normalized,
+    windowState: raw.windowState === 'maximized' ? 'maximized' : 'normal',
+    capturedAt: Number.isFinite(raw.capturedAt) ? Math.max(0, Math.round(Number(raw.capturedAt))) : 0
+  };
+}
+
+function preflightRectValue(value: unknown, normalized: boolean): PreflightWindowPlacement['capturedWorkArea'] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const values = [raw.x, raw.y, raw.width, raw.height].map(Number);
+  if (!values.every(Number.isFinite) || values[2] <= 0 || values[3] <= 0) return null;
+  const [x, y, width, height] = values;
+  return normalized
+    ? { x: clamp(x, -4, 4), y: clamp(y, -4, 4), width: clamp(width, .05, 4), height: clamp(height, .05, 4) }
+    : { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+function preflightPathSourceValue(value: unknown, fallback: PreflightPathSource): PreflightPathSource {
+  return value === 'manual' || value === 'standard' || value === 'registry' || value === 'start_menu' || value === 'desktop'
+    ? value
+    : fallback;
+}
+
+async function executePreflightProjector(settings: PreflightSettings, force: boolean): Promise<PreflightProjectorResult> {
+  if (!force && !settings.projector.enabled) {
+    return { state: 'disabled', message: '节目输出投影未启用', positionRestored: false };
+  }
+
+  try {
+    if (process.platform === 'win32') {
+      const existing = await preflightCheckService.findOBSProjector(settings.apps);
+      if (existing) return { state: 'already_open', message: '节目输出投影已经打开，未移动现有窗口', positionRestored: false };
+    }
+
+    const connected = await waitForOBSConnection(30_000);
+    if (!connected) throw new Error('等待 OBS WebSocket 连接超时，请检查端口和密码');
+    const existingHandles = await preflightCheckService.listOBSWindowHandles(settings.apps);
+    await monitor.openProgramProjector();
+
+    let positionRestored = false;
+    if (process.platform === 'win32') {
+      const projector = await preflightCheckService.waitForNewOBSProjector(settings.apps, existingHandles);
+      if (!projector) throw new Error('OBS 已接受请求，但未找到新打开的节目输出投影窗口');
+      const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
+      if (placement) {
+        await preflightCheckService.restoreWindow(projector, placement);
+        positionRestored = true;
+      }
+    }
+
+    return {
+      state: 'opened',
+      message: positionRestored ? '节目输出投影已打开并恢复位置' : '节目输出投影已打开',
+      positionRestored
+    };
+  } catch (error) {
+    return { state: 'failed', message: error instanceof Error ? error.message : '打开节目输出投影失败', positionRestored: false };
+  }
+}
+
+async function waitForOBSConnection(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (monitor.getSnapshot().connected) return true;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return monitor.getSnapshot().connected;
 }
 
 // Merge ATEM state into an AppSnapshot

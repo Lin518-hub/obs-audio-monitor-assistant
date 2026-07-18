@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
-import { DEFAULT_CONFIG, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type PreflightAppConfigs, type PreflightPathSource, type PreflightWindowPlacement, type PreflightWindowPlacements, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -154,7 +154,10 @@ export class ConfigStore {
       atemHardCutConfirm: booleanValue(merged.atemHardCutConfirm, DEFAULT_CONFIG.atemHardCutConfirm),
       atemCameraTimeAlertEnabled: booleanValue(merged.atemCameraTimeAlertEnabled, DEFAULT_CONFIG.atemCameraTimeAlertEnabled),
       atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60),
-      atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations)
+      atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
+      preflightApps: preflightAppsValue(merged.preflightApps),
+      preflightProjector: preflightProjectorValue(merged.preflightProjector),
+      preflightWindowPlacements: preflightWindowPlacementsValue(merged.preflightWindowPlacements)
     };
   }
 
@@ -369,4 +372,91 @@ function atemInputCustomizationsValue(value: unknown): Record<string, ATEMInputC
     if (name || group || color !== defaultColor) result[inputId] = { name, group, color };
   }
   return result;
+}
+
+function preflightAppsValue(value: unknown): PreflightAppConfigs {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<Record<keyof PreflightAppConfigs, unknown>>
+    : {};
+  return Object.fromEntries(PREFLIGHT_APP_IDS.map((id) => {
+    const item = raw[id] && typeof raw[id] === 'object' && !Array.isArray(raw[id])
+      ? raw[id] as Partial<PreflightAppConfigs[typeof id]>
+      : {};
+    return [id, {
+      enabled: booleanValue(item.enabled, DEFAULT_CONFIG.preflightApps[id].enabled),
+      path: stringValue(item.path, DEFAULT_CONFIG.preflightApps[id].path).trim().slice(0, 2048),
+      restoreWindowPosition: booleanValue(item.restoreWindowPosition, DEFAULT_CONFIG.preflightApps[id].restoreWindowPosition),
+      pathSource: preflightPathSourceValue(item.pathSource),
+      customLabel: stringValue(item.customLabel, DEFAULT_CONFIG.preflightApps[id].customLabel).trim().slice(0, 32),
+      launchUrl: id === 'browser' ? preflightLaunchUrlValue(item.launchUrl) : ''
+    }];
+  })) as unknown as PreflightAppConfigs;
+}
+
+function preflightProjectorValue(value: unknown): AppConfig['preflightProjector'] {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<AppConfig['preflightProjector']>
+    : {};
+  return {
+    enabled: booleanValue(raw.enabled, DEFAULT_CONFIG.preflightProjector.enabled),
+    restoreWindowPosition: booleanValue(raw.restoreWindowPosition, DEFAULT_CONFIG.preflightProjector.restoreWindowPosition)
+  };
+}
+
+function preflightWindowPlacementsValue(value: unknown): PreflightWindowPlacements {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const allowed = new Set<string>([...PREFLIGHT_APP_IDS, 'obs_projector']);
+  const result: PreflightWindowPlacements = {};
+  for (const [target, rawPlacement] of Object.entries(value)) {
+    if (!allowed.has(target)) continue;
+    const placement = preflightWindowPlacementValue(rawPlacement);
+    if (placement) result[target as keyof PreflightWindowPlacements] = placement;
+  }
+  return result;
+}
+
+function preflightWindowPlacementValue(value: unknown): PreflightWindowPlacement | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Partial<PreflightWindowPlacement>;
+  const capturedWorkArea = preflightRectValue(raw.capturedWorkArea, false);
+  const normalizedBounds = preflightRectValue(raw.normalizedBounds, true);
+  if (!capturedWorkArea || !normalizedBounds) return null;
+  return {
+    displayId: nullableIntegerValue(raw.displayId),
+    displayLabel: stringValue(raw.displayLabel, '').trim().slice(0, 160),
+    capturedWorkArea,
+    normalizedBounds,
+    windowState: raw.windowState === 'maximized' ? 'maximized' : 'normal',
+    capturedAt: Math.max(0, Math.round(numberValue(raw.capturedAt, 0)))
+  };
+}
+
+function preflightRectValue(value: unknown, normalized: boolean): PreflightWindowPlacement['capturedWorkArea'] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Partial<PreflightWindowPlacement['capturedWorkArea']>;
+  const x = numberValue(raw.x, Number.NaN);
+  const y = numberValue(raw.y, Number.NaN);
+  const width = numberValue(raw.width, Number.NaN);
+  const height = numberValue(raw.height, Number.NaN);
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  return normalized
+    ? { x: clamp(x, -4, 4), y: clamp(y, -4, 4), width: clamp(width, .05, 4), height: clamp(height, .05, 4) }
+    : { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+function preflightPathSourceValue(value: unknown): PreflightPathSource {
+  return value === 'manual' || value === 'standard' || value === 'registry' || value === 'start_menu' || value === 'desktop'
+    ? value
+    : 'unknown';
+}
+
+function preflightLaunchUrlValue(value: unknown): string {
+  const candidate = stringValue(value, '').trim().slice(0, 2048);
+  if (!candidate) return '';
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
 }

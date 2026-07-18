@@ -24,6 +24,7 @@ const METER_SEND_INTERVAL_MS = 80;
 const LAN_CONNECT_TIMEOUT_MS = 2500;
 const PUBLIC_CONNECT_TIMEOUT_MS = 8000;
 const PUBLIC_FALLBACK_DELAY_MS = 350;
+const REMOTE_METER_FRESH_MS = 5000;
 
 export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private socket: WebSocket | null = null;
@@ -372,21 +373,81 @@ export function publicPairUrl(value: string | null): string | null {
   }
 }
 
+export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
+  const lastMeterAt = snapshot.lastAudioMeterReceivedAt;
+  const hasFreshMeter = snapshot.lastLevelDb !== null
+    && lastMeterAt !== null
+    && now - lastMeterAt <= REMOTE_METER_FRESH_MS;
+  const activelyMonitoring = snapshot.readinessReason === 'ready' || snapshot.readinessReason === 'alerting';
+  const ready = activelyMonitoring && hasFreshMeter;
+  const phase = !ready
+    ? 'idle'
+    : snapshot.alertVisible
+      ? 'alert'
+      : snapshot.audioSpeaking || snapshot.silentForSeconds < 3
+        ? 'speaking'
+        : 'silent';
+  const audioTone = ready
+    ? snapshot.alertVisible
+      ? 'danger'
+      : snapshot.silentForSeconds >= snapshot.config.silenceDurationSeconds * 0.75
+        ? 'warning'
+        : 'safe'
+    : '';
+
+  let display = '--';
+  let hint = '等待电脑上传音频状态';
+  if (!snapshot.connected || snapshot.readinessReason === 'obs_disconnected') {
+    display = 'OBS 未连接';
+    hint = '请先连接 OBS WebSocket';
+  } else if (snapshot.readinessReason === 'obs_connecting') {
+    display = 'OBS 连接中';
+    hint = '正在读取 OBS 状态';
+  } else if (snapshot.readinessReason === 'not_streaming_or_recording') {
+    display = '等待直播/录制';
+    hint = '开始直播、录制或模拟开播后检测';
+  } else if (snapshot.readinessReason === 'no_target_selected') {
+    display = '未选择音源';
+    hint = '请在电脑端选择需要守护的音源';
+  } else if (snapshot.readinessReason === 'target_missing') {
+    display = '音源不可用';
+    hint = '目标音源当前不在 OBS 输入列表中';
+  } else if (snapshot.readinessReason === 'paused') {
+    display = '检测已暂停';
+    hint = '请在电脑端恢复检测';
+  } else if (snapshot.readinessReason === 'snoozed') {
+    display = '暂时忽略';
+    hint = '忽略结束后会自动恢复检测';
+  } else if (!hasFreshMeter || snapshot.readinessReason === 'no_target_meter') {
+    display = '等待音频数据';
+    hint = lastMeterAt === null ? '尚未收到 OBS 电平数据' : '音频电平链路已中断';
+  } else if (ready) {
+    display = snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`;
+    hint = snapshot.audioSpeaking || snapshot.silentForSeconds < 3
+      ? '音频正常'
+      : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`;
+  }
+
+  return {
+    ready,
+    phase,
+    tone: audioTone,
+    inputName: snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName,
+    levelDb: hasFreshMeter ? snapshot.lastLevelDb : null,
+    thresholdDb: snapshot.config.silenceThresholdDb,
+    silenceDurationSeconds: snapshot.config.silenceDurationSeconds,
+    silentForSeconds: ready ? snapshot.silentForSeconds : 0,
+    display,
+    hint,
+    lastMeterReceivedAt: lastMeterAt
+  };
+}
+
 function remoteTelemetry(snapshot: AppSnapshot) {
-  const level = snapshot.lastLevelDb;
-  const audioTone = snapshot.alertVisible ? 'danger' : snapshot.silentForSeconds >= snapshot.config.silenceDurationSeconds * 0.75 ? 'warning' : 'safe';
   return {
     timestamp: Date.now(),
     desktopOnline: true,
-    audio: {
-      ready: snapshot.readinessReason === 'ready', tone: audioTone,
-      inputName: snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName,
-      levelDb: level, thresholdDb: snapshot.config.silenceThresholdDb,
-      silentForSeconds: snapshot.silentForSeconds,
-      display: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`,
-      hint: snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '音频正常' : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`,
-      lastMeterReceivedAt: snapshot.lastAudioMeterReceivedAt
-    },
+    audio: remoteAudioTelemetry(snapshot),
     atem: {
       connected: snapshot.atemConnected, programInput: snapshot.atemProgramInput, previewInput: snapshot.atemPreviewInput,
       inputIds: snapshot.atemInputIds, inputLabels: snapshot.atemInputLabels,

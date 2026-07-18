@@ -2,7 +2,7 @@
  * 集中声明 window.obsGuard API 的 TypeScript 类型。
  * 真实实现在 src/main/preload.cts,这里只做类型声明,避免每个组件重复写。
  */
-import type { AlertAction, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, AudioMeterFrame, InputOption, TestConnectionResult, UpdateSnapshot } from '../shared/types';
+import type { AlertAction, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, AudioMeterFrame, InputOption, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types';
 
 export interface ObsGuardApi {
   getSnapshot: () => Promise<AppSnapshot>;
@@ -27,6 +27,13 @@ export interface ObsGuardApi {
   checkForUpdates: () => Promise<UpdateSnapshot>;
   downloadUpdate: () => Promise<UpdateSnapshot>;
   installUpdate: () => Promise<UpdateSnapshot>;
+  checkPreflightApps: (settings: PreflightSettings) => Promise<PreflightCheckResult>;
+  launchPreflightApps: (settings: PreflightSettings) => Promise<PreflightLaunchResult>;
+  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings) => Promise<PreflightLaunchResult>;
+  discoverPreflightApps: () => Promise<PreflightDiscoveryResult>;
+  capturePreflightLayout: (settings: PreflightSettings) => Promise<PreflightLayoutCaptureResult>;
+  openPreflightProjector: (settings: PreflightSettings) => Promise<PreflightProjectorResult>;
+  pickPreflightTarget: (id: PreflightAppId) => Promise<string | null>;
   onSnapshot: (cb: (snapshot: AppSnapshot) => void) => () => void;
   onMeter: (cb: (frame: AudioMeterFrame) => void) => () => void;
   onUpdateState: (cb: (snapshot: UpdateSnapshot) => void) => () => void;

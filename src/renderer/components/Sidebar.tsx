@@ -1,10 +1,10 @@
 import React from 'react';
-import { Activity, Bell, History, LayoutDashboard, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
+import { Activity, Bell, History, LayoutDashboard, ListChecks, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
 import { APP_VERSION } from '../utils/appVersion';
 import { displayStatusText } from '../utils/status';
 import type { AppSnapshot } from '../../shared/types';
 
-export type SidebarPage = 'dashboard' | 'monitor' | 'atem' | 'history';
+export type SidebarPage = 'dashboard' | 'preflight' | 'monitor' | 'atem' | 'history';
 
 interface SidebarProps {
   snapshot: AppSnapshot;
@@ -16,12 +16,13 @@ interface SidebarProps {
 
 const groups: Array<{
   title: string;
-  items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[];
+  items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string; developerOnly?: boolean }[];
 }> = [
   {
     title: '直播监看',
     items: [
       { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+      { id: 'preflight', label: '开播检查', icon: ListChecks, badge: 'BETA', developerOnly: true },
       { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' }
     ]
   },
@@ -48,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, on
         {groups.map((group) => (
           <div className="sidebar-nav-group" key={group.title}>
             <div className="sidebar-nav-group-title">{group.title}</div>
-            {group.items.map((item) => {
+            {group.items.filter((item) => !item.developerOnly || snapshot.config.developerModeEnabled).map((item) => {
               const Icon = item.icon;
               const isActive = active === item.id;
               return (

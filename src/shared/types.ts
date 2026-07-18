@@ -241,6 +241,103 @@ export interface RemoteAccessSnapshot {
   lastSyncAt: number | null;
 }
 
+export const PREFLIGHT_APP_IDS = ['obs', 'douyin', 'browser', 'software_control', 'cosmic_cat'] as const;
+export type PreflightAppId = typeof PREFLIGHT_APP_IDS[number];
+
+export type PreflightPathSource = 'manual' | 'standard' | 'registry' | 'start_menu' | 'desktop' | 'unknown';
+
+export interface PreflightAppConfig {
+  enabled: boolean;
+  path: string;
+  restoreWindowPosition: boolean;
+  pathSource: PreflightPathSource;
+  customLabel: string;
+  launchUrl: string;
+}
+
+export type PreflightAppConfigs = Record<PreflightAppId, PreflightAppConfig>;
+export type PreflightPlacementTarget = PreflightAppId | 'obs_projector';
+export type PreflightWindowState = 'normal' | 'maximized';
+
+export interface PreflightRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreflightWindowPlacement {
+  displayId: number | null;
+  displayLabel: string;
+  capturedWorkArea: PreflightRect;
+  normalizedBounds: PreflightRect;
+  windowState: PreflightWindowState;
+  capturedAt: number;
+}
+
+export type PreflightWindowPlacements = Partial<Record<PreflightPlacementTarget, PreflightWindowPlacement>>;
+
+export interface PreflightProjectorConfig {
+  enabled: boolean;
+  restoreWindowPosition: boolean;
+}
+
+export interface PreflightSettings {
+  apps: PreflightAppConfigs;
+  projector: PreflightProjectorConfig;
+  windowPlacements: PreflightWindowPlacements;
+}
+
+export interface PreflightDiscoveryItem {
+  id: PreflightAppId;
+  path: string;
+  source: PreflightPathSource;
+}
+
+export interface PreflightDiscoveryResult {
+  platform: 'windows' | 'macos' | 'linux';
+  discovered: PreflightDiscoveryItem[];
+  message: string;
+}
+
+export interface PreflightLayoutCaptureResult {
+  platform: 'windows' | 'macos' | 'linux';
+  placements: PreflightWindowPlacements;
+  captured: PreflightPlacementTarget[];
+  failures: Partial<Record<PreflightPlacementTarget, string>>;
+  capturedAt: number;
+}
+
+export interface PreflightProjectorResult {
+  state: 'disabled' | 'opened' | 'already_open' | 'failed';
+  message: string;
+  positionRestored: boolean;
+}
+export type PreflightAppState = 'running' | 'not_running' | 'not_configured' | 'unsupported' | 'error';
+
+export interface PreflightAppStatus {
+  id: PreflightAppId;
+  state: PreflightAppState;
+  path: string;
+  pid: number | null;
+  detectedProcessName: string | null;
+  message: string;
+}
+
+export interface PreflightCheckResult {
+  platform: 'windows' | 'macos' | 'linux';
+  checkedAt: number;
+  apps: PreflightAppStatus[];
+}
+
+export interface PreflightLaunchResult extends PreflightCheckResult {
+  launched: PreflightAppId[];
+  failures: Partial<Record<PreflightAppId, string>>;
+  restored: PreflightPlacementTarget[];
+  restoreFailures: Partial<Record<PreflightPlacementTarget, string>>;
+  projector: PreflightProjectorResult | null;
+}
+
 export interface AppConfig {
   obsHost: string;
   obsPort: number;
@@ -287,6 +384,9 @@ export interface AppConfig {
   atemCameraTimeAlertEnabled: boolean;
   atemCameraTimeLimitSeconds: number;
   atemInputCustomizations: Record<string, ATEMInputCustomization>;
+  preflightApps: PreflightAppConfigs;
+  preflightProjector: PreflightProjectorConfig;
+  preflightWindowPlacements: PreflightWindowPlacements;
 }
 
 export interface InputOption {
@@ -408,5 +508,17 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
   atemCameraTimeLimitSeconds: 600,
-  atemInputCustomizations: {}
+  atemInputCustomizations: {},
+  preflightApps: {
+    obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    douyin: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    browser: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    software_control: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    cosmic_cat: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' }
+  },
+  preflightProjector: {
+    enabled: false,
+    restoreWindowPosition: true
+  },
+  preflightWindowPlacements: {}
 };

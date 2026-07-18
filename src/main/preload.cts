@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
+import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
 contextBridge.exposeInMainWorld('obsGuard', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld('obsGuard', {
   checkForUpdates: () => ipcRenderer.invoke('update:check') as Promise<UpdateSnapshot>,
   downloadUpdate: () => ipcRenderer.invoke('update:download') as Promise<UpdateSnapshot>,
   installUpdate: () => ipcRenderer.invoke('update:install') as Promise<UpdateSnapshot>,
+  checkPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:check', settings) as Promise<PreflightCheckResult>,
+  launchPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:launch-all', settings) as Promise<PreflightLaunchResult>,
+  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings) => ipcRenderer.invoke('preflight:launch', id, settings) as Promise<PreflightLaunchResult>,
+  discoverPreflightApps: () => ipcRenderer.invoke('preflight:discover') as Promise<PreflightDiscoveryResult>,
+  capturePreflightLayout: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:capture-layout', settings) as Promise<PreflightLayoutCaptureResult>,
+  openPreflightProjector: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:open-projector', settings) as Promise<PreflightProjectorResult>,
+  pickPreflightTarget: (id: PreflightAppId) => ipcRenderer.invoke('preflight:pick-target', id) as Promise<string | null>,
   onSnapshot: (callback: (snapshot: AppSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => callback(snapshot);
     ipcRenderer.on('snapshot', listener);

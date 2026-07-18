@@ -98,6 +98,60 @@ describe('ConfigStore', () => {
     expect((await new ConfigStore().load()).developerModeEnabled).toBe(false);
   });
 
+  it('normalizes and persists the developer-only preflight checklist', async () => {
+    const store = new ConfigStore();
+    const saved = await store.save({
+      ...DEFAULT_CONFIG,
+      preflightApps: {
+        ...DEFAULT_CONFIG.preflightApps,
+        obs: { enabled: false, path: '  C:\\Live\\OBS.lnk  ' },
+        douyin: { enabled: 'yes', path: 42 }
+      }
+    } as unknown as AppConfig);
+
+    expect(saved.preflightApps.obs).toEqual({
+      enabled: false,
+      path: 'C:\\Live\\OBS.lnk',
+      restoreWindowPosition: true,
+      pathSource: 'unknown',
+      customLabel: '',
+      launchUrl: ''
+    });
+    expect(saved.preflightApps.douyin).toEqual(DEFAULT_CONFIG.preflightApps.douyin);
+    expect((await new ConfigStore().load()).preflightApps.obs.path).toBe('C:\\Live\\OBS.lnk');
+  });
+
+  it('migrates preflight projector and saved window placement settings', async () => {
+    const store = new ConfigStore();
+    const saved = await store.save({
+      ...DEFAULT_CONFIG,
+      preflightProjector: { enabled: true, restoreWindowPosition: true },
+      preflightWindowPlacements: {
+        obs: {
+          displayId: 4,
+          displayLabel: 'Studio',
+          capturedWorkArea: { x: 0, y: 0, width: 1920, height: 1040 },
+          normalizedBounds: { x: .1, y: .2, width: .6, height: .7 },
+          windowState: 'maximized',
+          capturedAt: 1234
+        }
+      },
+      preflightApps: {
+        ...DEFAULT_CONFIG.preflightApps,
+        browser: {
+          ...DEFAULT_CONFIG.preflightApps.browser,
+          launchUrl: ' https://example.com/live ',
+          pathSource: 'registry'
+        }
+      }
+    });
+
+    expect(saved.preflightProjector.enabled).toBe(true);
+    expect(saved.preflightApps.browser.launchUrl).toBe('https://example.com/live');
+    expect(saved.preflightApps.browser.pathSource).toBe('registry');
+    expect(saved.preflightWindowPlacements.obs?.windowState).toBe('maximized');
+  });
+
   it('normalizes custom ATEM names, colors and groups', async () => {
     const store = new ConfigStore();
     const saved = await store.save({

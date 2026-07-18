@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OBSMonitor } from '../src/main/obsMonitor.js';
 import { DEFAULT_CONFIG, type AppConfig, type DisplayInfo } from '../src/shared/types.js';
 
@@ -89,5 +89,23 @@ describe('OBSMonitor test alert', () => {
     internals.recomputeAggregateState(now + 4500);
     expect(monitor.getSnapshot(now + 4500).audioSpeaking).toBe(false);
     await monitor.stop();
+  });
+
+  it('opens a windowed OBS program projector only while connected', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const call = vi.fn().mockResolvedValue({});
+    const internals = monitor as unknown as {
+      obs: { call: typeof call } | null;
+      state: { connected: boolean };
+    };
+    await expect(monitor.openProgramProjector()).rejects.toThrow('尚未连接');
+    internals.obs = { call };
+    internals.state.connected = true;
+
+    await monitor.openProgramProjector();
+    expect(call).toHaveBeenCalledWith('OpenVideoMixProjector', {
+      videoMixType: 'OBS_WEBSOCKET_VIDEO_MIX_TYPE_PROGRAM',
+      monitorIndex: -1
+    });
   });
 });

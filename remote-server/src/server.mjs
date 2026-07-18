@@ -80,6 +80,42 @@ const now = () => Date.now();
 const cleanText = (value, max = 80) => String(value || '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, max);
 const cleanUuid = (value) => /^[0-9a-f-]{20,64}$/i.test(String(value || '')) ? String(value) : '';
 
+function normalizeDesktopState(value) {
+  const state = value && typeof value === 'object' ? { ...value } : {};
+  const audio = state.audio && typeof state.audio === 'object' ? { ...state.audio } : {};
+  const rawLevel = audio.levelDb;
+  const lastMeterAt = Number(audio.lastMeterReceivedAt);
+  const hasFreshMeter = typeof rawLevel === 'number'
+    && Number.isFinite(rawLevel)
+    && Number.isFinite(lastMeterAt)
+    && now() - lastMeterAt <= 5000;
+
+  audio.levelDb = hasFreshMeter ? Math.max(-100, Math.min(12, rawLevel)) : null;
+  if (!hasFreshMeter) {
+    audio.ready = false;
+    audio.phase = 'idle';
+    audio.tone = '';
+    audio.silentForSeconds = 0;
+    audio.display = '等待音频数据';
+    audio.hint = Number.isFinite(lastMeterAt) && lastMeterAt > 0 ? '音频电平链路已中断' : '尚未收到 OBS 电平数据';
+  } else if (audio.ready !== true && audio.display === '正在讲话') {
+    const obs = state.obs && typeof state.obs === 'object' ? state.obs : {};
+    audio.display = obs.streaming || obs.recording ? '等待检测' : '等待直播/录制';
+    audio.hint = obs.streaming || obs.recording ? '电脑端检测尚未就绪' : '开始直播、录制或模拟开播后检测';
+  }
+  if (hasFreshMeter && !['idle', 'speaking', 'silent', 'alert'].includes(audio.phase)) {
+    audio.phase = audio.ready !== true
+      ? 'idle'
+      : audio.tone === 'danger'
+        ? 'alert'
+        : audio.display === '正在讲话'
+          ? 'speaking'
+          : 'silent';
+  }
+  state.audio = audio;
+  return state;
+}
+
 function pruneStoredData() {
   const current = now();
   const pendingCutoff = current - 24 * 60 * 60 * 1000;
@@ -226,17 +262,32 @@ function notifyAdmins() {
   // Admin UI polls; this hook keeps future websocket support localized.
 }
 
-async function serveFile(res, file, cache = false) {
+async function serveFile(req, res, file, cache = false) {
   try {
     const info = await stat(file);
     if (!info.isFile()) throw new Error('not_file');
     const mime = {
       '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
       '.json': 'application/json; charset=utf-8', '.yml': 'text/yaml; charset=utf-8', '.yaml': 'text/yaml; charset=utf-8',
-      '.zip': 'application/zip', '.exe': 'application/vnd.microsoft.portable-executable', '.blockmap': 'application/octet-stream'
+      '.mp4': 'video/mp4', '.zip': 'application/zip', '.exe': 'application/vnd.microsoft.portable-executable', '.blockmap': 'application/octet-stream'
     }[extname(file).toLowerCase()] || 'application/octet-stream';
     securityHeaders(res);
-    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': info.size, 'Cache-Control': cache ? 'public, max-age=300' : 'no-store' });
+    const headers = { 'Content-Type': mime, 'Accept-Ranges': 'bytes', 'Cache-Control': cache ? 'public, max-age=300' : 'no-store' };
+    const range = String(req.headers.range || '').match(/^bytes=(\d*)-(\d*)$/);
+    if (range) {
+      const start = range[1] ? Number(range[1]) : 0;
+      const requestedEnd = range[2] ? Number(range[2]) : info.size - 1;
+      const end = Math.min(requestedEnd, info.size - 1);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= info.size) {
+        res.writeHead(416, { ...headers, 'Content-Range': `bytes */${info.size}` });
+        return res.end();
+      }
+      res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${info.size}`, 'Content-Length': end - start + 1 });
+      if (req.method === 'HEAD') return res.end();
+      return createReadStream(file, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': info.size });
+    if (req.method === 'HEAD') return res.end();
     createReadStream(file).pipe(res);
   } catch {
     json(res, 404, { error: 'not_found' });
@@ -316,7 +367,11 @@ async function handleApi(req, res, url) {
     if (!device) return json(res, 404, { error: 'device_not_found' });
     approval.lastUsedAt = now();
     void saveData();
-    return json(res, 200, { approval: publicApproval(approval), device: publicDevice(device), state: device.lastState });
+    return json(res, 200, {
+      approval: publicApproval(approval),
+      device: publicDevice(device),
+      state: device.lastState ? normalizeDesktopState(device.lastState) : null
+    });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/admin/login') {
@@ -445,17 +500,17 @@ const requestListener = async (req, res) => {
     });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname === '/') return redirect(res, '/admin');
-    if (url.pathname === '/admin') return serveFile(res, join(publicDir, 'admin.html'));
-    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(res, join(publicDir, 'mobile.html'));
+    if (url.pathname === '/admin') return serveFile(req, res, join(publicDir, 'admin.html'));
+    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(req, res, join(publicDir, 'mobile.html'));
     if (url.pathname.startsWith('/assets/')) {
       const file = resolve(publicDir, `.${url.pathname}`);
       if (!file.startsWith(publicDir)) return json(res, 403, { error: 'forbidden' });
-      return serveFile(res, file, true);
+      return serveFile(req, res, file, true);
     }
     if (url.pathname.startsWith('/updates/')) {
       const file = resolve(updateDir, `.${url.pathname.slice('/updates'.length)}`);
       if (!file.startsWith(updateDir)) return json(res, 403, { error: 'forbidden' });
-      return serveFile(res, file, true);
+      return serveFile(req, res, file, true);
     }
     return json(res, 404, { error: 'not_found' });
   } catch (error) {
@@ -523,20 +578,23 @@ wss.on('connection', (socket, req, url) => {
       try {
         const message = JSON.parse(raw.toString());
         if (message.type === 'state' && message.state && typeof message.state === 'object') {
-          device.lastState = message.state;
+          device.lastState = normalizeDesktopState(message.state);
           device.lastSeenAt = now();
           broadcastMobile(uuid, { type: 'state', state: device.lastState });
           socket.send(JSON.stringify({ type: 'state-ack', receivedAt: now() }));
         } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
           socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
         } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
-          const levelDb = Number(message.meter.levelDb);
+          const rawLevelDb = message.meter.levelDb;
+          const levelDb = typeof rawLevelDb === 'number' && Number.isFinite(rawLevelDb)
+            ? Math.max(-100, Math.min(12, rawLevelDb))
+            : null;
           broadcastMobile(uuid, {
             type: 'meter',
             meter: {
               timestamp: Number.isFinite(Number(message.meter.timestamp)) ? Number(message.meter.timestamp) : now(),
               activeInputName: cleanText(message.meter.activeInputName, 100),
-              levelDb: Number.isFinite(levelDb) ? Math.max(-100, Math.min(12, levelDb)) : null
+              levelDb
             }
           });
         }
@@ -560,7 +618,7 @@ wss.on('connection', (socket, req, url) => {
   mobileSockets.set(device.uuid, sockets);
   notifyDesktopPresence(device.uuid);
   approval.lastUsedAt = now();
-  socket.send(JSON.stringify({ type: 'state', state: device.lastState }));
+  socket.send(JSON.stringify({ type: 'state', state: device.lastState ? normalizeDesktopState(device.lastState) : null }));
   socket.send(JSON.stringify({ type: 'device-status', online: desktopSockets.has(device.uuid) }));
   socket.on('message', (raw) => {
     try {

@@ -12,6 +12,7 @@ import './styles/settings.css';
 import './styles/windows.css';
 import './styles/dialogs.css';
 import './styles/onboarding.css';
+import './styles/preflight.css';
 
 import { Activity, ArrowRight, BarChart3, Cable, Clock3, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Video } from 'lucide-react';
 import { Sidebar, type SidebarPage } from './components/Sidebar';
@@ -33,6 +34,7 @@ import { PreAlertApp } from './components/PreAlertApp';
 import { FloatingApp } from './components/FloatingApp';
 import { ToastAlertApp } from './components/ToastAlertApp';
 import { StyledSelect } from './components/StyledSelect';
+import { PreflightCheckPage } from './components/PreflightCheckPage';
 
 import { useSnapshot } from './hooks/useSnapshot';
 import { useUpdateState } from './hooks/useUpdateState';
@@ -130,6 +132,12 @@ function SettingsApp() {
   useEffect(() => {
     setSearch('');
   }, [page]);
+
+  useEffect(() => {
+    if (page === 'preflight' && snapshot && !snapshot.config.developerModeEnabled) {
+      setPage('dashboard');
+    }
+  }, [page, snapshot]);
 
   // ATEM Beta 应用内快捷键：ATEM 页面中数字键 1-9 选 Preview，Enter 执行 AUTO。
   useEffect(() => {
@@ -291,6 +299,14 @@ function SettingsApp() {
         </>
       )}
 
+      {page === 'preflight' && (
+        <PreflightCheckPage
+          draft={draft}
+          search={search}
+          onChange={updateDraft}
+        />
+      )}
+
       {page === 'atem' && (
         <ATEMConsole
           snapshot={snapshot}
@@ -334,7 +350,7 @@ function SettingsApp() {
       />
       <section className="app-main-content">
         <TopBar
-          searchPlaceholder={page === 'history' ? '搜索报警记录…' : page === 'atem' ? '搜索 ATEM 机位…' : '搜索音源、历史记录…'}
+          searchPlaceholder={page === 'history' ? '搜索报警记录…' : page === 'atem' ? '搜索 ATEM 机位…' : page === 'preflight' ? '搜索开播项目…' : '搜索音源、历史记录…'}
           onSearchChange={setSearch}
           saveLabel={saveLabel}
           onNotifications={() => openSettings('updates')}

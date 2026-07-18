@@ -4,9 +4,11 @@ import {
   PUBLIC_REMOTE_SERVER_URL,
   proxyDirectiveUrl,
   publicPairUrl,
+  remoteAudioTelemetry,
   remoteRouteType,
   remoteServerCandidates
 } from '../src/main/RemoteBridge.js';
+import type { AppSnapshot } from '../src/shared/types.js';
 
 describe('remote server selection', () => {
   it('prefers the LAN route and falls back to public HTTPS for the built-in service', () => {
@@ -50,5 +52,76 @@ describe('system proxy routing', () => {
 
   it('keeps direct connections agent-free', () => {
     expect(proxyDirectiveUrl('DIRECT')).toBeNull();
+  });
+});
+
+describe('remote audio telemetry', () => {
+  const snapshot = (patch: Partial<AppSnapshot>): AppSnapshot => ({
+    connected: true,
+    streaming: true,
+    recording: false,
+    simulatedLive: false,
+    activeInputName: '麦克风/Aux',
+    lastLevelDb: null,
+    lastAudioMeterReceivedAt: null,
+    audioSpeaking: false,
+    silentForSeconds: 0,
+    alertVisible: false,
+    readinessReason: 'no_target_meter',
+    config: {
+      targetInputNames: ['麦克风/Aux'],
+      targetInputName: '麦克风/Aux',
+      silenceThresholdDb: -55,
+      silenceDurationSeconds: 120
+    },
+    ...patch
+  } as AppSnapshot);
+
+  it('keeps missing meter data out of the speaking state', () => {
+    const audio = remoteAudioTelemetry(snapshot({}), 10_000);
+    expect(audio.ready).toBe(false);
+    expect(audio.phase).toBe('idle');
+    expect(audio.levelDb).toBeNull();
+    expect(audio.display).toBe('等待音频数据');
+    expect(audio.hint).toBe('尚未收到 OBS 电平数据');
+  });
+
+  it('shows speaking only while monitoring with a fresh valid meter', () => {
+    const audio = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -21.5,
+      lastAudioMeterReceivedAt: 9_500,
+      audioSpeaking: true,
+      readinessReason: 'ready'
+    }), 10_000);
+    expect(audio.ready).toBe(true);
+    expect(audio.phase).toBe('speaking');
+    expect(audio.levelDb).toBe(-21.5);
+    expect(audio.display).toBe('正在讲话');
+  });
+
+  it('keeps silence state separate from the gradual warning color', () => {
+    const audio = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -72,
+      lastAudioMeterReceivedAt: 9_500,
+      audioSpeaking: false,
+      silentForSeconds: 8,
+      readinessReason: 'ready'
+    }), 10_000);
+    expect(audio.ready).toBe(true);
+    expect(audio.phase).toBe('silent');
+    expect(audio.tone).toBe('safe');
+    expect(audio.display).toBe('8s');
+  });
+
+  it('marks an old meter chain as interrupted instead of reusing its level', () => {
+    const audio = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -18,
+      lastAudioMeterReceivedAt: 1_000,
+      readinessReason: 'ready'
+    }), 10_000);
+    expect(audio.ready).toBe(false);
+    expect(audio.levelDb).toBeNull();
+    expect(audio.display).toBe('等待音频数据');
+    expect(audio.hint).toBe('音频电平链路已中断');
   });
 });
