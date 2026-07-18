@@ -34,6 +34,7 @@ export interface ObsGuardApi {
   capturePreflightLayout: (settings: PreflightSettings) => Promise<PreflightLayoutCaptureResult>;
   openPreflightProjector: (settings: PreflightSettings) => Promise<PreflightProjectorResult>;
   pickPreflightTarget: (id: PreflightAppId) => Promise<string | null>;
+  getDroppedPreflightPath: (file: File) => string;
   onSnapshot: (cb: (snapshot: AppSnapshot) => void) => () => void;
   onMeter: (cb: (frame: AudioMeterFrame) => void) => () => void;
   onUpdateState: (cb: (snapshot: UpdateSnapshot) => void) => () => void;

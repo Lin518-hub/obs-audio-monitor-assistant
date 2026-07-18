@@ -8,7 +8,26 @@
 
 .preflight-page-header { align-items: center; padding-bottom: 0; }
 .preflight-page-header h1 { display: flex; align-items: center; gap: 10px; }
+.preflight-header-actions { display: flex; align-items: center; gap: 10px; }
 .preflight-launch-all { min-width: 148px; }
+.preflight-scan-button {
+  min-width: 132px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .76);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 750;
+  transition: border-color 180ms var(--ease-out-soft), background 180ms var(--ease-out-soft), color 180ms var(--ease-out-soft), transform 180ms var(--ease-out-soft);
+}
+.preflight-scan-button:hover { border-color: var(--green-300); background: var(--green-50); color: var(--green-700); transform: translateY(-1px); }
+.preflight-scan-button:disabled { opacity: .56; transform: none; cursor: default; }
 
 .preflight-summary {
   display: grid;
@@ -232,10 +251,13 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--r-md);
   background: rgba(255, 255, 255, .66);
+  transition: border-color 180ms var(--ease-out-soft), background 180ms var(--ease-out-soft), box-shadow 180ms var(--ease-out-soft);
 }
+.preflight-path-setting.dragging { border-color: var(--green-400); background: rgba(220, 252, 231, .76); box-shadow: 0 0 0 3px rgba(34, 197, 94, .1) inset; }
 .preflight-path-setting > div:first-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
 .preflight-path-setting strong { color: var(--text-primary); font-size: 11.5px; }
 .preflight-path-setting span { overflow: hidden; color: var(--text-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.preflight-path-setting small { display: inline-flex; align-items: center; gap: 5px; color: var(--green-700); font-size: 9.5px; font-weight: 650; }
 .preflight-path-setting > div:last-child { display: flex; flex: 0 0 auto; gap: 7px; }
 .preflight-row.expanded .preflight-row-details {
   max-height: 680px;
@@ -307,6 +329,8 @@
 
 @container main-content (max-width: 620px) {
   .preflight-page-header { align-items: flex-start; }
+  .preflight-header-actions { width: 100%; }
+  .preflight-scan-button,
   .preflight-launch-all { width: 100%; }
   .preflight-summary { grid-template-columns: auto minmax(0, 1fr); padding: var(--s-4); }
   .preflight-summary-stats { grid-column: 1 / -1; width: 100%; grid-template-columns: repeat(3, 1fr); }

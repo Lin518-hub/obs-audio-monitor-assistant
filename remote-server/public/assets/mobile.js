@@ -158,7 +158,7 @@ function pipThresholdAssetDb(value) {
   return Math.max(PIP_THRESHOLD_MIN_DB, Math.min(PIP_THRESHOLD_MAX_DB, Math.round(threshold / PIP_THRESHOLD_STEP_DB) * PIP_THRESHOLD_STEP_DB));
 }
 function pipVideoSource(thresholdDb) {
-  return `/assets/pip-audio-threshold-${Math.abs(thresholdDb)}.mp4?v=3.6.0`;
+  return `/assets/pip-audio-threshold-${Math.abs(thresholdDb)}.mp4?v=3.6.1`;
 }
 function pipVisualMode(audio = {}) {
   const view = audioPresentation(audio);

@@ -67,12 +67,20 @@ function standardCandidates(): DiscoveryCandidate[] {
   const paths: Array<[PreflightAppId, string | undefined]> = [
     ['obs', env.ProgramFiles ? join(env.ProgramFiles, 'obs-studio', 'bin', '64bit', 'obs64.exe') : undefined],
     ['obs', env['ProgramFiles(x86)'] ? join(env['ProgramFiles(x86)'], 'obs-studio', 'bin', '32bit', 'obs32.exe') : undefined],
+    ['douyin', localAppData ? join(localAppData, 'Programs', 'DouyinLive', 'DouyinLive.exe') : undefined],
+    ['douyin', localAppData ? join(localAppData, 'Programs', 'DouyinLiveCompanion', 'DouyinLiveCompanion.exe') : undefined],
+    ['douyin', localAppData ? join(localAppData, 'Programs', '抖音直播伴侣', '抖音直播伴侣.exe') : undefined],
+    ['douyin', localAppData ? join(localAppData, 'Programs', '抖音直播伴侣', '直播伴侣.exe') : undefined],
+    ['douyin', localAppData ? join(localAppData, 'DouyinLive', 'DouyinLive.exe') : undefined],
     ['browser', env['ProgramFiles(x86)'] ? join(env['ProgramFiles(x86)'], 'Microsoft', 'Edge', 'Application', 'msedge.exe') : undefined],
     ['browser', env.ProgramFiles ? join(env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined],
     ['browser', localAppData ? join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined],
     ['browser', env.ProgramFiles ? join(env.ProgramFiles, 'Mozilla Firefox', 'firefox.exe') : undefined]
   ];
   for (const root of programFiles) {
+    paths.push(['douyin', join(root, 'DouyinLive', 'DouyinLive.exe')]);
+    paths.push(['douyin', join(root, '抖音直播伴侣', '抖音直播伴侣.exe')]);
+    paths.push(['douyin', join(root, '抖音直播伴侣', '直播伴侣.exe')]);
     paths.push(['software_control', join(root, 'Blackmagic Design', 'Blackmagic ATEM Switchers', 'ATEM Software Control', 'ATEM Software Control.exe')]);
     paths.push(['software_control', join(root, 'Blackmagic Design', 'ATEM Switchers', 'ATEM Software Control', 'ATEM Software Control.exe')]);
   }
@@ -85,6 +93,12 @@ async function registryCandidates(): Promise<DiscoveryCandidate[]> {
   const entries: Array<[PreflightAppId, string]> = [
     ['obs', 'obs64.exe'],
     ['obs', 'obs32.exe'],
+    ['douyin', '直播伴侣.exe'],
+    ['douyin', '抖音直播伴侣.exe'],
+    ['douyin', 'DouyinLive.exe'],
+    ['douyin', 'DouyinLiveCompanion.exe'],
+    ['douyin', 'LiveStudio.exe'],
+    ['douyin', 'ByteLive.exe'],
     ['browser', 'msedge.exe'],
     ['browser', 'chrome.exe'],
     ['browser', 'firefox.exe'],

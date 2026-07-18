@@ -3,6 +3,7 @@ import {
   findPreflightProcess,
   normalizeProcessName,
   parsePosixProcessList,
+  parseWindowsProcessJson,
   parseWindowsTaskList
 } from '../src/shared/preflight.js';
 
@@ -24,6 +25,48 @@ describe('preflight process detection', () => {
   it('uses a configured executable name for software with a custom process name', () => {
     const processes = parseWindowsTaskList('"VendorController.exe","928","Console","1","20,000 K"');
     expect(findPreflightProcess('software_control', processes, 'C:\\Live\\VendorController.exe')?.pid).toBe(928);
+  });
+
+  it('keeps platform aliases active after a launcher shortcut has been configured', () => {
+    const processes = parseWindowsTaskList('"直播伴侣.exe","932","Console","1","120,000 K"');
+    expect(findPreflightProcess(
+      'douyin',
+      processes,
+      'C:\\Users\\Live\\Desktop\\平台直播工具.lnk',
+      'C:\\Program Files\\DouyinLive\\Launcher.exe'
+    )?.pid).toBe(932);
+  });
+
+  it('parses Windows process paths and recognizes a configured executable from CIM JSON', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify({
+      pid: 816,
+      name: 'VendorHost.exe',
+      executablePath: 'C:\\Live Tools\\VendorHost.exe',
+      commandLine: '"C:\\Live Tools\\VendorHost.exe" --background'
+    }));
+    expect(processes).toEqual([{ pid: 816, name: 'VendorHost.exe', command: 'C:\\Live Tools\\VendorHost.exe' }]);
+    expect(findPreflightProcess('douyin', processes, 'C:\\Live Tools\\VendorHost.exe')?.pid).toBe(816);
+  });
+
+  it('recognizes child processes launched from the configured application directory', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify({
+      pid: 820,
+      name: 'main.exe',
+      executablePath: 'C:\\Program Files\\DouyinLive\\resources\\main.exe'
+    }));
+    expect(findPreflightProcess(
+      'douyin',
+      processes,
+      'C:\\Users\\Live\\Desktop\\平台直播工具.lnk',
+      'C:\\Program Files\\DouyinLive\\Launcher.exe'
+    )?.pid).toBe(820);
+  });
+
+  it('accepts both one-row and multi-row PowerShell JSON snapshots', () => {
+    expect(parseWindowsProcessJson(JSON.stringify([
+      { ProcessId: '1', Name: 'obs64.exe', ExecutablePath: 'C:\\OBS\\obs64.exe' },
+      { ProcessId: 2, Name: '直播伴侣客户端.exe', CommandLine: '直播伴侣客户端.exe --silent' }
+    ]))).toHaveLength(2);
   });
 
   it('does not confuse unrelated applications with short OBS aliases', () => {

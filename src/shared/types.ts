@@ -374,6 +374,7 @@ export interface AppConfig {
   remoteDeviceSecret: string;
   developerModeEnabled: boolean;
   autoLaunch: boolean;
+  autoUpdateEnabled: boolean;
   updateSource: UpdateSource;
   aliyunUpdateBaseUrl: string;
   /** ATEM 导播台 (beta) */
@@ -387,6 +388,7 @@ export interface AppConfig {
   preflightApps: PreflightAppConfigs;
   preflightProjector: PreflightProjectorConfig;
   preflightWindowPlacements: PreflightWindowPlacements;
+  preflightConfigRevision: number;
 }
 
 export interface InputOption {
@@ -499,6 +501,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteDeviceSecret: '',
   developerModeEnabled: false,
   autoLaunch: false,
+  autoUpdateEnabled: true,
   updateSource: 'auto',
   aliyunUpdateBaseUrl: '',
   /** ATEM 导播台 (beta) */
@@ -520,5 +523,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     enabled: false,
     restoreWindowPosition: true
   },
-  preflightWindowPlacements: {}
+  preflightWindowPlacements: {},
+  preflightConfigRevision: 1
 };

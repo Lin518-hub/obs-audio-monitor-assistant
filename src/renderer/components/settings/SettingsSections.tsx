@@ -1085,7 +1085,7 @@ const updateTitle = (state: UpdateSnapshot) => {
     case 'error': return '更新源暂时不可用';
     case 'not_available': return '当前为最新版本';
     case 'checking': return '正在检查更新';
-    default: return '检查 GitHub 更新';
+    default: return '检查软件更新';
   }
 };
 
@@ -1106,7 +1106,7 @@ export const UpdatesSection: React.FC<{
   const canInstall = updateState.status === 'downloaded';
   const tone = updateTone(updateState);
   return (
-    <Section id="settings-updates" icon={Download} title="软件更新" description="检查新版本、选择国内加速源">
+    <Section id="settings-updates" icon={Download} title="软件更新" description="内部服务器优先，自动保持最新">
       <div className="update-panel">
         <div className="update-panel-head">
           <span className={`update-panel-icon tone-${tone}`}>{updateIcon(updateState)}</span>
@@ -1115,6 +1115,15 @@ export const UpdatesSection: React.FC<{
             <div className="update-panel-msg">{updateState.message}</div>
           </div>
         </div>
+        <ToggleRow
+          id="auto-update-enabled"
+          checked={draft.autoUpdateEnabled}
+          onChange={(checked) => onChange('autoUpdateEnabled', checked)}
+          title="自动保持软件最新"
+          description={updateState.installMode === 'manual'
+            ? '后台优先从内部服务器预下载；macOS 下次启动时会打开已下载的安装包'
+            : '后台优先从内部服务器预下载，下次启动时静默安装并自动重启'}
+        />
         <div className="about-list">
           <div className="about-row"><span>当前版本</span><strong>v{updateState.currentVersion}</strong></div>
           <div className="about-row"><span>当前更新源</span><strong>{updateState.sourceLabel}</strong></div>
@@ -1153,7 +1162,7 @@ export const UpdatesSection: React.FC<{
             <span className="settings-field-label">更新源策略</span>
             <div className="update-source-grid">
               {[
-                { value: 'auto', title: '自动选择', desc: draft.aliyunUpdateBaseUrl ? '阿里云优先，失败后切换加速源和 GitHub' : '加速源优先，失败后切换 GitHub', icon: <Route size={16} /> },
+                { value: 'auto', title: '自动选择', desc: '内部服务器优先，不可用时再切换镜像和 GitHub', icon: <Route size={16} /> },
                 { value: 'lan', title: '内部服务器', desc: '使用手机远程服务中的更新目录', icon: <Wifi size={16} /> },
                 { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
                 { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },

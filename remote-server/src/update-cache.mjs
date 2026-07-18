@@ -7,6 +7,7 @@ const METADATA_FILES = ['latest.yml', 'latest-mac.yml'];
 const STATUS_FILE = '.update-cache-status.json';
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_PACKAGE_BYTES = 1024 * 1024 * 1024;
+const RETAINED_UPDATE_VERSIONS = 2;
 
 export function defaultUpdateReleaseBases() {
   const github = 'https://github.com/Lin518-hub/obs-audio-monitor-assistant/releases/download/latest/';
@@ -72,7 +73,13 @@ export function createUpdateCache({
   }
 
   function getStatus() {
-    return { ...state, files: state.files.map((item) => ({ ...item })) };
+    return {
+      ...state,
+      files: state.files.map((item) => ({ ...item })),
+      retainedVersions: Array.isArray(state.retainedVersions)
+        ? state.retainedVersions.map((item) => ({ ...item, files: item.files.map((file) => ({ ...file })) }))
+        : []
+    };
   }
 
   async function sync() {
@@ -126,16 +133,25 @@ export function createUpdateCache({
         cachedFiles.push({ name: item.name, size: item.buffer.length });
       }
 
+      const packageFiles = cachedFiles.filter((item) => !METADATA_FILES.includes(item.name));
+      const retainedVersions = mergeRetainedVersions(previousState, {
+        version,
+        files: packageFiles,
+        cachedAt: Date.now()
+      });
+
       state = {
         status: 'ready',
         version,
         source: Array.from(usedSources).join('、'),
         files: cachedFiles.sort((left, right) => left.name.localeCompare(right.name)),
+        retainedVersions,
         lastAttemptAt,
         lastSuccessAt: Date.now(),
         error: null
       };
       await persistState(updateDir, state);
+      await pruneOldUpdatePackages(updateDir, retainedVersions);
       logger.info(`[updates] cache ready for v${version}: ${cachedFiles.map((item) => item.name).join(', ')}`);
       return getStatus();
     } catch (error) {
@@ -147,6 +163,36 @@ export function createUpdateCache({
   }
 
   return { initialize, stop, sync, getStatus };
+}
+
+function mergeRetainedVersions(previousState, current) {
+  const previous = Array.isArray(previousState.retainedVersions)
+    ? previousState.retainedVersions
+    : previousState.version && Array.isArray(previousState.files)
+      ? [{
+          version: previousState.version,
+          files: previousState.files.filter((item) => !METADATA_FILES.includes(item.name)),
+          cachedAt: previousState.lastSuccessAt || 0
+        }]
+      : [];
+  return [current, ...previous.filter((item) => item?.version && item.version !== current.version)]
+    .slice(0, RETAINED_UPDATE_VERSIONS)
+    .map((item) => ({
+      version: String(item.version),
+      cachedAt: Number.isFinite(item.cachedAt) ? item.cachedAt : 0,
+      files: Array.isArray(item.files)
+        ? item.files.filter((file) => file && typeof file.name === 'string').map((file) => ({ ...file }))
+        : []
+    }));
+}
+
+async function pruneOldUpdatePackages(updateDir, retainedVersions) {
+  const retainedNames = new Set(retainedVersions.flatMap((item) => item.files.map((file) => file.name)));
+  const names = await readdir(updateDir).catch(() => []);
+  await Promise.all(names
+    .filter((name) => /\.(?:exe|msi|zip|dmg|pkg|blockmap)$/i.test(name))
+    .filter((name) => !retainedNames.has(name))
+    .map((name) => rm(join(updateDir, name), { force: true })));
 }
 
 async function removeInterruptedDownloads(updateDir) {

@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { discoverPreflightApps } from './preflightDiscovery.js';
 import { WindowsWindowManager, selectMainWindow, selectOBSProjectorWindow, type WindowsTopLevelWindow } from './windowsWindowManager.js';
-import { findPreflightProcess, findPreflightProcesses, parsePosixProcessList, parseWindowsTaskList, type ProcessEntry } from '../shared/preflight.js';
+import { findPreflightProcess, findPreflightProcesses, parsePosixProcessList, parseWindowsProcessJson, parseWindowsTaskList, type ProcessEntry } from '../shared/preflight.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../shared/windowPlacement.js';
 import {
   PREFLIGHT_APP_IDS,
@@ -21,6 +21,9 @@ import {
 } from '../shared/types.js';
 
 const execFileAsync = promisify(execFile);
+const PROCESS_LIST_CACHE_MS = 800;
+
+let processListCache: { expiresAt: number; promise: Promise<ProcessEntry[]> } | null = null;
 
 export class PreflightCheckService {
   private readonly windows = new WindowsWindowManager();
@@ -29,7 +32,7 @@ export class PreflightCheckService {
     const platform = platformLabel();
     let processes: ProcessEntry[];
     try {
-      processes = await readProcessList();
+      processes = await readProcessList(true);
     } catch (error) {
       const message = errorMessage(error, '无法读取系统进程');
       return {
@@ -260,12 +263,53 @@ export class PreflightCheckService {
   }
 }
 
-async function readProcessList(): Promise<ProcessEntry[]> {
+async function readProcessList(forceRefresh = false): Promise<ProcessEntry[]> {
+  const now = Date.now();
+  if (!forceRefresh && processListCache && processListCache.expiresAt > now) {
+    return processListCache.promise;
+  }
+
+  const promise = queryProcessList();
+  processListCache = { expiresAt: now + PROCESS_LIST_CACHE_MS, promise };
+  try {
+    return await promise;
+  } catch (error) {
+    if (processListCache?.promise === promise) processListCache = null;
+    throw error;
+  }
+}
+
+async function queryProcessList(): Promise<ProcessEntry[]> {
   if (process.platform === 'win32') {
-    const { stdout } = await execFileAsync('tasklist.exe', ['/fo', 'csv', '/nh'], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+    try {
+      const command = [
+        "$ErrorActionPreference = 'Stop'",
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        '@(Get-CimInstance Win32_Process | ForEach-Object {',
+        "  [PSCustomObject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; executablePath = [string]$_.ExecutablePath; commandLine = [string]$_.CommandLine }",
+        '}) | ConvertTo-Json -Compress'
+      ].join('\r\n');
+      const encoded = Buffer.from(command, 'utf16le').toString('base64');
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-EncodedCommand', encoded
+      ], { windowsHide: true, timeout: 6_000, maxBuffer: 8 * 1024 * 1024 });
+      const processes = parseWindowsProcessJson(stdout);
+      if (processes.length > 0) return processes;
+    } catch {
+      // Older or restricted Windows environments fall back to tasklist.
+    }
+
+    const { stdout } = await execFileAsync('tasklist.exe', ['/fo', 'csv', '/nh'], {
+      windowsHide: true,
+      timeout: 5_000,
+      maxBuffer: 4 * 1024 * 1024
+    });
     return parseWindowsTaskList(stdout);
   }
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,comm='], { maxBuffer: 4 * 1024 * 1024 });
+  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,comm='], { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 });
   return parsePosixProcessList(stdout);
 }
 

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
 contextBridge.exposeInMainWorld('obsGuard', {
@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('obsGuard', {
   capturePreflightLayout: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:capture-layout', settings) as Promise<PreflightLayoutCaptureResult>,
   openPreflightProjector: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:open-projector', settings) as Promise<PreflightProjectorResult>,
   pickPreflightTarget: (id: PreflightAppId) => ipcRenderer.invoke('preflight:pick-target', id) as Promise<string | null>,
+  getDroppedPreflightPath: (file: File) => webUtils.getPathForFile(file),
   onSnapshot: (callback: (snapshot: AppSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => callback(snapshot);
     ipcRenderer.on('snapshot', listener);

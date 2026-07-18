@@ -98,6 +98,16 @@ describe('ConfigStore', () => {
     expect((await new ConfigStore().load()).developerModeEnabled).toBe(false);
   });
 
+  it('enables automatic updates when loading a legacy config without the setting', async () => {
+    mkdirSync(electronMock.userData, { recursive: true });
+    const { autoUpdateEnabled: _removed, ...legacyConfig } = DEFAULT_CONFIG;
+    writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify(legacyConfig));
+
+    const migrated = await new ConfigStore().load();
+
+    expect(migrated.autoUpdateEnabled).toBe(true);
+  });
+
   it('normalizes and persists the developer-only preflight checklist', async () => {
     const store = new ConfigStore();
     const saved = await store.save({
@@ -119,6 +129,47 @@ describe('ConfigStore', () => {
     });
     expect(saved.preflightApps.douyin).toEqual(DEFAULT_CONFIG.preflightApps.douyin);
     expect((await new ConfigStore().load()).preflightApps.obs.path).toBe('C:\\Live\\OBS.lnk');
+  });
+
+  it('clears legacy preflight settings once and preserves later configuration', async () => {
+    const { preflightConfigRevision: _removed, ...legacyConfig } = DEFAULT_CONFIG;
+    mkdirSync(electronMock.userData, { recursive: true });
+    writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify({
+      ...legacyConfig,
+      silenceDurationSeconds: 360,
+      preflightApps: {
+        ...DEFAULT_CONFIG.preflightApps,
+        obs: { ...DEFAULT_CONFIG.preflightApps.obs, path: 'C:\\Old\\OBS.lnk', enabled: false },
+        browser: { ...DEFAULT_CONFIG.preflightApps.browser, path: 'C:\\Old\\Browser.exe', launchUrl: 'https://old.example.com' }
+      },
+      preflightProjector: { enabled: true, restoreWindowPosition: false },
+      preflightWindowPlacements: {
+        obs: {
+          displayId: 1,
+          displayLabel: '旧显示器',
+          capturedWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
+          normalizedBounds: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+          windowState: 'normal',
+          capturedAt: 1
+        }
+      }
+    }));
+
+    const migrated = await new ConfigStore().load();
+    expect(migrated.preflightApps).toEqual(DEFAULT_CONFIG.preflightApps);
+    expect(migrated.preflightProjector).toEqual(DEFAULT_CONFIG.preflightProjector);
+    expect(migrated.preflightWindowPlacements).toEqual({});
+    expect(migrated.preflightConfigRevision).toBe(DEFAULT_CONFIG.preflightConfigRevision);
+    expect(migrated.silenceDurationSeconds).toBe(360);
+
+    await new ConfigStore().save({
+      ...migrated,
+      preflightApps: {
+        ...migrated.preflightApps,
+        obs: { ...migrated.preflightApps.obs, path: 'C:\\New\\OBS.lnk' }
+      }
+    });
+    expect((await new ConfigStore().load()).preflightApps.obs.path).toBe('C:\\New\\OBS.lnk');
   });
 
   it('migrates preflight projector and saved window placement settings', async () => {

@@ -340,9 +340,9 @@ export const snapshotLiveStateLabel = (snapshot: AppSnapshot): string => {
   return '未开播';
 };
 
-// 首次安装或版本更新后展示引导；不重置已有配置。
-export const shouldShowOnboarding = (config: AppConfig, currentVersion: string): boolean => {
-  return !config.hasSeenGuide || config.guideSeenVersion !== currentVersion;
+// 仅首次安装或恢复出厂设置后展示，普通版本更新不重复打扰用户。
+export const shouldShowOnboarding = (config: AppConfig, _currentVersion: string): boolean => {
+  return !config.hasSeenGuide;
 };
 
 export const isFirstRun = shouldShowOnboarding;

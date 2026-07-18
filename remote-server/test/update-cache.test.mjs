@@ -110,3 +110,37 @@ test('does not publish update metadata when a package fails SHA-512 validation',
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('keeps package files for only the two most recent update versions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'obs-update-retention-'));
+  const routes = new Map();
+  const fixture = await fixtureServer(routes);
+  const cache = createUpdateCache({ updateDir: root, releaseBases: [fixture.base], intervalMs: 60_000, logger: silentLogger });
+  const publish = (version) => {
+    const windows = Buffer.from(`windows-${version}`);
+    const mac = Buffer.from(`mac-${version}`);
+    routes.set('/latest.yml', metadata(version, `assistant-win-${version}.exe`, windows));
+    routes.set('/latest-mac.yml', metadata(version, `assistant-mac-${version}.zip`, mac));
+    routes.set(`/assistant-win-${version}.exe`, windows);
+    routes.set(`/assistant-mac-${version}.zip`, mac);
+  };
+  try {
+    publish('3.5.0');
+    await cache.initialize();
+    await cache.sync();
+    publish('3.6.0');
+    await cache.sync();
+    publish('3.7.0');
+    const current = await cache.sync();
+
+    await assert.rejects(stat(join(root, 'assistant-win-3.5.0.exe')));
+    await assert.rejects(stat(join(root, 'assistant-mac-3.5.0.zip')));
+    assert.equal((await stat(join(root, 'assistant-win-3.6.0.exe'))).isFile(), true);
+    assert.equal((await stat(join(root, 'assistant-mac-3.7.0.zip'))).isFile(), true);
+    assert.deepEqual(current.retainedVersions.map((item) => item.version), ['3.7.0', '3.6.0']);
+  } finally {
+    cache.stop();
+    await fixture.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

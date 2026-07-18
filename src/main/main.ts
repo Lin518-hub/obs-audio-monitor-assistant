@@ -11,6 +11,7 @@ import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
 import { PreflightCheckService } from './preflightCheck.js';
+import { compareVersions, fileExists, PendingUpdateStore, type PendingUpdate } from './pendingUpdateStore.js';
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { isPreflightAppId } from '../shared/preflight.js';
@@ -80,6 +81,7 @@ let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
 let remoteBridge: RemoteBridge;
 let preflightCheckService: PreflightCheckService;
+let pendingUpdateStore: PendingUpdateStore;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
@@ -90,6 +92,8 @@ let activeUpdaterGeneration: number | null = null;
 let updateInitialTimer: NodeJS.Timeout | null = null;
 let updateCheckTimer: NodeJS.Timeout | null = null;
 let downloadedUpdateFilePath: string | null = null;
+let updateDownloadMode: 'manual' | 'background' | 'startup' = 'manual';
+let startupUpdateInProgress = false;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
@@ -151,6 +155,7 @@ async function initializeApp(): Promise<void> {
   atemMonitor = new ATEMMonitor();
   remoteBridge = new RemoteBridge();
   preflightCheckService = new PreflightCheckService();
+  pendingUpdateStore = new PendingUpdateStore(app.getPath('userData'));
   latestSnapshot = injectATEMState(monitor.getSnapshot());
 
   remoteBridge.on('stateChanged', () => {
@@ -348,6 +353,13 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl') || Object.hasOwn(patch, 'remoteServerUrl')) {
       refreshUpdateSourceState(nextConfig);
     }
+    if (Object.hasOwn(patch, 'autoUpdateEnabled') && nextConfig.autoUpdateEnabled !== previous.autoUpdateEnabled) {
+      if (nextConfig.autoUpdateEnabled) {
+        void runScheduledUpdateCycle();
+      } else {
+        await pendingUpdateStore.clear();
+      }
+    }
     return latestSnapshot;
   });
   ipcMain.handle('config:reset', () => resetToFactoryDefaults());
@@ -417,7 +429,7 @@ function registerIpc(): void {
   ipcMain.handle('displays:get', () => getDisplays());
   ipcMain.handle('update:get-state', () => getUpdateState());
   ipcMain.handle('update:check', () => checkForUpdates(true));
-  ipcMain.handle('update:download', () => downloadUpdate());
+  ipcMain.handle('update:download', () => downloadUpdate('manual'));
   ipcMain.handle('update:install', () => installDownloadedUpdate());
   ipcMain.handle('preflight:check', (_event, settings: unknown) => {
     return preflightCheckService.check(preflightSettingsValue(settings).apps);
@@ -445,7 +457,7 @@ function registerIpc(): void {
     if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
     const labels = {
       obs: 'OBS',
-      douyin: '抖音直播伴侣',
+      douyin: '平台直播工具',
       browser: '浏览器',
       software_control: 'Software Control',
       cosmic_cat: '宇宙猫检测'
@@ -455,7 +467,7 @@ function registerIpc(): void {
       buttonLabel: '使用此程序',
       properties: ['openFile'],
       filters: process.platform === 'win32'
-        ? [{ name: '程序或快捷方式', extensions: ['exe', 'lnk', 'bat', 'cmd'] }, { name: '所有文件', extensions: ['*'] }]
+        ? [{ name: '程序或快捷方式', extensions: ['exe', 'lnk', 'bat', 'cmd', 'com'] }, { name: '所有文件', extensions: ['*'] }]
         : [{ name: '应用程序', extensions: ['app'] }, { name: '所有文件', extensions: ['*'] }]
     };
     const result = settingsWindow && !settingsWindow.isDestroyed()
@@ -910,7 +922,7 @@ function initializeUpdater(): void {
       status: 'downloading',
       percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : null,
       errorMessage: null,
-      message: '正在下载更新...'
+      message: updateDownloadMode === 'background' ? '正在后台预下载更新...' : '正在下载更新...'
     });
   });
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
@@ -919,6 +931,7 @@ function initializeUpdater(): void {
     }
     const version = info.version ?? getUpdateState().availableVersion;
     const manualInstall = usesManualMacInstall();
+    const stagedInBackground = updateDownloadMode === 'background';
     setUpdateState({
       status: 'downloaded',
       availableVersion: version,
@@ -927,9 +940,13 @@ function initializeUpdater(): void {
       installMode: manualInstall ? 'manual' : 'auto',
       percent: 100,
       errorMessage: null,
-      message: manualInstall
-        ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
-        : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
+      message: stagedInBackground
+        ? manualInstall
+          ? (version ? `新版本 ${version} 已在后台下载，下次启动时会打开安装包` : '更新已在后台下载，下次启动时会打开安装包')
+          : (version ? `新版本 ${version} 已在后台下载，下次启动时自动安装` : '更新已在后台下载，下次启动时自动安装')
+        : manualInstall
+          ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
+          : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
     });
   });
   autoUpdater.on('error', (error: Error) => {
@@ -946,12 +963,97 @@ function initializeUpdater(): void {
     });
   });
 
+  void startUpdaterLifecycle();
+}
+
+async function startUpdaterLifecycle(): Promise<void> {
+  const installing = await resumePendingUpdateAtStartup();
+  if (installing || isQuitting) return;
+
   updateInitialTimer = setTimeout(() => {
-    void checkForUpdates(false);
+    void runScheduledUpdateCycle();
   }, UPDATE_INITIAL_CHECK_DELAY_MS);
   updateCheckTimer = setInterval(() => {
-    void checkForUpdates(false);
+    void runScheduledUpdateCycle();
   }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function runScheduledUpdateCycle(): Promise<void> {
+  if (!isUpdaterSupported() || startupUpdateInProgress || isQuitting) return;
+  const checked = await checkForUpdates(false);
+  if (currentUpdateConfig().autoUpdateEnabled && checked.status === 'available') {
+    await downloadUpdate('background');
+  }
+}
+
+async function resumePendingUpdateAtStartup(): Promise<boolean> {
+  if (!isUpdaterSupported()) return false;
+  const pending = await pendingUpdateStore.load();
+  if (!pending) return false;
+
+  const currentVersion = app.getVersion();
+  if (compareVersions(currentVersion, pending.version) >= 0) {
+    await pendingUpdateStore.clear();
+    return false;
+  }
+  if (!currentUpdateConfig().autoUpdateEnabled) {
+    await pendingUpdateStore.clear();
+    return false;
+  }
+
+  if (usesManualMacInstall()) {
+    const filePath = pending.filePath;
+    if (filePath && await fileExists(filePath)) {
+      downloadedUpdateFilePath = filePath;
+      setUpdateState({
+        status: 'downloaded',
+        sourceLabel: pending.sourceLabel || getUpdateState().sourceLabel,
+        sourceUrl: pending.sourceUrl,
+        availableVersion: pending.version,
+        downloadedVersion: pending.version,
+        downloadedFilePath: filePath,
+        installMode: 'manual',
+        percent: 100,
+        errorMessage: null,
+        message: `新版本 ${pending.version} 已预下载。macOS 当前安装包未签名，请替换应用完成更新。`
+      });
+      shell.showItemInFolder(filePath);
+    }
+    await pendingUpdateStore.clear();
+    return false;
+  }
+
+  if (pending.installAttempts >= 2) {
+    await pendingUpdateStore.clear();
+    setUpdateState({
+      status: 'error',
+      errorMessage: '自动安装连续失败，已停止重试',
+      message: '自动安装连续失败，请在设置中手动检查更新'
+    });
+    return false;
+  }
+
+  startupUpdateInProgress = true;
+  try {
+    setUpdateState({
+      status: 'checking',
+      availableVersion: pending.version,
+      errorMessage: null,
+      message: `正在校验已预下载的新版本 ${pending.version}...`
+    });
+    const checked = await checkForUpdates(false);
+    if (checked.status !== 'available') return false;
+    const downloaded = await downloadUpdate('startup');
+    if (downloaded.status !== 'downloaded') return false;
+    await pendingUpdateStore.recordInstallAttempt(pending);
+    installDownloadedUpdate(true);
+    return true;
+  } catch (error) {
+    console.error(`[updater] failed to resume pending update: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  } finally {
+    startupUpdateInProgress = false;
+  }
 }
 
 function isCurrentUpdaterEvent(): boolean {
@@ -1253,7 +1355,7 @@ function normalizeUpdateBaseUrl(url: string): string {
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 }
 
-async function downloadUpdate(): Promise<UpdateSnapshot> {
+async function downloadUpdate(mode: 'manual' | 'background' | 'startup' = 'manual'): Promise<UpdateSnapshot> {
   if (!isUpdaterSupported()) {
     return getUpdateState();
   }
@@ -1270,13 +1372,14 @@ async function downloadUpdate(): Promise<UpdateSnapshot> {
     }
   }
 
+  updateDownloadMode = mode;
   try {
     activeUpdaterGeneration = updateCheckQueue.currentGeneration;
     setUpdateState({
       status: 'downloading',
       percent: 0,
       errorMessage: null,
-      message: '正在下载更新...'
+      message: mode === 'background' ? '正在后台预下载更新...' : '正在下载更新...'
     });
     const downloadedFiles = await autoUpdater.downloadUpdate();
     downloadedUpdateFilePath = pickDownloadedUpdateFile(downloadedFiles);
@@ -1285,10 +1388,34 @@ async function downloadUpdate(): Promise<UpdateSnapshot> {
       setUpdateState({
         downloadedFilePath: downloadedUpdateFilePath,
         installMode: usesManualMacInstall() ? 'manual' : 'auto',
-        message: usesManualMacInstall()
-          ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
-          : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
+        message: mode === 'background'
+          ? usesManualMacInstall()
+            ? (version ? `新版本 ${version} 已在后台下载，下次启动时会打开安装包` : '更新已在后台下载，下次启动时会打开安装包')
+            : (version ? `新版本 ${version} 已在后台下载，下次启动时自动安装` : '更新已在后台下载，下次启动时自动安装')
+          : usesManualMacInstall()
+            ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
+            : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
       });
+      if (mode === 'background' && currentUpdateConfig().autoUpdateEnabled && version && (!usesManualMacInstall() || downloadedUpdateFilePath)) {
+        const state = getUpdateState();
+        const pending: PendingUpdate = {
+          version,
+          downloadedAt: Date.now(),
+          filePath: downloadedUpdateFilePath,
+          sourceLabel: state.sourceLabel,
+          sourceUrl: state.sourceUrl,
+          installAttempts: 0,
+          lastInstallAttemptAt: null
+        };
+        try {
+          await pendingUpdateStore.save(pending);
+        } catch (error) {
+          console.error(`[updater] failed to persist pending update: ${error instanceof Error ? error.message : String(error)}`);
+          setUpdateState({
+            message: '更新已下载，但无法登记下次启动自动安装；可立即手动安装'
+          });
+        }
+      }
     }
     return getUpdateState();
   } catch (error) {
@@ -1300,10 +1427,12 @@ async function downloadUpdate(): Promise<UpdateSnapshot> {
       lastCheckedAt: Date.now(),
       message: errorMessage
     });
+  } finally {
+    updateDownloadMode = 'manual';
   }
 }
 
-function installDownloadedUpdate(): UpdateSnapshot {
+function installDownloadedUpdate(silent = false): UpdateSnapshot {
   const current = getUpdateState();
   if (current.status !== 'downloaded') {
     return current;
@@ -1327,7 +1456,7 @@ function installDownloadedUpdate(): UpdateSnapshot {
 
   isQuitting = true;
   setImmediate(() => {
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(silent, true);
   });
   return current;
 }

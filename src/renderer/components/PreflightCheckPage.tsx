@@ -5,12 +5,14 @@ import {
   CircleAlert,
   Clapperboard,
   ExternalLink,
+  FileUp,
   FolderOpen,
   Globe2,
   LoaderCircle,
   MonitorPlay,
   Play,
   RadioTower,
+  ScanSearch,
   ShieldCheck,
   SlidersHorizontal
 } from 'lucide-react';
@@ -19,6 +21,7 @@ import type {
   PreflightAppId,
   PreflightAppStatus,
   PreflightCheckResult,
+  PreflightDiscoveryItem,
   PreflightLaunchResult,
   PreflightPathSource,
   PreflightSettings
@@ -51,12 +54,13 @@ interface PreflightCheckPageProps {
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }
 
-type BusyState = 'check' | 'all' | 'projector' | PreflightAppId | null;
+type BusyState = 'check' | 'discover' | 'all' | 'projector' | PreflightAppId | null;
 
 export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange }) => {
   const [result, setResult] = useState<PreflightCheckResult | null>(null);
   const [busy, setBusy] = useState<BusyState>(null);
   const [expanded, setExpanded] = useState<Set<PreflightAppId>>(() => new Set());
+  const [draggingId, setDraggingId] = useState<PreflightAppId | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const settings = useMemo<PreflightSettings>(() => ({
     apps: draft.preflightApps,
@@ -99,11 +103,62 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     onChange('preflightApps', { ...draft.preflightApps, [id]: { ...draft.preflightApps[id], ...patch } });
   };
 
+  const mergeDiscoveredPaths = (
+    baseSettings: PreflightSettings,
+    discovered: PreflightDiscoveryItem[],
+    replaceInvalid: boolean
+  ) => {
+    const apps = { ...baseSettings.apps };
+    const added: PreflightAppId[] = [];
+    for (const item of discovered) {
+      const current = apps[item.id];
+      const currentState = result?.apps.find((app) => app.id === item.id)?.state;
+      const mayReplace = !current.path.trim() || (replaceInvalid && currentState === 'error');
+      if (!mayReplace || current.path === item.path) continue;
+      apps[item.id] = { ...current, path: item.path, pathSource: item.source };
+      added.push(item.id);
+    }
+    return { settings: { ...baseSettings, apps }, added };
+  };
+
+  const scanApps = async () => {
+    setBusy('discover');
+    setNotice(null);
+    try {
+      const discovery = await window.obsGuard.discoverPreflightApps();
+      const merged = mergeDiscoveredPaths(settings, discovery.discovered, true);
+      if (merged.added.length > 0) onChange('preflightApps', merged.settings.apps);
+      const checked = await window.obsGuard.checkPreflightApps(merged.settings);
+      setResult(checked);
+      const unresolved = enabledIds.filter((id) => checked.apps.find((app) => app.id === id)?.state === 'not_configured');
+      if (unresolved.length > 0) {
+        setExpanded((current) => new Set([...current, ...unresolved]));
+        setNotice({
+          tone: 'warning',
+          text: merged.added.length > 0
+            ? `已自动添加 ${merged.added.length} 个软件路径；还有 ${unresolved.length} 个未找到，请拖入程序或快捷方式。`
+            : `${discovery.message} 未找到的项目可直接拖入程序或快捷方式。`
+        });
+      } else {
+        setNotice({ tone: 'success', text: merged.added.length > 0 ? `已自动添加 ${merged.added.length} 个软件路径。` : discovery.message });
+      }
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '自动扫描软件失败' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const applyLaunchResult = (next: PreflightLaunchResult, actionName: string) => {
     setResult(next);
     const failed = Object.keys(next.failures) as PreflightAppId[];
     if (failed.length > 0) {
-      setNotice({ tone: 'error', text: `${failed.map((id) => appDisplayName(id, draft.preflightApps[id].customLabel)).join('、')}启动失败；其他项目已继续执行。` });
+      const needsManualPath = failed.filter((id) => next.apps.find((app) => app.id === id)?.state === 'not_configured');
+      if (needsManualPath.length > 0) setExpanded((current) => new Set([...current, ...needsManualPath]));
+      setNotice({
+        tone: 'error',
+        text: `${failed.map((id) => appDisplayName(id, draft.preflightApps[id].customLabel)).join('、')}启动失败；其他项目已继续执行。${needsManualPath.length > 0 ? ' 自动扫描未找到，请拖入程序或快捷方式。' : ''}`
+      });
       return;
     }
     if (next.projector?.state === 'failed') {
@@ -120,7 +175,16 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     setBusy('all');
     setNotice(null);
     try {
-      applyLaunchResult(await window.obsGuard.launchPreflightApps(settings), '一键开播准备');
+      let launchSettings = settings;
+      const missingPath = enabledIds.some((id) => !settings.apps[id].path.trim()
+        && result?.apps.find((app) => app.id === id)?.state !== 'running');
+      if (missingPath) {
+        const discovery = await window.obsGuard.discoverPreflightApps();
+        const merged = mergeDiscoveredPaths(settings, discovery.discovered, false);
+        launchSettings = merged.settings;
+        if (merged.added.length > 0) onChange('preflightApps', merged.settings.apps);
+      }
+      applyLaunchResult(await window.obsGuard.launchPreflightApps(launchSettings), '一键开播准备');
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : '一键开播准备失败' });
     } finally {
@@ -153,15 +217,37 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     }
   };
 
+  const applyManualPath = async (id: PreflightAppId, path: string) => {
+    const apps = { ...draft.preflightApps, [id]: { ...draft.preflightApps[id], path, pathSource: 'manual' as const } };
+    onChange('preflightApps', apps);
+    setResult(await window.obsGuard.checkPreflightApps({ ...settings, apps }));
+    setNotice({ tone: 'success', text: `${appDisplayName(id, apps[id].customLabel)}路径已添加。` });
+  };
+
   const pickTarget = async (id: PreflightAppId) => {
     try {
       const path = await window.obsGuard.pickPreflightTarget(id);
       if (!path) return;
-      const apps = { ...draft.preflightApps, [id]: { ...draft.preflightApps[id], path, pathSource: 'manual' as const } };
-      onChange('preflightApps', apps);
-      await runCheck({ ...settings, apps });
+      await applyManualPath(id, path);
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : '无法选择快捷方式' });
+    }
+  };
+
+  const dropTarget = async (id: PreflightAppId, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDraggingId(null);
+    const file = event.dataTransfer.files[0];
+    if (!file) return;
+    try {
+      const path = window.obsGuard.getDroppedPreflightPath(file);
+      if (!path || !/\.(?:exe|lnk|bat|cmd|com|app)$/i.test(path)) {
+        setNotice({ tone: 'error', text: '请拖入程序文件或快捷方式（.exe、.lnk、.bat、.cmd 或 .app）。' });
+        return;
+      }
+      await applyManualPath(id, path);
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '无法读取拖入的程序路径' });
     }
   };
 
@@ -181,10 +267,16 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
           <h1><span>开播检查</span><span className="page-title-badge">BETA</span></h1>
           <p className="page-header-subtitle">检查、启动并恢复一套固定的 Windows 开播布局</p>
         </div>
-        <button type="button" className="btn-primary preflight-launch-all" onClick={() => void launchAll()} disabled={busy !== null || enabledIds.length === 0}>
-          {busy === 'all' ? <LoaderCircle size={17} className="spinning" /> : <Play size={17} />}
-          {busy === 'all' ? '正在准备' : '一键开播准备'}
-        </button>
+        <div className="preflight-header-actions">
+          <button type="button" className="preflight-scan-button" onClick={() => void scanApps()} disabled={busy !== null}>
+            {busy === 'discover' ? <LoaderCircle size={17} className="spinning" /> : <ScanSearch size={17} />}
+            {busy === 'discover' ? '正在扫描' : '一键扫描软件'}
+          </button>
+          <button type="button" className="btn-primary preflight-launch-all" onClick={() => void launchAll()} disabled={busy !== null || enabledIds.length === 0}>
+            {busy === 'all' ? <LoaderCircle size={17} className="spinning" /> : <Play size={17} />}
+            {busy === 'all' ? '正在准备' : '一键开播准备'}
+          </button>
+        </div>
       </header>
 
       <section className={`preflight-summary ${ready ? 'ready' : ''}`}>
@@ -243,10 +335,19 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                 </div>
 
                 <div className="preflight-row-details" aria-hidden={!isExpanded}>
-                  <div className="preflight-path-setting">
+                  <div
+                    className={`preflight-path-setting ${draggingId === id ? 'dragging' : ''}`}
+                    onDragEnter={(event) => { event.preventDefault(); setDraggingId(id); }}
+                    onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingId(null);
+                    }}
+                    onDrop={(event) => void dropTarget(id, event)}
+                  >
                     <div>
                       <strong>启动程序</strong>
                       <span title={config.path || '尚未设置'}>{config.path || '尚未设置快捷方式或程序路径'}</span>
+                      <small><FileUp size={13} />也可以把程序或快捷方式拖到这里</small>
                     </div>
                     <div>
                       <button type="button" className="preflight-tool-button" onClick={() => void pickTarget(id)}><FolderOpen size={16} />{config.path ? '更改' : '选择程序'}</button>

@@ -40,6 +40,16 @@ export class ConfigStore {
         config.floatingWindowLayoutVersion = DEFAULT_CONFIG.floatingWindowLayoutVersion;
       }
 
+      // v3.6.1 replaces the preflight discovery and process matching model.
+      // Reset this feature once so stale launcher paths and layouts cannot
+      // prevent the new automatic discovery flow from working.
+      if (numberValue(parsed.preflightConfigRevision, 0) < DEFAULT_CONFIG.preflightConfigRevision) {
+        config.preflightApps = freshDefaultPreflightApps();
+        config.preflightProjector = { ...DEFAULT_CONFIG.preflightProjector };
+        config.preflightWindowPlacements = {};
+        config.preflightConfigRevision = DEFAULT_CONFIG.preflightConfigRevision;
+      }
+
       this.currentConfig = this.normalize(config);
       return this.currentConfig;
     } catch {
@@ -146,6 +156,7 @@ export class ConfigStore {
       remoteDeviceSecret,
       developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
+      autoUpdateEnabled: booleanValue(merged.autoUpdateEnabled, DEFAULT_CONFIG.autoUpdateEnabled),
       updateSource: updateSourceValue(merged.updateSource),
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
       atemEnabled: booleanValue(merged.atemEnabled, DEFAULT_CONFIG.atemEnabled),
@@ -157,7 +168,8 @@ export class ConfigStore {
       atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
       preflightApps: preflightAppsValue(merged.preflightApps),
       preflightProjector: preflightProjectorValue(merged.preflightProjector),
-      preflightWindowPlacements: preflightWindowPlacementsValue(merged.preflightWindowPlacements)
+      preflightWindowPlacements: preflightWindowPlacementsValue(merged.preflightWindowPlacements),
+      preflightConfigRevision: clamp(Math.round(numberValue(merged.preflightConfigRevision, DEFAULT_CONFIG.preflightConfigRevision)), 0, DEFAULT_CONFIG.preflightConfigRevision)
     };
   }
 
@@ -391,6 +403,10 @@ function preflightAppsValue(value: unknown): PreflightAppConfigs {
       launchUrl: id === 'browser' ? preflightLaunchUrlValue(item.launchUrl) : ''
     }];
   })) as unknown as PreflightAppConfigs;
+}
+
+function freshDefaultPreflightApps(): PreflightAppConfigs {
+  return Object.fromEntries(PREFLIGHT_APP_IDS.map((id) => [id, { ...DEFAULT_CONFIG.preflightApps[id] }])) as PreflightAppConfigs;
 }
 
 function preflightProjectorValue(value: unknown): AppConfig['preflightProjector'] {
