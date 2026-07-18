@@ -19,7 +19,7 @@ Function StartOnBootPageCreate
 
   ${NSD_CreateLabel} 0 0 100% 18u "启动选项"
   Pop $1
-  ${NSD_CreateLabel} 0 22u 100% 28u "可以让 OBS 音频检测助手在开机后自动进入后台运行。"
+  ${NSD_CreateLabel} 0 22u 100% 28u "开机后自动打开助手，并直接进入一键开播检查。"
   Pop $2
   ${NSD_CreateCheckbox} 0 58u 100% 14u "开机自动启动 OBS 音频检测助手"
   Pop $StartOnBootCheckbox
@@ -34,8 +34,8 @@ FunctionEnd
 
 !macro customInstall
   ${If} $StartOnBootState == ${BST_CHECKED}
-    CreateShortCut "$SMSTARTUP\OBS 音频检测助手.lnk" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "--hidden"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "OBS 音频检测助手" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --hidden'
+    Delete "$SMSTARTUP\OBS 音频检测助手.lnk"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "OBS 音频检测助手" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --autostart-preflight'
   ${Else}
     Delete "$SMSTARTUP\OBS 音频检测助手.lnk"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "OBS 音频检测助手"

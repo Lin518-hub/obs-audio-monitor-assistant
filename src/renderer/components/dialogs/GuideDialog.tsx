@@ -39,7 +39,7 @@ export const GuideDialog: React.FC<{
       { target: 'settings-source', title: '第四步:选择要守护的音源', body: '选择主播麦克风、无线麦、声卡输入或直播主混音。图片、文字、显示器采集等无声音源会被过滤。', openDrawer: 'source' },
       { target: 'settings-rules', title: '第五步:设置报警规则', body: '默认连续静音 120 秒报警,90 秒先预警。口播密集可以缩短,访谈或活动直播可以适当延长。', openDrawer: 'rules' },
       { target: 'meter', title: '第六步:不开播也能测试', body: 'OBS 已连接但还没开播时，可以在“维护工具”的“检测与调试”中打开“模拟开播检测”，测试电平、静音计时和报警弹窗。' },
-      { target: 'settings-system', title: '第七步:按需要开启自启动', body: '固定直播电脑建议开启。下次开机后软件会在后台运行。', openDrawer: 'system' },
+      { target: 'settings-system', title: '第七步:按需要开启自启动', body: '固定直播电脑建议开启。下次开机后会打开助手；开发者模式下会直接进入一键开播检查。', openDrawer: 'system' },
       { target: 'meter', title: '第八步:直播中常用大电平表', body: '中栏中间的大电平表显示实时 dB 与距离报警的倒计时。静音阈值可在电平表上拖动调节。' },
       { target: 'connection-status', title: '最后:窗口关闭后仍在后台运行', body: '关闭主窗口只是隐藏到后台,检测仍会继续。需要完全退出时,从托盘或菜单栏选择"退出"。' }
     ],

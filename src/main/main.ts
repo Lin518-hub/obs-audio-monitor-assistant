@@ -31,8 +31,9 @@ const rendererUrl = 'http://127.0.0.1:5173';
 const appIconPngPath = join(__dirname, '../../../build/icon.png');
 const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
 const trayMacTemplatePath = join(__dirname, '../../../build/tray-macTemplate.png');
-const autoLaunchArgs = ['--hidden'];
-const launchHidden = process.argv.includes('--hidden') || process.argv.includes('--background');
+const autoLaunchArgs = ['--autostart-preflight'];
+const launchPreflight = process.argv.includes('--autostart-preflight') || process.argv.includes('--hidden');
+const launchHidden = process.argv.includes('--background');
 const trayIconPaths = {
   safe: join(__dirname, '../../../build/tray-safe.png'),
   warning: join(__dirname, '../../../build/tray-warning.png'),
@@ -176,7 +177,7 @@ async function initializeApp(): Promise<void> {
   createTray();
   initializeUpdater();
   if (!launchHidden) {
-    createSettingsWindow();
+    createSettingsWindow(launchPreflight ? 'preflight' : undefined);
   }
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
@@ -294,7 +295,7 @@ async function applyAutoLaunch(enabled: boolean): Promise<void> {
   try {
     app.setLoginItemSettings({
       openAtLogin: enabled,
-      openAsHidden: enabled,
+      openAsHidden: false,
       path: process.execPath,
       args: enabled ? autoLaunchArgs : []
     });
@@ -519,7 +520,9 @@ function preflightConfigsValue(value: unknown): PreflightAppConfigs {
     return [id, {
       enabled: typeof item.enabled === 'boolean' ? item.enabled : fallback[id].enabled,
       path: typeof item.path === 'string' ? item.path.trim().slice(0, 2048) : fallback[id].path,
-      restoreWindowPosition: typeof item.restoreWindowPosition === 'boolean' ? item.restoreWindowPosition : fallback[id].restoreWindowPosition,
+      restoreWindowPosition: id === 'cosmic_cat'
+        ? false
+        : typeof item.restoreWindowPosition === 'boolean' ? item.restoreWindowPosition : fallback[id].restoreWindowPosition,
       pathSource: preflightPathSourceValue(item.pathSource, fallback[id].pathSource),
       customLabel: typeof item.customLabel === 'string' ? item.customLabel.trim().slice(0, 32) : fallback[id].customLabel,
       launchUrl: id === 'browser' && typeof item.launchUrl === 'string' ? item.launchUrl.trim().slice(0, 2048) : fallback[id].launchUrl
@@ -551,6 +554,7 @@ function preflightWindowPlacementsValue(value: unknown, fallback: PreflightWindo
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
   const result: PreflightWindowPlacements = {};
   for (const target of [...PREFLIGHT_APP_IDS, 'obs_projector'] as const) {
+    if (target === 'cosmic_cat') continue;
     const placement = preflightWindowPlacementValue((value as Record<string, unknown>)[target]);
     if (placement) result[target] = placement;
   }
@@ -598,7 +602,18 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
   try {
     if (process.platform === 'win32') {
       const existing = await preflightCheckService.findOBSProjector(settings.apps);
-      if (existing) return { state: 'already_open', message: '节目输出投影已经打开，未移动现有窗口', positionRestored: false };
+      if (existing) {
+        const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
+        if (placement) {
+          await preflightCheckService.restoreWindow(existing, placement);
+          return { state: 'already_open', message: '节目输出投影已打开并恢复到固定位置', positionRestored: true };
+        }
+        return {
+          state: 'already_open',
+          message: '节目输出投影已打开；可在“固定窗口位置”中勾选投影并保存当前布局',
+          positionRestored: false
+        };
+      }
     }
 
     const connected = await waitForOBSConnection(30_000);
@@ -608,8 +623,10 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
 
     let positionRestored = false;
     if (process.platform === 'win32') {
-      const projector = await preflightCheckService.waitForNewOBSProjector(settings.apps, existingHandles);
-      if (!projector) throw new Error('OBS 已接受请求，但未找到新打开的节目输出投影窗口');
+      const projector = await preflightCheckService.waitForNewOBSProjector(settings.apps, existingHandles, 30_000);
+      if (!projector) {
+        throw new Error('OBS 已接受投影请求，但 30 秒内未找到投影窗口。如果 OBS 正显示“缺失文件”或其他弹窗，请先处理后再点击重试');
+      }
       const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
       if (placement) {
         await preflightCheckService.restoreWindow(projector, placement);
@@ -1487,7 +1504,7 @@ function formatUpdateError(error: unknown): string {
   return raw ? `检查更新失败：${raw}` : '检查更新失败';
 }
 
-function createSettingsWindow(): void {
+function createSettingsWindow(initialPage?: 'preflight'): void {
   settingsWindow = new BrowserWindow({
     width: 975,
     height: 749,
@@ -1509,7 +1526,7 @@ function createSettingsWindow(): void {
   attachWindowDiagnostics(settingsWindow, 'settings');
   settingsWindow.setMenuBarVisibility(false);
   settingsWindow.removeMenu();
-  loadRendererSafely(settingsWindow, '#settings', 'settings');
+  loadRendererSafely(settingsWindow, initialPage === 'preflight' ? '#settings?page=preflight' : '#settings', 'settings');
 
   settingsWindow.on('closed', () => {
     settingsWindow = null;

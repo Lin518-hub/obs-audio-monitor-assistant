@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWindowsWindowList } from '../src/main/windowsWindowManager.js';
+import { isOBSProjectorWindow, parseWindowsDisplayList, parseWindowsWindowList } from '../src/main/windowsWindowManager.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../src/shared/windowPlacement.js';
 
 const displays: PlacementDisplay[] = [
@@ -36,6 +36,16 @@ describe('preflight window placement', () => {
     expect(resolved.bounds.y + resolved.bounds.height).toBeLessThanOrEqual(1040);
   });
 
+  it('keeps a saved window on the same physical monitor when Windows display ids change', () => {
+    const placement = captureWindowPlacement({ x: 2048, y: 102, width: 640, height: 512 }, 'normal', displays);
+    const resolved = resolveWindowPlacement(placement, [
+      { id: 2, label: '\\\\.\\DISPLAY2', workArea: displays[0].workArea, primary: true },
+      { id: 1, label: '\\\\.\\DISPLAY1', workArea: { x: 1920, y: 0, width: 1440, height: 1080 }, primary: false }
+    ]);
+    expect(resolved.displayId).toBe(1);
+    expect(resolved.bounds.x).toBeGreaterThanOrEqual(1920);
+  });
+
   it('parses PowerShell window data without losing large handles', () => {
     const parsed = parseWindowsWindowList(JSON.stringify({
       handle: '9876543210',
@@ -51,5 +61,19 @@ describe('preflight window placement', () => {
       bounds: { x: -100, y: 20, width: 1280, height: 720 },
       windowState: 'maximized'
     }]);
+  });
+
+  it('parses native Windows monitor work areas used by window capture and restore', () => {
+    expect(parseWindowsDisplayList(JSON.stringify([
+      { id: 1, label: '\\\\.\\DISPLAY1', workArea: { x: 0, y: 0, width: 1920, height: 1040 }, primary: true },
+      { id: 2, label: '\\\\.\\DISPLAY2', workArea: { x: 1920, y: -200, width: 2560, height: 1400 }, primary: false }
+    ]))).toHaveLength(2);
+  });
+
+  it('recognizes localized OBS program projector windows but excludes multiview', () => {
+    const base = { handle: '1', pid: 10, bounds: { x: 0, y: 0, width: 800, height: 450 }, windowState: 'normal' as const };
+    expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（节目）' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Program)' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（多画面）' })).toBe(false);
   });
 });

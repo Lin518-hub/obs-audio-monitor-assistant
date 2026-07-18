@@ -839,7 +839,7 @@ export const BackgroundSection: React.FC<{
     <ToggleRow
       id="system-autolaunch"
       title="开机自动启动"
-      description="开机后在后台运行，直播前无需手动打开"
+      description="开机后打开助手；已启用开发者模式时直接进入一键开播检查"
       checked={draft.autoLaunch}
       onChange={(value) => onChange('autoLaunch', value)}
     />

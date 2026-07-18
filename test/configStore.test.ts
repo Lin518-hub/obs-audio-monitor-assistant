@@ -185,10 +185,19 @@ describe('ConfigStore', () => {
           normalizedBounds: { x: .1, y: .2, width: .6, height: .7 },
           windowState: 'maximized',
           capturedAt: 1234
+        },
+        cosmic_cat: {
+          displayId: 2,
+          displayLabel: 'Unused',
+          capturedWorkArea: { x: 0, y: 0, width: 1920, height: 1040 },
+          normalizedBounds: { x: .1, y: .1, width: .5, height: .5 },
+          windowState: 'normal',
+          capturedAt: 1234
         }
       },
       preflightApps: {
         ...DEFAULT_CONFIG.preflightApps,
+        cosmic_cat: { ...DEFAULT_CONFIG.preflightApps.cosmic_cat, restoreWindowPosition: true },
         browser: {
           ...DEFAULT_CONFIG.preflightApps.browser,
           launchUrl: ' https://example.com/live ',
@@ -200,7 +209,9 @@ describe('ConfigStore', () => {
     expect(saved.preflightProjector.enabled).toBe(true);
     expect(saved.preflightApps.browser.launchUrl).toBe('https://example.com/live');
     expect(saved.preflightApps.browser.pathSource).toBe('registry');
+    expect(saved.preflightApps.cosmic_cat.restoreWindowPosition).toBe(false);
     expect(saved.preflightWindowPlacements.obs?.windowState).toBe('maximized');
+    expect(saved.preflightWindowPlacements.cosmic_cat).toBeUndefined();
   });
 
   it('normalizes custom ATEM names, colors and groups', async () => {

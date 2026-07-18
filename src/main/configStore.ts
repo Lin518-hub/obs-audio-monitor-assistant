@@ -397,7 +397,9 @@ function preflightAppsValue(value: unknown): PreflightAppConfigs {
     return [id, {
       enabled: booleanValue(item.enabled, DEFAULT_CONFIG.preflightApps[id].enabled),
       path: stringValue(item.path, DEFAULT_CONFIG.preflightApps[id].path).trim().slice(0, 2048),
-      restoreWindowPosition: booleanValue(item.restoreWindowPosition, DEFAULT_CONFIG.preflightApps[id].restoreWindowPosition),
+      restoreWindowPosition: id === 'cosmic_cat'
+        ? false
+        : booleanValue(item.restoreWindowPosition, DEFAULT_CONFIG.preflightApps[id].restoreWindowPosition),
       pathSource: preflightPathSourceValue(item.pathSource),
       customLabel: stringValue(item.customLabel, DEFAULT_CONFIG.preflightApps[id].customLabel).trim().slice(0, 32),
       launchUrl: id === 'browser' ? preflightLaunchUrlValue(item.launchUrl) : ''
@@ -421,7 +423,7 @@ function preflightProjectorValue(value: unknown): AppConfig['preflightProjector'
 
 function preflightWindowPlacementsValue(value: unknown): PreflightWindowPlacements {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const allowed = new Set<string>([...PREFLIGHT_APP_IDS, 'obs_projector']);
+  const allowed = new Set<string>([...PREFLIGHT_APP_IDS.filter((id) => id !== 'cosmic_cat'), 'obs_projector']);
   const result: PreflightWindowPlacements = {};
   for (const [target, rawPlacement] of Object.entries(value)) {
     if (!allowed.has(target)) continue;

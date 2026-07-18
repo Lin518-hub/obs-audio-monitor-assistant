@@ -1,7 +1,7 @@
-import { execFile, spawn } from 'node:child_process';
-import { basename } from 'node:path';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { PreflightRect, PreflightWindowState } from '../shared/types.js';
+import type { PlacementDisplay } from '../shared/windowPlacement.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +14,14 @@ export interface WindowsTopLevelWindow {
 }
 
 export class WindowsWindowManager {
+  async listDisplays(): Promise<PlacementDisplay[]> {
+    if (process.platform !== 'win32') return [];
+    const output = await runPowerShell(`
+[OBSGuardWindowApi]::ListDisplays() | ConvertTo-Json -Compress
+`, {});
+    return parseWindowsDisplayList(output);
+  }
+
   async listWindows(pids: number[]): Promise<WindowsTopLevelWindow[]> {
     if (process.platform !== 'win32' || pids.length === 0) return [];
     const output = await runPowerShell(`
@@ -39,45 +47,21 @@ if (-not $ok) { throw '无法移动目标窗口' }
     });
   }
 
-  async launchElevated(
-    target: string,
-    launchUrl: string,
-    placement?: { bounds: PreflightRect; windowState: PreflightWindowState },
-    processExecutable = target,
-    shortcutArgs = '',
-    cwd = ''
-  ): Promise<void> {
+  async launchElevated(target: string): Promise<void> {
     if (process.platform !== 'win32') throw new Error('管理员启动仅支持 Windows');
-    const processName = basename(processExecutable).replace(/\.(?:exe|lnk)$/i, '');
-    const innerScript = `${WINDOW_API_SOURCE}\n${ELEVATED_LAUNCH_SCRIPT}`;
-    const innerEncoded = Buffer.from(innerScript, 'utf16le').toString('base64');
-    const payload = Buffer.from(JSON.stringify({
-      target,
-      launchUrl,
-      shortcutArgs,
-      cwd,
-      processName,
-      placement: placement ? {
-        ...placement.bounds,
-        maximized: placement.windowState === 'maximized'
-      } : null
-    }), 'utf8').toString('base64');
-
-    await new Promise<void>((resolve, reject) => {
-      const outer = Buffer.from(`
-$env:OBS_GUARD_ELEVATED_PAYLOAD = '${payload}'
-Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','${innerEncoded}')
+    const command = Buffer.from(`
+$ErrorActionPreference = 'Stop'
+$payload = ConvertFrom-Json $env:OBS_GUARD_ELEVATED_PAYLOAD
+if (-not (Test-Path -LiteralPath ([string]$payload.target))) { throw '快捷方式或程序路径已失效' }
+Start-Process -FilePath ([string]$payload.target) -Verb RunAs
 `, 'utf16le').toString('base64');
-      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', outer], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.once('error', reject);
-      child.once('spawn', () => {
-        child.unref();
-        resolve();
-      });
+    await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', command], {
+      windowsHide: true,
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        OBS_GUARD_ELEVATED_PAYLOAD: JSON.stringify({ target })
+      }
     });
   }
 }
@@ -94,7 +78,7 @@ export function selectOBSProjectorWindow(windows: WindowsTopLevelWindow[]): Wind
 
 export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const title = window.title.toLocaleLowerCase('zh-CN');
-  return /projector|投影|节目输出|program output/.test(title) && !/multiview|多画面/.test(title);
+  return /projector|投影|节目输出|program output|windowed.*program/.test(title) && !/multiview|多画面/.test(title);
 }
 
 async function runPowerShell(script: string, payload: unknown): Promise<string> {
@@ -115,6 +99,31 @@ export function parseWindowsWindowList(output: string): WindowsTopLevelWindow[] 
   const parsed = JSON.parse(output) as unknown;
   const items = Array.isArray(parsed) ? parsed : [parsed];
   return items.flatMap((item) => windowsTopLevelWindowValue(item));
+}
+
+export function parseWindowsDisplayList(output: string): PlacementDisplay[] {
+  if (!output.trim()) return [];
+  const parsed = JSON.parse(output) as unknown;
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  return items.flatMap((item): PlacementDisplay[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const raw = item as Record<string, unknown>;
+    const workArea = raw.workArea && typeof raw.workArea === 'object' && !Array.isArray(raw.workArea)
+      ? raw.workArea as Record<string, unknown>
+      : {};
+    const id = Number(raw.id);
+    const x = Number(workArea.x);
+    const y = Number(workArea.y);
+    const width = Number(workArea.width);
+    const height = Number(workArea.height);
+    if (!Number.isInteger(id) || ![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return [];
+    return [{
+      id,
+      label: String(raw.label ?? ''),
+      workArea: { x, y, width, height },
+      primary: raw.primary === true
+    }];
+  });
 }
 
 function windowsTopLevelWindowValue(value: unknown): WindowsTopLevelWindow[] {
@@ -147,6 +156,7 @@ using System.Text;
 
 public static class OBSGuardWindowApi {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT monitorRect, IntPtr data);
 
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
@@ -156,8 +166,17 @@ public static class OBSGuardWindowApi {
 
   public sealed class Bounds { public int x; public int y; public int width; public int height; }
   public sealed class WindowInfo { public string handle; public int pid; public string title; public Bounds bounds; public string windowState; }
+  public sealed class DisplayInfo { public int id; public string label; public Bounds workArea; public bool primary; }
+
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)] public struct MONITORINFOEX {
+    public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+  }
 
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
+  [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
   [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hWnd);
@@ -167,7 +186,40 @@ public static class OBSGuardWindowApi {
   [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int command);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 
+  static void EnablePerMonitorDpiAwareness() {
+    try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+  }
+
+  public static List<DisplayInfo> ListDisplays() {
+    EnablePerMonitorDpiAwareness();
+    var result = new List<DisplayInfo>();
+    int fallbackId = 1;
+    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate(IntPtr monitor, IntPtr hdc, ref RECT unused, IntPtr data) {
+      var info = new MONITORINFOEX(); info.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
+      if (!GetMonitorInfo(monitor, ref info)) return true;
+      string label = info.szDevice ?? "";
+      int id = 0;
+      var match = System.Text.RegularExpressions.Regex.Match(label, @"DISPLAY(\\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+      if (!match.Success || !int.TryParse(match.Groups[1].Value, out id)) id = fallbackId;
+      fallbackId++;
+      result.Add(new DisplayInfo {
+        id = id,
+        label = label,
+        workArea = new Bounds {
+          x = info.rcWork.Left,
+          y = info.rcWork.Top,
+          width = Math.Max(1, info.rcWork.Right - info.rcWork.Left),
+          height = Math.Max(1, info.rcWork.Bottom - info.rcWork.Top)
+        },
+        primary = (info.dwFlags & 1) != 0
+      });
+      return true;
+    }, IntPtr.Zero);
+    return result;
+  }
+
   public static List<WindowInfo> ListWindows(string pidCsv) {
+    EnablePerMonitorDpiAwareness();
     var allowed = new HashSet<int>();
     foreach (var value in (pidCsv ?? "").Split(',')) { int pid; if (int.TryParse(value, out pid)) allowed.Add(pid); }
     var result = new List<WindowInfo>();
@@ -193,6 +245,7 @@ public static class OBSGuardWindowApi {
   }
 
   public static bool MoveWindow(long handle, int x, int y, int width, int height, bool maximized) {
+    EnablePerMonitorDpiAwareness();
     var hWnd = new IntPtr(handle);
     ShowWindowAsync(hWnd, 9);
     bool moved = SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0044);
@@ -201,29 +254,4 @@ public static class OBSGuardWindowApi {
   }
 }
 '@
-`;
-
-const ELEVATED_LAUNCH_SCRIPT = `
-$payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:OBS_GUARD_ELEVATED_PAYLOAD))
-$payload = ConvertFrom-Json $payloadJson
-$before = @((Get-Process -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id))
-$arguments = @()
-if ($payload.shortcutArgs) { $arguments += [string]$payload.shortcutArgs }
-if ($payload.launchUrl) { $arguments += [string]$payload.launchUrl }
-$start = @{ FilePath = [string]$payload.target }
-if ($arguments.Count -gt 0) { $start.ArgumentList = $arguments }
-if ($payload.cwd -and (Test-Path -LiteralPath $payload.cwd)) { $start.WorkingDirectory = [string]$payload.cwd }
-Start-Process @start
-if ($payload.placement) {
-  $deadline = [DateTime]::UtcNow.AddSeconds(20)
-  do {
-    Start-Sleep -Milliseconds 250
-    $candidate = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-      $_.MainWindowHandle -ne 0 -and $before -notcontains $_.Id -and (!$payload.processName -or $_.ProcessName -eq $payload.processName)
-    } | Sort-Object StartTime | Select-Object -Last 1
-  } while (-not $candidate -and [DateTime]::UtcNow -lt $deadline)
-  if ($candidate) {
-    [void][OBSGuardWindowApi]::MoveWindow([long]$candidate.MainWindowHandle, [int]$payload.placement.x, [int]$payload.placement.y, [int]$payload.placement.width, [int]$payload.placement.height, [bool]$payload.placement.maximized)
-  }
-}
 `;

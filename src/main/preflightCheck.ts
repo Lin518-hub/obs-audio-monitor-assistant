@@ -87,11 +87,12 @@ export class PreflightCheckService {
     }
 
     const processes = await readProcessList();
-    const displays = placementDisplays();
+    const displays = await this.placementDisplays();
     const placements = { ...settings.windowPlacements };
     const captured: PreflightPlacementTarget[] = [];
 
     for (const id of PREFLIGHT_APP_IDS) {
+      if (id === 'cosmic_cat') continue;
       if (!settings.apps[id].enabled || !settings.apps[id].restoreWindowPosition) continue;
       try {
         const windows = await this.windowsForApp(id, settings.apps, processes);
@@ -104,7 +105,7 @@ export class PreflightCheckService {
       }
     }
 
-    if (settings.projector.enabled && settings.projector.restoreWindowPosition) {
+    if (settings.projector.restoreWindowPosition) {
       try {
         const projector = await this.findOBSProjector(settings.apps, processes);
         if (!projector) throw new Error('未找到已打开的节目输出投影');
@@ -129,21 +130,19 @@ export class PreflightCheckService {
     const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
     if (current?.state !== 'running' || shouldOpenBrowserPage) {
       try {
-        const placement = settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
+        const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
         const existingHandles = placement && id === 'browser'
           ? await this.appWindowHandles(id, settings.apps)
           : undefined;
         await this.launchConfiguredApp(id, settings.apps, placement);
         launched.push(id);
-        if (id !== 'cosmic_cat' && placement) {
+        if (placement) {
           try {
             await this.waitAndRestoreApp(id, settings.apps, placement, existingHandles);
             restored.push(id);
           } catch (error) {
             restoreFailures[id] = errorMessage(error, '窗口位置恢复失败');
           }
-        } else if (id === 'cosmic_cat' && placement) {
-          restored.push(id);
         }
       } catch (error) {
         failures[id] = errorMessage(error, '启动失败');
@@ -168,7 +167,7 @@ export class PreflightCheckService {
       const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
       if (alreadyRunning && !shouldOpenBrowserPage) continue;
       try {
-        const placement = settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
+        const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
         if (placement && id === 'browser') {
           existingWindowHandles[id] = await this.appWindowHandles(id, settings.apps);
         }
@@ -180,12 +179,8 @@ export class PreflightCheckService {
     }
 
     await Promise.all(launched.map(async (id) => {
-      const placement = settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
+      const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
       if (!placement) return;
-      if (id === 'cosmic_cat') {
-        restored.push(id);
-        return;
-      }
       try {
         await this.waitAndRestoreApp(id, settings.apps, placement, existingWindowHandles[id]);
         restored.push(id);
@@ -225,7 +220,7 @@ export class PreflightCheckService {
 
   async restoreWindow(window: WindowsTopLevelWindow, placement: PreflightWindowPlacement): Promise<void> {
     if (process.platform !== 'win32') return;
-    const resolved = resolveWindowPlacement(placement, placementDisplays());
+    const resolved = resolveWindowPlacement(placement, await this.placementDisplays());
     await this.windows.moveWindow(window.handle, resolved.bounds, resolved.windowState);
   }
 
@@ -242,20 +237,15 @@ export class PreflightCheckService {
     if (!existsSync(target)) throw new Error('快捷方式或程序路径已失效');
 
     const shortcut = shortcutDetails(target);
-    if (process.platform === 'win32' && target.toLowerCase().endsWith('.lnk') && !shortcut) {
+    if (process.platform === 'win32' && target.toLowerCase().endsWith('.lnk') && !shortcut && id !== 'cosmic_cat') {
       throw new Error('无法解析此快捷方式，请重新选择有效的 .lnk 文件');
     }
     const resolvedShortcutTarget = shortcut?.target ?? '';
     if (id === 'cosmic_cat') {
-      const resolved = placement ? resolveWindowPlacement(placement, placementDisplays()) : undefined;
-      await this.windows.launchElevated(
-        resolvedShortcutTarget || target,
-        launchUrl,
-        resolved,
-        resolvedShortcutTarget || target,
-        shortcut?.args ?? '',
-        shortcut?.cwd ?? ''
-      );
+      // Launch the original shortcut through ShellExecute's runas verb. This
+      // mirrors Windows Explorer's "Run as administrator" behavior and keeps
+      // shortcut metadata intact. Cosmic Cat has no main window to restore.
+      await this.windows.launchElevated(target);
       return;
     }
 
@@ -309,6 +299,17 @@ export class PreflightCheckService {
     if (process.platform !== 'win32') return new Set();
     const windows = await this.windowsForApp(id, configs, await readProcessList(true));
     return new Set(windows.map((window) => window.handle));
+  }
+
+  private async placementDisplays(): Promise<PlacementDisplay[]> {
+    if (process.platform !== 'win32') return [];
+    try {
+      const nativeDisplays = await this.windows.listDisplays();
+      if (nativeDisplays.length > 0) return nativeDisplays;
+    } catch {
+      // Keep layout capture available on restricted Windows installations.
+    }
+    return electronPlacementDisplays();
   }
 }
 
@@ -391,7 +392,7 @@ Start-Process @start
   });
 }
 
-function placementDisplays(): PlacementDisplay[] {
+function electronPlacementDisplays(): PlacementDisplay[] {
   if (process.platform !== 'win32') return [];
   const primaryId = screen.getPrimaryDisplay().id;
   return screen.getAllDisplays().map((display) => ({

@@ -71,11 +71,38 @@ function findOwningDisplay(bounds: PreflightRect, displays: PlacementDisplay[]):
 }
 
 function findTargetDisplay(placement: PreflightWindowPlacement, displays: PlacementDisplay[]): PlacementDisplay | null {
+  const exactGeometry = displays.find((display) => sameWorkArea(display.workArea, placement.capturedWorkArea));
+  if (exactGeometry) return exactGeometry;
+
+  const labelMatches = placement.displayLabel
+    ? displays.filter((display) => display.label === placement.displayLabel)
+    : [];
+  if (labelMatches.length === 1) return labelMatches[0];
+
   const byId = placement.displayId === null ? null : displays.find((display) => display.id === placement.displayId);
-  if (byId) return byId;
-  const byLabel = placement.displayLabel ? displays.find((display) => display.label === placement.displayLabel) : null;
-  if (byLabel) return byLabel;
+  if (byId) {
+    const closest = closestDisplay(placement.capturedWorkArea, displays);
+    if (closest && workAreaDistance(placement.capturedWorkArea, closest.workArea) * 2 < workAreaDistance(placement.capturedWorkArea, byId.workArea)) {
+      return closest;
+    }
+    return byId;
+  }
+
+  if (labelMatches.length > 1) return closestDisplay(placement.capturedWorkArea, labelMatches);
+  if (displays.length > 1) return closestDisplay(placement.capturedWorkArea, displays);
   return null;
+}
+
+function sameWorkArea(a: PreflightRect, b: PreflightRect): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+function closestDisplay(captured: PreflightRect, displays: PlacementDisplay[]): PlacementDisplay | null {
+  return [...displays].sort((a, b) => workAreaDistance(captured, a.workArea) - workAreaDistance(captured, b.workArea))[0] ?? null;
+}
+
+function workAreaDistance(a: PreflightRect, b: PreflightRect): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.width - b.width) + Math.abs(a.height - b.height);
 }
 
 function fallbackDisplay(displays: PlacementDisplay[]): PlacementDisplay | null {

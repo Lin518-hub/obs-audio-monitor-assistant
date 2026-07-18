@@ -50,6 +50,8 @@ const SOURCE_LABELS: Record<PreflightPathSource, string> = {
   unknown: '未识别来源'
 };
 
+const POSITIONABLE_APP_IDS = new Set<PreflightAppId>(['obs', 'douyin', 'browser', 'software_control']);
+
 interface PreflightCheckPageProps {
   draft: AppConfig;
   search: string;
@@ -115,10 +117,10 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
   const runningCount = enabledIds.filter((id) => result?.apps.find((app) => app.id === id)?.state === 'running').length;
   const configuredCount = enabledIds.filter((id) => Boolean(draft.preflightApps[id].path.trim())
     || (id === 'browser' && Boolean(draft.preflightApps.browser.launchUrl.trim()))).length;
-  const savedLayoutCount = enabledIds.filter((id) => draft.preflightApps[id].restoreWindowPosition && draft.preflightWindowPlacements[id]).length
-    + (draft.preflightProjector.enabled && draft.preflightProjector.restoreWindowPosition && draft.preflightWindowPlacements.obs_projector ? 1 : 0);
-  const selectedLayoutCount = enabledIds.filter((id) => draft.preflightApps[id].restoreWindowPosition).length
-    + (draft.preflightProjector.enabled && draft.preflightProjector.restoreWindowPosition ? 1 : 0);
+  const savedLayoutCount = enabledIds.filter((id) => POSITIONABLE_APP_IDS.has(id) && draft.preflightApps[id].restoreWindowPosition && draft.preflightWindowPlacements[id]).length
+    + (draft.preflightProjector.restoreWindowPosition && draft.preflightWindowPlacements.obs_projector ? 1 : 0);
+  const selectedLayoutCount = enabledIds.filter((id) => POSITIONABLE_APP_IDS.has(id) && draft.preflightApps[id].restoreWindowPosition).length
+    + (draft.preflightProjector.restoreWindowPosition ? 1 : 0);
   const ready = enabledIds.length > 0 && runningCount === enabledIds.length;
   const query = search.trim().toLocaleLowerCase('zh-CN');
   const visibleIds = (Object.keys(APP_META) as PreflightAppId[]).filter((id) => {
@@ -355,7 +357,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
           </button>
         </div>
         <div className="preflight-layout-options">
-          {enabledIds.map((id) => {
+          {enabledIds.filter((id) => POSITIONABLE_APP_IDS.has(id)).map((id) => {
             const enabled = draft.preflightApps[id].restoreWindowPosition;
             const placement = draft.preflightWindowPlacements[id];
             return (
@@ -373,19 +375,17 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
               </button>
             );
           })}
-          {draft.preflightProjector.enabled && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={draft.preflightProjector.restoreWindowPosition}
-              className={`preflight-layout-option ${draft.preflightProjector.restoreWindowPosition ? 'active' : ''}`}
-              onClick={() => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition: !draft.preflightProjector.restoreWindowPosition })}
-            >
-              <span className="preflight-layout-check">{draft.preflightProjector.restoreWindowPosition && <Check size={13} />}</span>
-              <span>OBS 节目投影</span>
-              <small>{draft.preflightWindowPlacements.obs_projector ? `已保存 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : '等待保存'}</small>
-            </button>
-          )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={draft.preflightProjector.restoreWindowPosition}
+            className={`preflight-layout-option ${draft.preflightProjector.restoreWindowPosition ? 'active' : ''}`}
+            onClick={() => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition: !draft.preflightProjector.restoreWindowPosition })}
+          >
+            <span className="preflight-layout-check">{draft.preflightProjector.restoreWindowPosition && <Check size={13} />}</span>
+            <span>OBS 节目投影</span>
+            <small>{draft.preflightWindowPlacements.obs_projector ? `已保存 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : draft.preflightProjector.restoreWindowPosition ? '打开投影后保存' : '不恢复'}</small>
+          </button>
         </div>
       </section>
 
@@ -426,7 +426,11 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                     <span>{meta.description}</span>
                     <span className="preflight-path" title={config.path || '尚未设置快捷方式'}>
                       {config.path ? `${SOURCE_LABELS[config.pathSource]} · ${fileName(config.path)}` : canOpenBrowserPage ? '使用系统默认浏览器' : '尚未设置快捷方式'}
-                      {' · '}{config.restoreWindowPosition ? placement ? `固定位置 ${formatShortTime(placement.capturedAt)}` : '固定位置未保存' : '不恢复位置'}
+                      {' · '}{id === 'cosmic_cat'
+                        ? '管理员后台程序，无窗口位置'
+                        : config.restoreWindowPosition
+                          ? placement ? `固定位置 ${formatShortTime(placement.capturedAt)}` : '固定位置未保存'
+                          : '不恢复位置'}
                     </span>
                   </div>
                   <StatusPill status={appStatus} checking={checking && !result} />

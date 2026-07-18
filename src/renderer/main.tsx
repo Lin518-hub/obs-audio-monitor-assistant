@@ -62,6 +62,8 @@ const route =
     : window.location.hash === '#floating' ? 'floating'
     : 'settings';
 
+const initialSettingsPage = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('page');
+
 document.body.dataset.route = route;
 document.documentElement.dataset.route = route;
 
@@ -112,7 +114,7 @@ function SettingsApp() {
   const snapshot = useSnapshot();
   const updateState = useUpdateState();
   const [draft, setDraft] = useState<AppConfig | null>(null);
-  const [page, setPage] = useState<SidebarPage>('dashboard');
+  const [page, setPage] = useState<SidebarPage>(initialSettingsPage === 'preflight' ? 'preflight' : 'dashboard');
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
