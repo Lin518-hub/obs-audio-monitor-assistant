@@ -1,6 +1,7 @@
 import { screen, shell, type ShortcutDetails } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { discoverPreflightApps } from './preflightDiscovery.js';
 import { WindowsWindowManager, selectMainWindow, selectOBSProjectorWindow, type WindowsTopLevelWindow } from './windowsWindowManager.js';
@@ -45,7 +46,7 @@ export class PreflightCheckService {
     const apps = await Promise.all(PREFLIGHT_APP_IDS.map(async (id): Promise<PreflightAppStatus> => {
       const configuredPath = configs[id].path.trim();
       const resolvedPath = shortcutDetails(configuredPath)?.target ?? '';
-      const running = findPreflightProcess(id, processes, configuredPath, resolvedPath);
+      const running = findPreflightProcess(id, processes, configuredPath, resolvedPath, configs[id].customLabel);
       if (running) {
         return {
           ...status(id, configuredPath, 'running', '已检测到正在运行'),
@@ -128,6 +129,9 @@ export class PreflightCheckService {
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
 
     const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
+    if (id === 'obs' && current?.state === 'running') {
+      await this.resolveOBSStartupDialogs(settings.apps);
+    }
     if (current?.state !== 'running' || shouldOpenBrowserPage) {
       try {
         const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
@@ -160,10 +164,14 @@ export class PreflightCheckService {
     const restored: PreflightPlacementTarget[] = [];
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
     const existingWindowHandles: Partial<Record<PreflightAppId, Set<string>>> = {};
+    let shouldResolveOBSStartupDialogs = false;
 
     for (const id of PREFLIGHT_APP_IDS) {
       if (!settings.apps[id].enabled) continue;
       const alreadyRunning = before.apps.find((app) => app.id === id)?.state === 'running';
+      if (id === 'obs' && alreadyRunning) {
+        shouldResolveOBSStartupDialogs = true;
+      }
       const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
       if (alreadyRunning && !shouldOpenBrowserPage) continue;
       try {
@@ -171,11 +179,16 @@ export class PreflightCheckService {
         if (placement && id === 'browser') {
           existingWindowHandles[id] = await this.appWindowHandles(id, settings.apps);
         }
-        await this.launchConfiguredApp(id, settings.apps, placement);
+        await this.launchConfiguredApp(id, settings.apps, placement, id !== 'obs');
         launched.push(id);
+        if (id === 'obs') shouldResolveOBSStartupDialogs = true;
       } catch (error) {
         failures[id] = errorMessage(error, '启动失败');
       }
+    }
+
+    if (shouldResolveOBSStartupDialogs) {
+      await this.resolveOBSStartupDialogs(settings.apps);
     }
 
     await Promise.all(launched.map(async (id) => {
@@ -224,7 +237,12 @@ export class PreflightCheckService {
     await this.windows.moveWindow(window.handle, resolved.bounds, resolved.windowState);
   }
 
-  private async launchConfiguredApp(id: PreflightAppId, configs: PreflightAppConfigs, placement?: PreflightWindowPlacement): Promise<void> {
+  private async launchConfiguredApp(
+    id: PreflightAppId,
+    configs: PreflightAppConfigs,
+    placement?: PreflightWindowPlacement,
+    waitForOBSStartup = true
+  ): Promise<void> {
     const config = configs[id];
     const target = config.path.trim();
     if (id === 'cosmic_cat' && process.platform !== 'win32') throw new Error('宇宙猫检测的管理员启动仅支持 Windows');
@@ -259,6 +277,17 @@ export class PreflightCheckService {
       );
       return;
     }
+    if (process.platform === 'win32' && id === 'obs') {
+      const executable = resolvedShortcutTarget || target;
+      await launchWindowsPathWithArguments(
+        executable,
+        shortcut?.args ?? '',
+        shortcut?.cwd || dirname(executable),
+        ['--disable-missing-files-check']
+      );
+      if (waitForOBSStartup) await this.resolveOBSStartupDialogs(configs);
+      return;
+    }
     if (launchUrl) {
       await shell.openExternal(launchUrl);
       return;
@@ -291,8 +320,37 @@ export class PreflightCheckService {
 
   private async windowsForApp(id: PreflightAppId, configs: PreflightAppConfigs, processes: ProcessEntry[]): Promise<WindowsTopLevelWindow[]> {
     const resolvedPath = shortcutDetails(configs[id].path)?.target ?? '';
-    const matches = findPreflightProcesses(id, processes, configs[id].path, resolvedPath);
+    const matches = findPreflightProcesses(id, processes, configs[id].path, resolvedPath, configs[id].customLabel);
     return this.windows.listWindows(matches.map((process) => process.pid));
+  }
+
+  private async resolveOBSStartupDialogs(configs: PreflightAppConfigs): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const deadline = Date.now() + 12_000;
+    let pids: number[] = [];
+    let lastProcessRefreshAt = 0;
+    while (Date.now() < deadline) {
+      const now = Date.now();
+      if (pids.length === 0 || now - lastProcessRefreshAt >= 1_500) {
+        const processes = await readProcessList(true);
+        const resolvedPath = shortcutDetails(configs.obs.path)?.target ?? '';
+        pids = findPreflightProcesses('obs', processes, configs.obs.path, resolvedPath).map((item) => item.pid);
+        lastProcessRefreshAt = now;
+      }
+      if (pids.length === 0) {
+        await delay(300);
+        continue;
+      }
+      const action = await this.windows.resolveOBSStartupDialog(pids);
+      if (action === 'missing_files') return;
+      if (action === 'normal_mode') {
+        await delay(250);
+        continue;
+      }
+      const windows = await this.windows.listWindows(pids);
+      if (windows.some((window) => !selectOBSProjectorWindow([window]) && window.bounds.width >= 640 && window.bounds.height >= 360)) return;
+      await delay(180);
+    }
   }
 
   private async appWindowHandles(id: PreflightAppId, configs: PreflightAppConfigs): Promise<Set<string>> {
@@ -335,8 +393,10 @@ async function queryProcessList(): Promise<ProcessEntry[]> {
       const command = [
         "$ErrorActionPreference = 'Stop'",
         '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-        '@(Get-CimInstance Win32_Process | ForEach-Object {',
-        "  [PSCustomObject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; executablePath = [string]$_.ExecutablePath; commandLine = [string]$_.CommandLine }",
+        '@(Get-Process -ErrorAction SilentlyContinue | ForEach-Object {',
+        "  $executablePath = ''",
+        '  try { $executablePath = [string]$_.Path } catch {}',
+        "  [PSCustomObject]@{ pid = [int]$_.Id; name = [string]$_.ProcessName; executablePath = $executablePath; commandLine = ''; windowTitle = [string]$_.MainWindowTitle }",
         '}) | ConvertTo-Json -Compress'
       ].join('\r\n');
       const encoded = Buffer.from(command, 'utf16le').toString('base64');
@@ -388,6 +448,27 @@ Start-Process @start
   const encoded = Buffer.from(command, 'utf16le').toString('base64');
   await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
     windowsHide: true,
+    timeout: 30_000,
+    env: { ...process.env, OBS_GUARD_PREFLIGHT_LAUNCH: payload }
+  });
+}
+
+async function launchWindowsPathWithArguments(target: string, shortcutArgs: string, cwd: string, extraArgs: string[]): Promise<void> {
+  const payload = JSON.stringify({ target, shortcutArgs, cwd, extraArgs });
+  const command = `
+$ErrorActionPreference = 'Stop'
+$payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_LAUNCH
+$arguments = @()
+if ($payload.shortcutArgs) { $arguments += [string]$payload.shortcutArgs }
+foreach ($argument in @($payload.extraArgs)) { if ($argument) { $arguments += [string]$argument } }
+$start = @{ FilePath = [string]$payload.target; ArgumentList = $arguments }
+if ($payload.cwd -and (Test-Path -LiteralPath $payload.cwd)) { $start.WorkingDirectory = [string]$payload.cwd }
+Start-Process @start
+`;
+  const encoded = Buffer.from(command, 'utf16le').toString('base64');
+  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+    windowsHide: true,
+    timeout: 30_000,
     env: { ...process.env, OBS_GUARD_PREFLIGHT_LAUNCH: payload }
   });
 }

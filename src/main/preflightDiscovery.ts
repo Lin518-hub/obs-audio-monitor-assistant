@@ -23,7 +23,7 @@ const SOURCE_PRIORITY: Record<PreflightPathSource, number> = {
 
 const SHORTCUT_PATTERNS: Record<PreflightAppId, RegExp> = {
   obs: /(^|\s)obs(?: studio)?($|\s)|obs直播/i,
-  douyin: /抖音|淘宝直播|美团直播|直播伴侣|直播工具|live\s*studio|live\s*companion/i,
+  douyin: /抖音|淘宝直播|美团直播|千牛直播|直播伴侣|直播工具|直播助手|主播工作台|主播工具|live\s*studio|live\s*companion|webcast\s*mate/i,
   browser: /google chrome|谷歌浏览器|microsoft edge|微软 edge|firefox|火狐|360.*浏览器|qq浏览器/i,
   software_control: /atem.*software control|software control/i,
   cosmic_cat: /宇宙猫|cosmic\s*cat/i
@@ -99,6 +99,11 @@ async function registryCandidates(): Promise<DiscoveryCandidate[]> {
     ['douyin', 'DouyinLiveCompanion.exe'],
     ['douyin', 'LiveStudio.exe'],
     ['douyin', 'ByteLive.exe'],
+    ['douyin', 'WebcastMate.exe'],
+    ['douyin', 'MTLive.exe'],
+    ['douyin', 'TaobaoLive.exe'],
+    ['douyin', 'TaobaoLiveStudio.exe'],
+    ['douyin', 'QnLiveStudio.exe'],
     ['browser', 'msedge.exe'],
     ['browser', 'chrome.exe'],
     ['browser', 'firefox.exe'],

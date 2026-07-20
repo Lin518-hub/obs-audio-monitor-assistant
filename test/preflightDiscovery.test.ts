@@ -15,6 +15,8 @@ describe('preflight app discovery', () => {
     expect(matchShortcutAppId('抖音直播伴侣')).toBe('douyin');
     expect(matchShortcutAppId('淘宝直播工作台')).toBe('douyin');
     expect(matchShortcutAppId('平台直播工具 - 美团直播')).toBe('douyin');
+    expect(matchShortcutAppId('千牛主播工作台')).toBe('douyin');
+    expect(matchShortcutAppId('Webcast Mate')).toBe('douyin');
     expect(matchShortcutAppId('宇宙猫检测工具')).toBe('cosmic_cat');
     expect(matchShortcutAppId('ATEM Software Control')).toBe('software_control');
   });

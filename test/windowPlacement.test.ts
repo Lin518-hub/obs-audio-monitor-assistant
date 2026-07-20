@@ -75,5 +75,7 @@ describe('preflight window placement', () => {
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（节目）' })).toBe(true);
     expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Program)' })).toBe(true);
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（多画面）' })).toBe(false);
+    expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Scene) - Camera 1' })).toBe(false);
+    expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（来源）- 摄像头' })).toBe(false);
   });
 });

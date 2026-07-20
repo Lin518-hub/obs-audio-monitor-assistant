@@ -13,6 +13,8 @@ export interface WindowsTopLevelWindow {
   windowState: PreflightWindowState;
 }
 
+export type OBSStartupDialogAction = 'normal_mode' | 'missing_files' | null;
+
 export class WindowsWindowManager {
   async listDisplays(): Promise<PlacementDisplay[]> {
     if (process.platform !== 'win32') return [];
@@ -35,7 +37,7 @@ $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
     if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
     await runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
-$ok = [OBSGuardWindowApi]::MoveWindow([long]$payload.handle, [int]$payload.x, [int]$payload.y, [int]$payload.width, [int]$payload.height, [bool]$payload.maximized)
+$ok = [OBSGuardWindowApi]::MoveWindowStable([long]$payload.handle, [int]$payload.x, [int]$payload.y, [int]$payload.width, [int]$payload.height, [bool]$payload.maximized)
 if (-not $ok) { throw '无法移动目标窗口' }
 `, {
       handle,
@@ -45,6 +47,16 @@ if (-not $ok) { throw '无法移动目标窗口' }
       height: Math.round(bounds.height),
       maximized: windowState === 'maximized'
     });
+  }
+
+  async resolveOBSStartupDialog(pids: number[]): Promise<OBSStartupDialogAction> {
+    if (process.platform !== 'win32' || pids.length === 0) return null;
+    const output = await runPowerShell(`
+$payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
+[OBSGuardWindowApi]::ResolveOBSStartupDialog(($payload.pids -join ','))
+`, { pids: [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))] });
+    const action = output.trim().toLocaleLowerCase('en-US');
+    return action === 'normal_mode' || action === 'missing_files' ? action : null;
   }
 
   async launchElevated(target: string): Promise<void> {
@@ -68,7 +80,7 @@ Start-Process -FilePath ([string]$payload.target) -Verb RunAs
 
 export function selectMainWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
   return [...windows]
-    .filter((window) => !isOBSProjectorWindow(window))
+    .filter((window) => !isAnyOBSProjectorWindow(window))
     .sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
 }
 
@@ -78,7 +90,12 @@ export function selectOBSProjectorWindow(windows: WindowsTopLevelWindow[]): Wind
 
 export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const title = window.title.toLocaleLowerCase('zh-CN');
-  return /projector|投影|节目输出|program output|windowed.*program/.test(title) && !/multiview|多画面/.test(title);
+  if (/multiview|多画面/.test(title)) return false;
+  return /(?:projector|投影).*(?:program|节目)|(?:program|节目).*(?:projector|投影)|program\s+output|节目输出/.test(title);
+}
+
+function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
+  return /projector|投影/.test(window.title.toLocaleLowerCase('zh-CN'));
 }
 
 async function runPowerShell(script: string, payload: unknown): Promise<string> {
@@ -86,6 +103,7 @@ async function runPowerShell(script: string, payload: unknown): Promise<string> 
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
     windowsHide: true,
     maxBuffer: 2 * 1024 * 1024,
+    timeout: 20_000,
     env: {
       ...process.env,
       OBS_GUARD_PREFLIGHT_PAYLOAD: JSON.stringify(payload)
@@ -153,9 +171,12 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 
 public static class OBSGuardWindowApi {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
   public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT monitorRect, IntPtr data);
 
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
@@ -174,6 +195,7 @@ public static class OBSGuardWindowApi {
   }
 
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lParam);
   [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
   [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -185,6 +207,7 @@ public static class OBSGuardWindowApi {
   [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
   [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int command);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+  [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr SendMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
 
   static void EnablePerMonitorDpiAwareness() {
     try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
@@ -248,9 +271,64 @@ public static class OBSGuardWindowApi {
     EnablePerMonitorDpiAwareness();
     var hWnd = new IntPtr(handle);
     ShowWindowAsync(hWnd, 9);
-    bool moved = SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0044);
+    bool moved = SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0054);
     if (moved && maximized) ShowWindowAsync(hWnd, 3);
     return moved;
+  }
+
+  public static bool MoveWindowStable(long handle, int x, int y, int width, int height, bool maximized) {
+    bool moved = false;
+    int[] delays = new int[] { 0, 120, 240, 480, 720, 1000 };
+    foreach (int delay in delays) {
+      if (delay > 0) Thread.Sleep(delay);
+      moved = MoveWindow(handle, x, y, width, height, false) || moved;
+    }
+    Thread.Sleep(220);
+    moved = MoveWindow(handle, x, y, width, height, false) || moved;
+    if (moved && maximized) ShowWindowAsync(new IntPtr(handle), 3);
+    return moved;
+  }
+
+  public static string ResolveOBSStartupDialog(string pidCsv) {
+    var allowed = new HashSet<int>();
+    foreach (var value in (pidCsv ?? "").Split(',')) { int pid; if (int.TryParse(value, out pid)) allowed.Add(pid); }
+    string action = "";
+    var normalButton = new Regex(@"run\s+in\s+normal\s+mode|run\s+normally|start\s+normally|normal\s+mode|正常启动|正常运行|正常模式|以正常模式", RegexOptions.IgnoreCase);
+    var missingFilesTitle = new Regex(@"^\s*(missing\s+files|缺少文件|缺失文件|丢失文件)\s*$", RegexOptions.IgnoreCase);
+    var cancelButton = new Regex(@"^\s*(cancel|close|取消|关闭)\s*$", RegexOptions.IgnoreCase);
+    EnumWindows(delegate(IntPtr top, IntPtr unused) {
+      uint pid; GetWindowThreadProcessId(top, out pid);
+      if (!allowed.Contains((int)pid) || !IsWindowVisible(top)) return true;
+      int topLength = GetWindowTextLength(top);
+      var topText = new StringBuilder(Math.Max(1, topLength + 1));
+      if (topLength > 0) GetWindowText(top, topText, topText.Capacity);
+      EnumChildWindows(top, delegate(IntPtr child, IntPtr childUnused) {
+        int length = GetWindowTextLength(child);
+        if (length <= 0) return true;
+        var text = new StringBuilder(length + 1); GetWindowText(child, text, text.Capacity);
+        if (!normalButton.IsMatch(text.ToString())) return true;
+        SendMessage(child, 0x00F5, IntPtr.Zero, IntPtr.Zero);
+        action = "normal_mode";
+        return false;
+      }, IntPtr.Zero);
+      if (action.Length > 0) return false;
+      if (!missingFilesTitle.IsMatch(topText.ToString())) return true;
+      EnumChildWindows(top, delegate(IntPtr child, IntPtr childUnused) {
+        int length = GetWindowTextLength(child);
+        if (length <= 0) return true;
+        var text = new StringBuilder(length + 1); GetWindowText(child, text, text.Capacity);
+        if (!cancelButton.IsMatch(text.ToString())) return true;
+        SendMessage(child, 0x00F5, IntPtr.Zero, IntPtr.Zero);
+        action = "missing_files";
+        return false;
+      }, IntPtr.Zero);
+      if (action.Length == 0) {
+        SendMessage(top, 0x0010, IntPtr.Zero, IntPtr.Zero);
+        action = "missing_files";
+      }
+      return false;
+    }, IntPtr.Zero);
+    return action;
   }
 }
 '@

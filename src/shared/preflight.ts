@@ -4,6 +4,7 @@ export interface ProcessEntry {
   pid: number;
   name: string;
   command: string;
+  windowTitle?: string;
 }
 
 const PROCESS_ALIASES: Record<PreflightAppId, string[]> = {
@@ -22,12 +23,34 @@ const PROCESS_ALIASES: Record<PreflightAppId, string[]> = {
     'liveassistant',
     'streamingtool',
     'bytelive',
-    'byteliveassistant'
+    'byteliveassistant',
+    'webcastmate',
+    'mtlive',
+    'taobaolive',
+    'taobaolivestudio',
+    'qnlivestudio'
   ],
   browser: ['chrome', 'googlechrome', 'msedge', 'microsoftedge', 'firefox', 'safari', '360chrome', '360se', 'qqbrowser'],
   software_control: ['softwarecontrol'],
   cosmic_cat: ['宇宙猫检测', '宇宙猫', 'cosmiccat']
 };
+
+const PLATFORM_WINDOW_TITLE_ALIASES = [
+  '直播伴侣',
+  '直播工具',
+  '直播助手',
+  '主播工作台',
+  '主播工具',
+  '抖音直播',
+  '淘宝直播',
+  '美团直播',
+  '千牛直播',
+  'douyin live',
+  'live studio',
+  'live companion'
+];
+
+const PLATFORM_WINDOW_CONTEXT = /(?:直播|开播|主播|\blive\b|\bstream(?:ing)?\b)/i;
 
 export function parseWindowsTaskList(output: string): ProcessEntry[] {
   return output
@@ -61,8 +84,9 @@ export function parseWindowsProcessJson(output: string): ProcessEntry[] {
     const name = stringValue(value.name ?? value.Name);
     const executablePath = stringValue(value.executablePath ?? value.ExecutablePath);
     const commandLine = stringValue(value.commandLine ?? value.CommandLine);
+    const windowTitle = stringValue(value.windowTitle ?? value.MainWindowTitle);
     if (!Number.isFinite(pid) || !name) return [];
-    return [{ pid, name, command: executablePath || commandLine || name }];
+    return [{ pid, name, command: executablePath || commandLine || name, ...(windowTitle ? { windowTitle } : {}) }];
   });
 }
 
@@ -88,16 +112,18 @@ export function findPreflightProcess(
   id: PreflightAppId,
   processes: ProcessEntry[],
   configuredPath = '',
-  resolvedShortcutPath = ''
+  resolvedShortcutPath = '',
+  customLabel = ''
 ): ProcessEntry | null {
-  return findPreflightProcesses(id, processes, configuredPath, resolvedShortcutPath)[0] ?? null;
+  return findPreflightProcesses(id, processes, configuredPath, resolvedShortcutPath, customLabel)[0] ?? null;
 }
 
 export function findPreflightProcesses(
   id: PreflightAppId,
   processes: ProcessEntry[],
   configuredPath = '',
-  resolvedShortcutPath = ''
+  resolvedShortcutPath = '',
+  customLabel = ''
 ): ProcessEntry[] {
   const configuredNames = [configuredPath, resolvedShortcutPath]
     .map((value) => normalizeProcessName(portableBasename(value)))
@@ -122,7 +148,21 @@ export function findPreflightProcesses(
       portableBasename(process.command),
       portableBasename(processExecutable)
     ].map(normalizeProcessName).filter(Boolean);
-    return candidates.some((candidate) => aliases.some((alias) => candidate === alias || (alias.length >= 6 && candidate.startsWith(alias))));
+    if (candidates.some((candidate) => aliases.some((alias) => candidate === alias || (alias.length >= 6 && candidate.startsWith(alias))))) {
+      return true;
+    }
+
+    if (id !== 'douyin' || !process.windowTitle || isBrowserProcess(process)) return false;
+    const normalizedTitle = normalizeSearchText(process.windowTitle);
+    const knownPlatformWindow = PLATFORM_WINDOW_TITLE_ALIASES
+      .map(normalizeSearchText)
+      .some((hint) => normalizedTitle.includes(hint));
+    if (knownPlatformWindow) return true;
+
+    const normalizedLabel = normalizeSearchText(customLabel);
+    return normalizedLabel.length >= 2
+      && normalizedTitle.includes(normalizedLabel)
+      && PLATFORM_WINDOW_CONTEXT.test(normalizedTitle);
   });
 }
 
@@ -159,6 +199,28 @@ function portableDirname(value: string): string {
 
 function normalizePortablePath(value: string): string {
   return value.trim().replace(/\\/g, '/').replace(/\/+$/g, '').toLocaleLowerCase('en-US');
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase('zh-CN').replace(/\s+/g, ' ');
+}
+
+function isBrowserProcess(process: ProcessEntry): boolean {
+  const names = [process.name, portableBasename(process.command)].map(normalizeProcessName);
+  return names.some((name) => [
+    'chrome',
+    'googlechrome',
+    'msedge',
+    'microsoftedge',
+    'firefox',
+    '360chrome',
+    '360se',
+    'qqbrowser',
+    'brave',
+    'opera',
+    'vivaldi',
+    'iexplore'
+  ].includes(name));
 }
 
 function commandExecutable(value: string): string {

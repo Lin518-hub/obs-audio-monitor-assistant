@@ -70,6 +70,44 @@ describe('preflight process detection', () => {
     ]))).toHaveLength(2);
   });
 
+  it('recognizes a platform live tool by its main window when the launcher process name is unrelated', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify({
+      pid: 930,
+      name: 'VendorShell.exe',
+      executablePath: 'D:\\Apps\\Vendor\\VendorShell.exe',
+      windowTitle: '美团直播助手 - 直播间 01'
+    }));
+    expect(findPreflightProcess('douyin', processes)?.pid).toBe(930);
+  });
+
+  it('uses the platform remark as a title hint without matching a browser tab', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify([
+      { pid: 931, name: 'PlatformHost.exe', executablePath: 'D:\\Live\\PlatformHost.exe', windowTitle: '华为专场开播控制台' },
+      { pid: 932, name: 'msedge.exe', executablePath: 'C:\\Program Files\\Edge\\msedge.exe', windowTitle: '华为专场开播控制台 - 搜索结果' }
+    ]));
+    expect(findPreflightProcess('douyin', processes, '', '', '华为专场')?.pid).toBe(931);
+  });
+
+  it('does not use an ordinary custom remark as a platform process match without live context', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify({
+      pid: 933,
+      name: 'VendorChat.exe',
+      executablePath: 'D:\\Apps\\VendorChat.exe',
+      windowTitle: '华为专场 - 群聊'
+    }));
+    expect(findPreflightProcess('douyin', processes, '', '', '华为专场')).toBeNull();
+  });
+
+  it('does not mistake alternative browser processes for a platform tool from their tab title', () => {
+    const processes = parseWindowsProcessJson(JSON.stringify({
+      pid: 934,
+      name: 'brave.exe',
+      executablePath: 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+      windowTitle: '淘宝直播工作台'
+    }));
+    expect(findPreflightProcess('douyin', processes)).toBeNull();
+  });
+
   it('does not confuse unrelated applications with short OBS aliases', () => {
     const processes = parseWindowsTaskList('"Obsidian.exe","311","Console","1","90,000 K"');
     expect(findPreflightProcess('obs', processes)).toBeNull();
