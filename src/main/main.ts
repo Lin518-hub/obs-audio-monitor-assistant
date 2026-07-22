@@ -145,9 +145,12 @@ async function initializeApp(): Promise<void> {
   } else if (config.autoLaunch) {
     await applyAutoLaunch(true);
   }
-  const history = await historyStore.load();
-  atemSwitchHistory = await atemHistoryStore.load();
-  const storedSessions = await atemSessionStore.load();
+  const [history, loadedATEMSwitchHistory, storedSessions] = await Promise.all([
+    historyStore.load(),
+    atemHistoryStore.load(),
+    atemSessionStore.load()
+  ]);
+  atemSwitchHistory = loadedATEMSwitchHistory;
   atemCurrentSession = storedSessions.activeSession;
   atemRecentSessions = storedSessions.sessions;
   monitor = new OBSMonitor(config, getDisplays());
@@ -600,25 +603,40 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
   }
 
   try {
-    if (process.platform === 'win32') {
-      const existing = await preflightCheckService.findOBSProjector(settings.apps);
-      if (existing) {
-        const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
-        if (placement) {
-          await preflightCheckService.restoreWindow(existing, placement);
-          return { state: 'already_open', message: '节目输出投影已打开并恢复到固定位置', positionRestored: true };
-        }
+    const restoreExistingProjector = async () => {
+      const inspection = await preflightCheckService.inspectOBSWindows(settings.apps);
+      if (!inspection.projector) return { result: null, handles: inspection.handles };
+      const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
+      if (placement) {
+        await preflightCheckService.restoreWindow(inspection.projector, placement);
         return {
+          result: { state: 'already_open', message: '节目输出投影已打开并恢复到固定位置', positionRestored: true } as PreflightProjectorResult,
+          handles: inspection.handles
+        };
+      }
+      return {
+        result: {
           state: 'already_open',
           message: '节目输出投影已打开；可在“固定窗口位置”中勾选投影并保存当前布局',
           positionRestored: false
-        };
-      }
+        } as PreflightProjectorResult,
+        handles: inspection.handles
+      };
+    };
+
+    if (process.platform === 'win32' && !monitor.getSnapshot().connected) {
+      const beforeConnection = await restoreExistingProjector();
+      if (beforeConnection.result) return beforeConnection.result;
     }
 
     const connected = await waitForOBSConnection(30_000);
     if (!connected) throw new Error('等待 OBS WebSocket 连接超时，请检查端口和密码');
-    const existingHandles = await preflightCheckService.listOBSWindowHandles(settings.apps);
+    let existingHandles = new Set<string>();
+    if (process.platform === 'win32') {
+      const inspection = await restoreExistingProjector();
+      if (inspection.result) return inspection.result;
+      existingHandles = inspection.handles;
+    }
     await monitor.openProgramProjector();
 
     let positionRestored = false;

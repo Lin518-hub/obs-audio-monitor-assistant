@@ -33,7 +33,10 @@ import type {
 const METER_STALE_MS = 5000;
 const VOLUME_HISTORY_RETENTION_MS = 10 * 60 * 1000;
 const VOLUME_HISTORY_SAMPLE_MS = 500;
-const METER_SNAPSHOT_THROTTLE_MS = 250;
+// The dedicated meter channel keeps the level bar at 25 fps. Full snapshots
+// only carry state/countdown changes, so emitting them once per second avoids
+// rerendering every desktop surface four times per second.
+const METER_SNAPSHOT_THROTTLE_MS = 1000;
 const METER_FRAME_INTERVAL_MS = 40;
 const VOLUME_HISTORY_BROADCAST_MS = 1000;
 const MAX_SILENCE_EVENTS = 100;
@@ -86,6 +89,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private history: AlertHistoryEntry[] = [];
   private silenceEvents: SilenceEventEntry[] = [];
   private inputStates = new Map<string, PerInputMonitorState>();
+  private cachedTargetInputNames: string[] | null = null;
+  private cachedTargetInputSet: Set<string> | null = null;
+  private cachedInputList: InputOption[] | null = null;
+  private cachedInputKinds = new Map<string, string>();
   private activeInputName = '';
   private volumeHistory: AppSnapshot['volumeHistory'] = [];
   private volumeHistoryLastAt = new Map<string, number>();
@@ -185,6 +192,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       ...this.config,
       ...patch
     };
+    const targetsChanged = targetKey(previous) !== targetKey(this.config);
+    if (targetsChanged) {
+      this.cachedTargetInputNames = null;
+      this.cachedTargetInputSet = null;
+    }
 
     if (this.config.paused) {
       this.state = {
@@ -195,7 +207,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       };
     }
 
-    if (targetKey(previous) !== targetKey(this.config)) {
+    if (targetsChanged) {
       this.lastTargetMeterAt = null;
       this.lastAudioMeterReceivedAt = null;
       this.activeInputName = this.getTargetInputNames()[0] || '';
@@ -582,8 +594,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return;
     }
 
-    const inputMeta = new Map(this.inputs.map((input) => [input.inputName, input.inputKind]));
-    const targetSet = new Set(targets);
+    const targetSet = this.getTargetInputSet();
     const now = Date.now();
     let sawTarget = false;
 
@@ -594,7 +605,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       }
 
       sawTarget = true;
-      const state = this.ensureInputState(name, inputMeta.get(name) ?? '');
+      const state = this.ensureInputState(name, this.getInputKind(name));
       const rawLevelDb = maxInputLevelDb(item.inputLevelsMul);
       this.updateInputLevel(state, rawLevelDb, now);
       const lastHistoryAt = this.volumeHistoryLastAt.get(name) ?? 0;
@@ -790,9 +801,28 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private getTargetInputNames(): string[] {
+    if (this.cachedTargetInputNames) {
+      return this.cachedTargetInputNames;
+    }
     const fromList = Array.isArray(this.config.targetInputNames) ? this.config.targetInputNames : [];
     const names = fromList.length > 0 ? fromList : (this.config.targetInputName ? [this.config.targetInputName] : []);
-    return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+    this.cachedTargetInputNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+    return this.cachedTargetInputNames;
+  }
+
+  private getTargetInputSet(): Set<string> {
+    if (!this.cachedTargetInputSet) {
+      this.cachedTargetInputSet = new Set(this.getTargetInputNames());
+    }
+    return this.cachedTargetInputSet;
+  }
+
+  private getInputKind(inputName: string): string {
+    if (this.cachedInputList !== this.inputs) {
+      this.cachedInputList = this.inputs;
+      this.cachedInputKinds = new Map(this.inputs.map((input) => [input.inputName, input.inputKind]));
+    }
+    return this.cachedInputKinds.get(inputName) ?? '';
   }
 
   private ensureInputState(inputName: string, inputKind: string): PerInputMonitorState {

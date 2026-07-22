@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isOBSProjectorWindow, parseWindowsDisplayList, parseWindowsWindowList } from '../src/main/windowsWindowManager.js';
+import { isOBSProjectorWindow, parseWindowsDisplayList, parseWindowsWindowList, selectNewOBSProjectorWindow } from '../src/main/windowsWindowManager.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../src/shared/windowPlacement.js';
 
 const displays: PlacementDisplay[] = [
@@ -77,5 +77,13 @@ describe('preflight window placement', () => {
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（多画面）' })).toBe(false);
     expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Scene) - Camera 1' })).toBe(false);
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（来源）- 摄像头' })).toBe(false);
+  });
+
+  it('falls back to a newly opened video-sized OBS window when its localized projector title is unknown', () => {
+    const windows = [
+      { handle: 'dialog', pid: 10, title: '缺失文件', bounds: { x: 10, y: 10, width: 520, height: 280 }, windowState: 'normal' as const },
+      { handle: 'projector', pid: 10, title: 'OBS 输出画面', bounds: { x: 100, y: 100, width: 960, height: 540 }, windowState: 'normal' as const }
+    ];
+    expect(selectNewOBSProjectorWindow(windows)?.handle).toBe('projector');
   });
 });

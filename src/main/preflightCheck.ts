@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { discoverPreflightApps } from './preflightDiscovery.js';
-import { WindowsWindowManager, selectMainWindow, selectOBSProjectorWindow, type WindowsTopLevelWindow } from './windowsWindowManager.js';
+import { WindowsWindowManager, selectMainWindow, selectNewOBSProjectorWindow, selectOBSProjectorWindow, type WindowsTopLevelWindow } from './windowsWindowManager.js';
 import { browserNewWindowArgument, findPreflightProcess, findPreflightProcesses, parsePosixProcessList, parseWindowsProcessJson, parseWindowsTaskList, type ProcessEntry } from '../shared/preflight.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../shared/windowPlacement.js';
 import {
@@ -22,18 +22,18 @@ import {
 } from '../shared/types.js';
 
 const execFileAsync = promisify(execFile);
-const PROCESS_LIST_CACHE_MS = 800;
+const PROCESS_LIST_CACHE_MS = 1_500;
 
 let processListCache: { expiresAt: number; promise: Promise<ProcessEntry[]> } | null = null;
 
 export class PreflightCheckService {
   private readonly windows = new WindowsWindowManager();
 
-  async check(configs: PreflightAppConfigs): Promise<PreflightCheckResult> {
+  async check(configs: PreflightAppConfigs, forceRefresh = false): Promise<PreflightCheckResult> {
     const platform = platformLabel();
     let processes: ProcessEntry[];
     try {
-      processes = await readProcessList(true);
+      processes = await readProcessList(forceRefresh);
     } catch (error) {
       const message = errorMessage(error, '无法读取系统进程');
       return {
@@ -121,7 +121,7 @@ export class PreflightCheckService {
   }
 
   async launch(id: PreflightAppId, settings: PreflightSettings): Promise<PreflightLaunchResult> {
-    const before = await this.check(settings.apps);
+    const before = await this.check(settings.apps, true);
     const current = before.apps.find((app) => app.id === id);
     const failures: Partial<Record<PreflightAppId, string>> = {};
     const launched: PreflightAppId[] = [];
@@ -154,11 +154,11 @@ export class PreflightCheckService {
     }
 
     await delay(700);
-    return { ...(await this.check(settings.apps)), launched, failures, restored, restoreFailures, projector: null };
+    return { ...(await this.check(settings.apps, true)), launched, failures, restored, restoreFailures, projector: null };
   }
 
   async launchAll(settings: PreflightSettings): Promise<PreflightLaunchResult> {
-    const before = await this.check(settings.apps);
+    const before = await this.check(settings.apps, true);
     const failures: Partial<Record<PreflightAppId, string>> = {};
     const launched: PreflightAppId[] = [];
     const restored: PreflightPlacementTarget[] = [];
@@ -203,7 +203,7 @@ export class PreflightCheckService {
     }));
 
     await delay(500);
-    return { ...(await this.check(settings.apps)), launched, failures, restored, restoreFailures, projector: null };
+    return { ...(await this.check(settings.apps, true)), launched, failures, restored, restoreFailures, projector: null };
   }
 
   async findOBSProjector(configs: PreflightAppConfigs, processes?: ProcessEntry[]): Promise<WindowsTopLevelWindow | null> {
@@ -213,16 +213,26 @@ export class PreflightCheckService {
     return selectOBSProjectorWindow(windows);
   }
 
+  async inspectOBSWindows(configs: PreflightAppConfigs): Promise<{ projector: WindowsTopLevelWindow | null; handles: Set<string> }> {
+    if (process.platform !== 'win32') return { projector: null, handles: new Set() };
+    const windows = await this.windowsForApp('obs', configs, await readProcessList());
+    return {
+      projector: selectOBSProjectorWindow(windows),
+      handles: new Set(windows.map((window) => window.handle))
+    };
+  }
+
   async waitForNewOBSProjector(configs: PreflightAppConfigs, existingHandles: Set<string>, timeoutMs = 15_000): Promise<WindowsTopLevelWindow | null> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const processes = await readProcessList();
-      const windows = await this.windowsForApp('obs', configs, processes);
-      const projector = windows.find((window) => !existingHandles.has(window.handle) && selectOBSProjectorWindow([window]));
-      if (projector) return projector;
-      await delay(250);
+    if (process.platform !== 'win32') return null;
+    let processes = await readProcessList();
+    const resolvedPath = shortcutDetails(configs.obs.path)?.target ?? '';
+    let pids = findPreflightProcesses('obs', processes, configs.obs.path, resolvedPath).map((process) => process.pid);
+    if (pids.length === 0) {
+      processes = await readProcessList(true);
+      pids = findPreflightProcesses('obs', processes, configs.obs.path, resolvedPath).map((process) => process.pid);
     }
-    return null;
+    const windows = await this.windows.waitForNewWindows(pids, existingHandles, timeoutMs);
+    return selectNewOBSProjectorWindow(windows);
   }
 
   async listOBSWindowHandles(configs: PreflightAppConfigs): Promise<Set<string>> {

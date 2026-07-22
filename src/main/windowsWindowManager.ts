@@ -33,6 +33,29 @@ $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
     return parseWindowsWindowList(output);
   }
 
+  async waitForNewWindows(pids: number[], existingHandles: Set<string>, timeoutMs: number): Promise<WindowsTopLevelWindow[]> {
+    if (process.platform !== 'win32' || pids.length === 0) return [];
+    const output = await runPowerShell(`
+$payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
+$known = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($handle in @($payload.existingHandles)) { [void]$known.Add([string]$handle) }
+$deadline = [DateTime]::UtcNow.AddMilliseconds([int]$payload.timeoutMs)
+do {
+  $windows = @([OBSGuardWindowApi]::ListWindows(($payload.pids -join ',')) | Where-Object { -not $known.Contains([string]$_.handle) })
+  if ($windows.Count -gt 0) {
+    $windows | ConvertTo-Json -Compress
+    break
+  }
+  Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $deadline)
+`, {
+      pids: normalizedPids(pids),
+      existingHandles: [...existingHandles],
+      timeoutMs: Math.max(250, Math.round(timeoutMs))
+    }, Math.max(20_000, timeoutMs + 5_000));
+    return parseWindowsWindowList(output);
+  }
+
   async moveWindow(handle: string, bounds: PreflightRect, windowState: PreflightWindowState): Promise<void> {
     if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
     await runPowerShell(`
@@ -88,6 +111,19 @@ export function selectOBSProjectorWindow(windows: WindowsTopLevelWindow[]): Wind
   return windows.find(isOBSProjectorWindow) ?? null;
 }
 
+export function selectNewOBSProjectorWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
+  const exact = selectOBSProjectorWindow(windows);
+  if (exact) return exact;
+
+  return [...windows]
+    .filter((window) => {
+      const title = window.title.toLocaleLowerCase('zh-CN');
+      if (/multiview|多画面|scene|场景|source|来源|missing\s+files|缺少文件|缺失文件|safe\s+mode|安全模式/.test(title)) return false;
+      return window.bounds.width >= 320 && window.bounds.height >= 180;
+    })
+    .sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
+}
+
 export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const title = window.title.toLocaleLowerCase('zh-CN');
   if (/multiview|多画面/.test(title)) return false;
@@ -98,18 +134,22 @@ function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   return /projector|投影/.test(window.title.toLocaleLowerCase('zh-CN'));
 }
 
-async function runPowerShell(script: string, payload: unknown): Promise<string> {
+async function runPowerShell(script: string, payload: unknown, timeout = 20_000): Promise<string> {
   const encoded = Buffer.from(`${WINDOW_API_SOURCE}\n${script}`, 'utf16le').toString('base64');
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
     windowsHide: true,
     maxBuffer: 2 * 1024 * 1024,
-    timeout: 20_000,
+    timeout,
     env: {
       ...process.env,
       OBS_GUARD_PREFLIGHT_PAYLOAD: JSON.stringify(payload)
     }
   });
   return stdout.trim();
+}
+
+function normalizedPids(pids: number[]): number[] {
+  return [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))];
 }
 
 export function parseWindowsWindowList(output: string): WindowsTopLevelWindow[] {

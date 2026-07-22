@@ -100,7 +100,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     const refresh = () => {
       if (document.visibilityState === 'visible') void runCheck();
     };
-    const interval = window.setInterval(refresh, 2_000);
+    const interval = window.setInterval(refresh, 4_000);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
     return () => {
