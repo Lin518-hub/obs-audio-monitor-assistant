@@ -16,20 +16,20 @@ interface SidebarProps {
 
 const groups: Array<{
   title: string;
-  items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string; developerOnly?: boolean }[];
+  items: { id: SidebarPage; label: string; icon: React.ComponentType<{ size?: number }>; badge?: string }[];
 }> = [
   {
     title: '直播监看',
     items: [
       { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
-      { id: 'preflight', label: '开播检查', icon: ListChecks, badge: 'BETA', developerOnly: true },
+      { id: 'preflight', label: '开播检查', icon: ListChecks },
       { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' }
     ]
   },
   {
     title: '设备与记录',
     items: [
-      { id: 'atem', label: 'ATEM 导播台', icon: Video, badge: 'BETA' },
+      { id: 'atem', label: 'ATEM 导播台', icon: Video },
       { id: 'history', label: '报警历史', icon: History }
     ]
   }
@@ -49,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ snapshot, active, onChange, on
         {groups.map((group) => (
           <div className="sidebar-nav-group" key={group.title}>
             <div className="sidebar-nav-group-title">{group.title}</div>
-            {group.items.filter((item) => !item.developerOnly || snapshot.config.developerModeEnabled).map((item) => {
+            {group.items.map((item) => {
               const Icon = item.icon;
               const isActive = active === item.id;
               return (

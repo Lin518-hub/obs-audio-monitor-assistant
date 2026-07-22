@@ -182,7 +182,7 @@ export interface UpdateSnapshot {
   errorMessage: string | null;
 }
 
-/** ATEM 导播台状态快照 (beta) */
+/** ATEM 导播台状态快照 */
 export interface ATEMStateSnapshot {
   connected: boolean;
   connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -200,7 +200,7 @@ export interface ATEMStateSnapshot {
   nextReconnectAt: number | null;
 }
 
-/** ATEM 连接测试结果 (beta) */
+/** ATEM 连接测试结果 */
 export interface ATEMTestResult {
   ok: boolean;
   message: string;
@@ -208,7 +208,7 @@ export interface ATEMTestResult {
   modelName?: string;
 }
 
-/** ATEM 局域网发现设备 (beta) */
+/** ATEM 局域网发现设备 */
 export interface ATEMDiscoveredDevice {
   host: string;
   label: string;
@@ -219,7 +219,7 @@ export interface ATEMDiscoveredDevice {
   message: string;
 }
 
-/** ATEM 局域网扫描结果 (beta) */
+/** ATEM 局域网扫描结果 */
 export interface ATEMScanResult {
   ok: boolean;
   message: string;
@@ -377,7 +377,7 @@ export interface AppConfig {
   autoUpdateEnabled: boolean;
   updateSource: UpdateSource;
   aliyunUpdateBaseUrl: string;
-  /** ATEM 导播台 (beta) */
+  /** ATEM 导播台 */
   atemEnabled: boolean;
   atemHost: string;
   atemHotkeyGlobal: boolean;
@@ -435,7 +435,7 @@ export interface AppSnapshot {
   volumeHistory: VolumeHistoryPoint[];
   obsStats: OBSStatsSnapshot;
   errorMessage: string | null;
-  /** ATEM 导播台状态 (beta) */
+  /** ATEM 导播台状态 */
   atemConnected: boolean;
   atemConnectionState: string;
   atemModelName: string | null;
@@ -504,7 +504,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoUpdateEnabled: true,
   updateSource: 'auto',
   aliyunUpdateBaseUrl: '',
-  /** ATEM 导播台 (beta) */
+  /** ATEM 导播台 */
   atemEnabled: false,
   atemHost: '192.168.1.240',
   atemHotkeyGlobal: false,

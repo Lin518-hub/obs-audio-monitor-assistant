@@ -135,13 +135,7 @@ function SettingsApp() {
     setSearch('');
   }, [page]);
 
-  useEffect(() => {
-    if (page === 'preflight' && snapshot && !snapshot.config.developerModeEnabled) {
-      setPage('dashboard');
-    }
-  }, [page, snapshot]);
-
-  // ATEM Beta 应用内快捷键：ATEM 页面中数字键 1-9 选 Preview，Enter 执行 AUTO。
+  // ATEM 应用内快捷键：ATEM 页面中数字键 1-8 选 Preview，Enter 执行 AUTO。
   useEffect(() => {
     if (page !== 'atem' || !snapshot || !snapshot.config.atemEnabled || snapshot.config.atemHotkeyGlobal) return;
 
@@ -483,7 +477,7 @@ function ATEMConsole({
     <>
       <div className="page-header">
         <div className="page-header-title">
-          <h1><span>ATEM 导播台</span><span className="page-title-badge">BETA</span></h1>
+          <h1><span>ATEM 导播台</span></h1>
           <p className="page-header-subtitle">播出机位、预览信号与单机位停留时间</p>
         </div>
         <div className="page-header-actions">

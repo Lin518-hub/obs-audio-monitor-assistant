@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('obsGuard', {
       ipcRenderer.off('update:state', listener);
     };
   },
-  /** ATEM 导播台 API (beta) */
+  /** ATEM 导播台 API */
   getATEMState: () => ipcRenderer.invoke('atem:get-state'),
   clearATEMHistory: () => ipcRenderer.invoke('atem:history-clear') as Promise<ATEMSwitchHistoryEntry[]>,
   changePreviewInput: (input: number) => ipcRenderer.invoke('atem:change-preview-input', input),

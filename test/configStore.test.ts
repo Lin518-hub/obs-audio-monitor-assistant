@@ -108,7 +108,7 @@ describe('ConfigStore', () => {
     expect(migrated.autoUpdateEnabled).toBe(true);
   });
 
-  it('normalizes and persists the developer-only preflight checklist', async () => {
+  it('normalizes and persists the preflight checklist', async () => {
     const store = new ConfigStore();
     const saved = await store.save({
       ...DEFAULT_CONFIG,

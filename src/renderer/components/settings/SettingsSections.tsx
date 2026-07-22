@@ -318,7 +318,7 @@ export const ConnectionSection: React.FC<{
   </Section>
 );
 
-// ====== ATEM 导播台 (beta) ======
+// ====== ATEM 导播台 ======
 export const ATEMSection: React.FC<{
   draft: AppConfig;
   snapshot: AppSnapshot;
@@ -388,9 +388,6 @@ export const ATEMSection: React.FC<{
 
   return (
     <Section id="settings-atem" icon={Video} title="ATEM 导播台" description="通过网络连接 Blackmagic ATEM 切换台">
-      <div className="settings-section-title-beta">
-        <span className="beta-badge">BETA</span>
-      </div>
       <ToggleRow
         id="atem-enabled"
         title="启用 ATEM 连接"
@@ -839,7 +836,7 @@ export const BackgroundSection: React.FC<{
     <ToggleRow
       id="system-autolaunch"
       title="开机自动启动"
-      description="开机后打开助手；已启用开发者模式时直接进入一键开播检查"
+      description="开机后打开助手并直接进入开播检查"
       checked={draft.autoLaunch}
       onChange={(value) => onChange('autoLaunch', value)}
     />

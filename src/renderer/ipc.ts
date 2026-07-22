@@ -38,7 +38,7 @@ export interface ObsGuardApi {
   onSnapshot: (cb: (snapshot: AppSnapshot) => void) => () => void;
   onMeter: (cb: (frame: AudioMeterFrame) => void) => () => void;
   onUpdateState: (cb: (snapshot: UpdateSnapshot) => void) => () => void;
-  /** ATEM 导播台 API (beta) */
+  /** ATEM 导播台 API */
   getATEMState: () => Promise<AppSnapshot>;
   clearATEMHistory: () => Promise<AppSnapshot['atemSwitchHistory']>;
   changePreviewInput: (input: number) => Promise<void>;

@@ -319,7 +319,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     <div className="preflight-page">
       <header className="page-header preflight-page-header">
         <div className="page-header-title">
-          <h1><span>开播检查</span><span className="page-title-badge">BETA</span></h1>
+          <h1><span>开播检查</span></h1>
           <p className="page-header-subtitle">检查、启动并恢复一套固定的 Windows 开播布局</p>
         </div>
         <div className="preflight-header-actions">

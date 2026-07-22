@@ -150,7 +150,7 @@
 .input:focus { border-color: var(--green-400); box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12); }
 .input::placeholder { color: var(--text-faint); }
 
-/* ====== ATEM Beta ====== */
+/* ====== ATEM ====== */
 .atem-overview { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(250px,1.25fr); gap:var(--s-4); }
 .atem-live-card,
 .atem-timer-card { min-height:168px; padding:var(--s-5); border:1px solid var(--glass-border); border-radius:var(--r-xl); box-shadow:var(--glass-shadow); overflow:hidden; }
