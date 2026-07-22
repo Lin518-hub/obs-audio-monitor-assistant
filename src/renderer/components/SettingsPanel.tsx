@@ -56,6 +56,7 @@ interface SettingsPanelProps {
   onReset: () => void;
   appVersion: string;
   focusSection?: string | null;
+  saveState: 'idle' | 'saving' | 'saved' | 'error';
 }
 
 interface TabItem {
@@ -203,7 +204,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     onOpenManual,
     onReset,
     appVersion,
-    focusSection
+    focusSection,
+    saveState
   } = props;
   const [active, setActive] = useState<SectionId>('devices');
   const [closing, setClosing] = useState(false);
@@ -294,8 +296,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
         : `当前 v${updateState.currentVersion}`;
   const alertSummary = `${draft.silenceDurationSeconds} 秒 · ${draft.silenceThresholdDb} dB · ${draft.alertSoundEnabled ? '声音开启' : '静音提醒'}`;
   const atemTimerSummary = draft.atemCameraTimeAlertEnabled
-    ? `${Math.round(draft.atemCameraTimeLimitSeconds / 60)} 分钟提醒`
-    : '机位提醒已关闭';
+    ? `${Math.round(draft.atemCameraTimeLimitSeconds / 60)} 分钟报警`
+    : '机位报警已关闭';
 
   return (
     <div className={`settings-overlay ${closing ? 'closing' : ''}`} role="dialog" aria-modal="true" aria-label="设置" onClick={(event) => { if (event.target === event.currentTarget) handleClose(); }}>
@@ -327,7 +329,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
               );
             })}
           </nav>
-          <div className="settings-autosave-note"><i />所有更改已自动保存</div>
+          <div className={`settings-autosave-note state-${saveState}`} role="status">
+            <i />
+            {saveState === 'saving' ? '正在自动保存' : saveState === 'error' ? '保存失败，请重试' : '所有更改已自动保存'}
+          </div>
         </aside>
 
         <section className="settings-content">

@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os';
 import { promisify } from 'node:util';
 import { Atem, AtemConnectionStatus, Enums } from 'atem-connection';
 import type { AtemState } from 'atem-connection';
-import type { ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMSwitchHistoryEntry, ATEMTestResult } from '../shared/types.js';
+import type { AlertAction, ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMSwitchHistoryEntry, ATEMTestResult } from '../shared/types.js';
 import { reconnectBackoffDelay } from '../shared/reconnect.js';
 
 export type ATEMConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -44,7 +44,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private connectionGeneration = 0;
   private programInputStartedAt: number | null = null;
   private liveActive = false;
-  private cameraTimeLimitSeconds = 600;
+  private cameraTimeLimitSeconds = 480;
+  private cameraTimeAlertEnabled = true;
+  private cameraSnoozedUntil: number | null = null;
   private reconnectAttempt = 0;
   private nextReconnectAt: number | null = null;
 
@@ -63,6 +65,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   setLiveActive(active: boolean, now = Date.now()): ATEMStateSnapshot {
     if (this.liveActive === active) return this.getSnapshot();
     this.liveActive = active;
+    this.cameraSnoozedUntil = null;
 
     if (!active) {
       this.programInputStartedAt = null;
@@ -78,7 +81,8 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       ...this.lastState,
       programInputStartedAt: this.programInputStartedAt,
       programInputElapsedSeconds: 0,
-      programInputOverLimit: false
+      programInputOverLimit: false,
+      cameraAlertVisible: false
     };
     this.emitState();
     return this.getSnapshot();
@@ -88,28 +92,40 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     const elapsedSeconds = this.programInputStartedAt
       ? Math.max(0, Math.floor((Date.now() - this.programInputStartedAt) / 1000))
       : 0;
+    const now = Date.now();
+    const programInputOverLimit = this.lastState.connected
+      && this.liveActive
+      && this.programInputStartedAt !== null
+      && elapsedSeconds >= this.cameraTimeLimitSeconds;
     return {
       ...this.lastState,
       programInputStartedAt: this.programInputStartedAt,
       programInputElapsedSeconds: elapsedSeconds,
-      programInputOverLimit: this.liveActive && this.programInputStartedAt !== null && elapsedSeconds >= this.cameraTimeLimitSeconds,
+      programInputOverLimit,
+      cameraAlertVisible: this.cameraTimeAlertEnabled
+        && programInputOverLimit
+        && this.lastState.programInput > 0
+        && !(this.cameraSnoozedUntil !== null && this.cameraSnoozedUntil > now),
       reconnectAttempt: this.reconnectAttempt,
       nextReconnectAt: this.nextReconnectAt
     };
   }
 
-  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 600): Promise<ATEMStateSnapshot> {
+  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 480, cameraTimeAlertEnabled = true): Promise<ATEMStateSnapshot> {
     const normalizedHost = normalizeHost(host);
     const hostChanged = this.host !== normalizedHost;
     const enabledChanged = this.enabled !== enabled;
     this.enabled = enabled;
     this.host = normalizedHost;
     this.cameraTimeLimitSeconds = Math.max(10, Math.round(cameraTimeLimitSeconds));
+    this.cameraTimeAlertEnabled = cameraTimeAlertEnabled;
+    if (!cameraTimeAlertEnabled) this.cameraSnoozedUntil = null;
 
     if (!enabled) {
       await this.disconnect();
       this.connectionState = 'disconnected';
       this.programInputStartedAt = null;
+      this.cameraSnoozedUntil = null;
       this.clearElapsedTicker();
       this.lastState = this.emptyState();
       this.emitState();
@@ -128,6 +144,9 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     const generation = ++this.connectionGeneration;
     this.clearReconnect();
     await this.closeCurrentConnection();
+    this.programInputStartedAt = null;
+    this.cameraSnoozedUntil = null;
+    this.clearElapsedTicker();
 
     if (!this.enabled) {
       this.connectionState = 'disconnected';
@@ -194,10 +213,17 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       if (!isCurrentConnection()) return;
       console.log('[ATEM] disconnected');
       this.connectionState = 'disconnected';
+      this.programInputStartedAt = null;
+      this.cameraSnoozedUntil = null;
+      this.clearElapsedTicker();
       this.lastState = {
         ...this.lastState,
         connectionState: 'disconnected',
-        connected: false
+        connected: false,
+        programInputStartedAt: null,
+        programInputElapsedSeconds: 0,
+        programInputOverLimit: false,
+        cameraAlertVisible: false
       };
       this.emitState();
       this.scheduleReconnect();
@@ -236,6 +262,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
 
     this.connectionState = 'disconnected';
     this.programInputStartedAt = null;
+    this.cameraSnoozedUntil = null;
     this.clearElapsedTicker();
     this.lastState = this.emptyState();
     this.emitState();
@@ -454,6 +481,32 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     await this.disconnect();
   }
 
+  handleCameraAlertAction(action: AlertAction, now = Date.now()): ATEMStateSnapshot {
+    if (this.lastState.programInput <= 0) return this.getSnapshot();
+
+    if (action === 'ignore_once') {
+      this.cameraSnoozedUntil = now + 5 * 60 * 1000;
+      this.programInputStartedAt = this.cameraSnoozedUntil;
+    } else if (action === 'snooze_10m') {
+      this.cameraSnoozedUntil = now + 10 * 60 * 1000;
+      this.programInputStartedAt = this.cameraSnoozedUntil;
+    } else {
+      // Confirming a camera alert starts a fresh interval for the same PGM.
+      this.cameraSnoozedUntil = null;
+      this.programInputStartedAt = now;
+    }
+
+    this.lastState = {
+      ...this.lastState,
+      programInputStartedAt: this.programInputStartedAt,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false,
+      cameraAlertVisible: false
+    };
+    this.emitState();
+    return this.getSnapshot();
+  }
+
   private updateStateFromATEM(state: AtemState): void {
     const mixEffect = state.video?.mixEffects?.[0];
     const programInput = mixEffect?.programInput ?? 0;
@@ -463,6 +516,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
 
     const now = Date.now();
     const previousProgramInput = this.lastState.programInput;
+    if (programInput !== previousProgramInput) this.cameraSnoozedUntil = null;
     if (this.liveActive && programInput > 0 && previousProgramInput > 0 && programInput !== previousProgramInput && this.programInputStartedAt !== null) {
       this.emit('switchRecorded', {
         id: `${now}-${previousProgramInput}-${programInput}-${Math.random().toString(36).slice(2, 8)}`,
@@ -502,6 +556,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       programInputOverLimit: this.liveActive && this.programInputStartedAt
         ? now - this.programInputStartedAt >= this.cameraTimeLimitSeconds * 1000
         : false,
+      cameraAlertVisible: false,
       errorMessage: null,
       reconnectAttempt: this.reconnectAttempt,
       nextReconnectAt: this.nextReconnectAt
@@ -778,6 +833,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
       programInputStartedAt: null,
       programInputElapsedSeconds: 0,
       programInputOverLimit: false,
+      cameraAlertVisible: false,
       errorMessage: null,
       reconnectAttempt: this.reconnectAttempt,
       nextReconnectAt: this.nextReconnectAt

@@ -61,13 +61,21 @@ export const AlertApp: React.FC = () => {
 
   if (!snapshot) return null;
 
+  const isCameraAlert = snapshot.activeAlertSource === 'atem_camera';
+  const cameraLabel = snapshot.atemInputLabels[snapshot.atemProgramInput] || `PGM ${snapshot.atemProgramInput || '--'}`;
+  const elapsedMinutes = Math.floor(snapshot.atemProgramInputElapsedSeconds / 60);
+  const elapsedSeconds = snapshot.atemProgramInputElapsedSeconds % 60;
+  const elapsedLabel = `${elapsedMinutes} 分 ${String(elapsedSeconds).padStart(2, '0')} 秒`;
+
   return (
     <main className="alert-shell">
       <div className="alert-icon"><AlertTriangle size={32} /></div>
       <section className="alert-copy">
-        <div className="alert-kicker">音频静音提醒</div>
-        <h1>{snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 可能没有声音</h1>
-        <p>已连续静音 {snapshot.silentForSeconds} 秒,请确认麦克风是否静音、无线麦是否没电、声卡或 OBS 音频路由是否异常。</p>
+        <div className="alert-kicker">{isCameraAlert ? '机位停留超时提醒' : '音频静音提醒'}</div>
+        <h1>{isCameraAlert ? `${cameraLabel} 已长时间未切换` : `${snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 可能没有声音`}</h1>
+        <p>{isCameraAlert
+          ? `当前播出机位已连续使用 ${elapsedLabel}，请确认是否需要切换机位，或点击确定后重新计时。`
+          : `已连续静音 ${snapshot.silentForSeconds} 秒,请确认麦克风是否静音、无线麦是否没电、声卡或 OBS 音频路由是否异常。`}</p>
       </section>
       <section className="alert-actions">
         <button className="alert-btn alert-btn-quiet" onClick={() => void sendAction('ignore_once')} disabled={closingAction !== null}>

@@ -547,18 +547,18 @@ export const ATEMRulesSection: React.FC<{
   draft: AppConfig;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, onChange }) => (
-  <Section id="settings-atem-rules" icon={Video} title="机位检测规则" description="单机位停留提醒与切台保护">
+  <Section id="settings-atem-rules" icon={Video} title="机位检测规则" description="单机位停留报警与切台保护">
     <ToggleRow
       id="atem-camera-timer"
-      title="启用单机位超时提醒"
-      description="直播、录制或模拟开播后从零计时；同一 PGM 机位停留过久时仅在页面和小浮窗变色提示"
+      title="启用单机位超时报警"
+      description="直播、录制或模拟开播后从零计时；同一 PGM 机位停留超时后使用与音频相同的报警样式、提示音和多屏策略"
       checked={draft.atemCameraTimeAlertEnabled}
       onChange={(value) => onChange('atemCameraTimeAlertEnabled', value)}
     />
     {draft.atemCameraTimeAlertEnabled && (
       <div className="settings-progressive-block">
         <div className="settings-field">
-          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位提醒时长</label>
+          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位报警时长</label>
           <NumberField
             value={draft.atemCameraTimeLimitSeconds}
             min={10}
@@ -590,7 +590,7 @@ export const ATEMRulesSection: React.FC<{
       <ToggleRow
         id="atem-hardcut-confirm"
         title="危险切台二次确认"
-        description="AUTO、Hard Cut、全局 Enter 与移动端切换前均需明确确认"
+        description="AUTO、Hard Cut 与全局 Enter 切换前均需明确确认"
         checked={draft.atemHardCutConfirm}
         onChange={(value) => onChange('atemHardCutConfirm', value)}
       />

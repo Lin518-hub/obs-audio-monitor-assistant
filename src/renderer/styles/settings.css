@@ -180,6 +180,10 @@
   background:var(--green-500);
   box-shadow:0 0 0 4px rgba(34,197,94,.10);
 }
+.settings-autosave-note.state-saving { color:var(--amber-text); }
+.settings-autosave-note.state-saving i { background:var(--amber-500); box-shadow:0 0 0 4px rgba(245,158,11,.10); }
+.settings-autosave-note.state-error { color:var(--red-text); }
+.settings-autosave-note.state-error i { background:var(--red-500); box-shadow:0 0 0 4px rgba(239,68,68,.10); }
 
 .settings-content {
   position:relative;

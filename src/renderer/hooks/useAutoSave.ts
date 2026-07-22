@@ -31,6 +31,7 @@ export const useAutoSave = (onSaved?: (snapshot: AppSnapshot) => void): AutoSave
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const pendingPatchRef = useRef<Partial<AppConfig>>({});
   const saveTimerRef = useRef<number | null>(null);
+  const revisionRef = useRef(0);
   // 防止异步回调在卸载后写状态
   const mountedRef = useRef(true);
   const onSavedRef = useRef(onSaved);
@@ -45,19 +46,24 @@ export const useAutoSave = (onSaved?: (snapshot: AppSnapshot) => void): AutoSave
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
+      const pending = pendingPatchRef.current;
+      pendingPatchRef.current = {};
+      if (Object.keys(pending).length > 0) {
+        void window.obsGuard.saveConfig(pending).catch(() => undefined);
+      }
     };
   }, []);
 
-  const performSave = useCallback(async (patch: Partial<AppConfig>): Promise<AppSnapshot | null> => {
+  const performSave = useCallback(async (patch: Partial<AppConfig>, revision: number): Promise<AppSnapshot | null> => {
     try {
       const next = await window.obsGuard.saveConfig(patch);
-      if (mountedRef.current) {
+      if (mountedRef.current && revision === revisionRef.current) {
         setSaveState('saved');
         onSavedRef.current?.(next);
       }
       return next;
     } catch {
-      if (mountedRef.current) {
+      if (mountedRef.current && revision === revisionRef.current) {
         setSaveState('error');
       }
       return null;
@@ -66,6 +72,7 @@ export const useAutoSave = (onSaved?: (snapshot: AppSnapshot) => void): AutoSave
 
   const scheduleSave = useCallback(
     (patch: Partial<AppConfig>) => {
+      revisionRef.current += 1;
       pendingPatchRef.current = {
         ...pendingPatchRef.current,
         ...patch
@@ -82,7 +89,7 @@ export const useAutoSave = (onSaved?: (snapshot: AppSnapshot) => void): AutoSave
         saveTimerRef.current = null;
         const pending = pendingPatchRef.current;
         pendingPatchRef.current = {};
-        void performSave(pending);
+        void performSave(pending, revisionRef.current);
       }, SAVE_DEBOUNCE_MS);
     },
     [performSave]
@@ -90,23 +97,29 @@ export const useAutoSave = (onSaved?: (snapshot: AppSnapshot) => void): AutoSave
 
   const flushSave = useCallback(
     async (patch: Partial<AppConfig>): Promise<AppSnapshot> => {
+      revisionRef.current += 1;
+      const revision = revisionRef.current;
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
+      const mergedPatch = {
+        ...pendingPatchRef.current,
+        ...patch
+      };
       pendingPatchRef.current = {};
       if (mountedRef.current) {
         setSaveState('saving');
       }
       try {
-        const next = await window.obsGuard.saveConfig(patch);
-        if (mountedRef.current) {
+        const next = await window.obsGuard.saveConfig(mergedPatch);
+        if (mountedRef.current && revision === revisionRef.current) {
           setSaveState('saved');
           onSavedRef.current?.(next);
         }
         return next;
       } catch (err) {
-        if (mountedRef.current) {
+        if (mountedRef.current && revision === revisionRef.current) {
           setSaveState('error');
         }
         throw err;

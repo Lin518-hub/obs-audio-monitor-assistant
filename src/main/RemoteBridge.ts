@@ -380,15 +380,16 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
     && now - lastMeterAt <= REMOTE_METER_FRESH_MS;
   const activelyMonitoring = snapshot.readinessReason === 'ready' || snapshot.readinessReason === 'alerting';
   const ready = activelyMonitoring && hasFreshMeter;
+  const audioAlertVisible = snapshot.activeAlertSource === 'audio';
   const phase = !ready
     ? 'idle'
-    : snapshot.alertVisible
+    : audioAlertVisible
       ? 'alert'
       : snapshot.audioSpeaking || snapshot.silentForSeconds < 3
         ? 'speaking'
         : 'silent';
   const audioTone = ready
-    ? snapshot.alertVisible
+    ? audioAlertVisible
       ? 'danger'
       : snapshot.silentForSeconds >= snapshot.config.silenceDurationSeconds * 0.75
         ? 'warning'

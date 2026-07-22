@@ -242,7 +242,7 @@ const formatFloatingTime = (seconds: number): string => {
 const atemTimerState = (snapshot: AppSnapshot): { tone: string; label: string; hint: string } => {
   if (!snapshot.atemConnected) return { tone: '', label: '未连接', hint: '等待 ATEM 连接' };
   if (!isLiveSession(snapshot)) return { tone: '', label: '等待开播', hint: '等待直播/录制' };
-  if (!snapshot.config.atemCameraTimeAlertEnabled) return { tone: '', label: '仅计时', hint: '机位提醒已关闭' };
+  if (!snapshot.config.atemCameraTimeAlertEnabled) return { tone: '', label: '仅计时', hint: '机位报警已关闭' };
   const limit = Math.max(10, snapshot.config.atemCameraTimeLimitSeconds);
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
   if (elapsed >= limit) {

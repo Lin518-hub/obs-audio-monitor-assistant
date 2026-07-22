@@ -67,6 +67,7 @@ describe('remote audio telemetry', () => {
     audioSpeaking: false,
     silentForSeconds: 0,
     alertVisible: false,
+    activeAlertSource: null,
     readinessReason: 'no_target_meter',
     config: {
       targetInputNames: ['麦克风/Aux'],
@@ -123,5 +124,20 @@ describe('remote audio telemetry', () => {
     expect(audio.levelDb).toBeNull();
     expect(audio.display).toBe('等待音频数据');
     expect(audio.hint).toBe('音频电平链路已中断');
+  });
+
+  it('does not expose a camera alarm as an audio alarm on the mobile monitor', () => {
+    const audio = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -23,
+      lastAudioMeterReceivedAt: 9_500,
+      audioSpeaking: true,
+      alertVisible: true,
+      activeAlertSource: 'atem_camera',
+      readinessReason: 'ready'
+    }), 10_000);
+
+    expect(audio.phase).toBe('speaking');
+    expect(audio.tone).toBe('safe');
+    expect(audio.display).toBe('正在讲话');
   });
 });

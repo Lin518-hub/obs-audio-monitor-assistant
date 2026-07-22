@@ -170,7 +170,7 @@ async function initializeApp(): Promise<void> {
   remoteBridge.updateSnapshot(latestSnapshot);
   void remoteBridge.configure(config);
 
-  void atemMonitor.setConfig(config.atemEnabled, config.atemHost, config.atemCameraTimeLimitSeconds).then(() => {
+  void atemMonitor.setConfig(config.atemEnabled, config.atemHost, config.atemCameraTimeLimitSeconds, config.atemCameraTimeAlertEnabled).then(() => {
     const merged = injectATEMState(monitor.getSnapshot());
     latestSnapshot = merged;
     broadcastSnapshot(merged);
@@ -191,6 +191,7 @@ async function initializeApp(): Promise<void> {
   screen.on('display-metrics-changed', refreshDisplays);
 
   monitor.on('snapshot', (snapshot) => {
+    const previousSnapshot = latestSnapshot;
     const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
     const previousLiveActive = latestSnapshot
       ? latestSnapshot.streaming || latestSnapshot.recording || latestSnapshot.simulatedLive
@@ -208,34 +209,34 @@ async function initializeApp(): Promise<void> {
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
     syncATEMLiveSession(snapshot);
-    if (snapshot.preAlertVisible && !snapshot.alertVisible) {
-      showPreAlertWindows(snapshot);
+    if (latestSnapshot.preAlertVisible && !latestSnapshot.alertVisible) {
+      showPreAlertWindows(latestSnapshot);
     } else {
       closePreAlertWindows('destroy');
     }
-    if (!snapshot.alertVisible) {
-      closeAlertWindows('destroy');
-      closeAlertBackdropWindows('destroy');
-      closeToastAlertWindows('destroy');
-    }
+    syncAlertSurfaces(previousSnapshot, latestSnapshot);
   });
   monitor.on('meter', (frame) => {
     broadcastMeterFrame(frame);
     remoteBridge.updateMeter(frame);
   });
   monitor.on('alert', (snapshot) => {
+    const previousSnapshot = latestSnapshot;
     const merged = injectATEMState(snapshot);
     latestSnapshot = merged;
-    closePreAlertWindows('destroy');
-    showAlertSurfaces(merged);
+    syncAlertSurfaces(previousSnapshot, merged);
   });
 
   atemMonitor.on('stateChanged', () => {
     if (latestSnapshot) {
+      const previousSnapshot = latestSnapshot;
       const merged = injectATEMState(latestSnapshot);
       latestSnapshot = merged;
       broadcastSnapshot(merged);
       remoteBridge.updateSnapshot(merged);
+      updateTray(merged);
+      syncFloatingWindow(merged);
+      syncAlertSurfaces(previousSnapshot, merged);
     }
   });
   atemMonitor.on('switchRecorded', (entry) => {
@@ -338,8 +339,8 @@ function registerIpc(): void {
       }
       syncFloatingWindow(latestSnapshot);
     }
-    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds')) {
-      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds).then(() => {
+    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds') || Object.hasOwn(patch, 'atemCameraTimeAlertEnabled')) {
+      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds, nextConfig.atemCameraTimeAlertEnabled).then(() => {
         if (latestSnapshot) {
           const merged = injectATEMState(latestSnapshot);
           latestSnapshot = merged;
@@ -409,9 +410,12 @@ function registerIpc(): void {
   });
   ipcMain.handle('prealert:dismiss', () => {
     closePreAlertWindows('destroy');
-    const snapshot = monitor.dismissPreAlert();
+    const snapshot = injectATEMState(monitor.dismissPreAlert());
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
+    remoteBridge.updateSnapshot(snapshot);
+    updateTray(snapshot);
+    syncFloatingWindow(snapshot);
     return snapshot;
   });
   ipcMain.handle('floating:set-visible', async (_event, visible: boolean) => setFloatingWindowVisible(visible));
@@ -422,9 +426,10 @@ function registerIpc(): void {
   ipcMain.handle('history:clear', async () => {
     const history = await historyStore.clear();
     monitor.setHistory(history);
-    const snapshot = monitor.getSnapshot();
+    const snapshot = injectATEMState(monitor.getSnapshot());
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
+    remoteBridge.updateSnapshot(snapshot);
     return history;
   });
   ipcMain.handle('alert:position-updated', async (_event, displayId: number, position: { x: number; y: number }) => {
@@ -681,8 +686,12 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     Number(inputId),
     customizations[inputId]?.name || label
   ]));
+  const audioAlertVisible = snapshot.activeAlertSource === 'audio';
+  const cameraAlertVisible = Boolean(snapshot.config.atemCameraTimeAlertEnabled && atem?.cameraAlertVisible);
   return {
     ...snapshot,
+    alertVisible: audioAlertVisible || cameraAlertVisible,
+    activeAlertSource: audioAlertVisible ? 'audio' : cameraAlertVisible ? 'atem_camera' : null,
     ...(atem ? {
       atemConnected: atem.connected,
       atemConnectionState: atem.connectionState,
@@ -696,6 +705,7 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemProgramInputStartedAt: atem.programInputStartedAt,
       atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
       atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit,
+      atemCameraAlertVisible: cameraAlertVisible,
       atemSwitchHistory: atemSwitchHistory.map((entry) => ({
         ...entry,
         fromInputLabel: customizations[String(entry.fromInputId)]?.name || entry.fromInputLabel,
@@ -1686,7 +1696,7 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
   await remoteBridge.configure(nextConfig);
-  await atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds);
+  await atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds, nextConfig.atemCameraTimeAlertEnabled);
   latestSnapshot = injectATEMState(monitor.getSnapshot());
   syncATEMHotkeys();
 
@@ -1785,6 +1795,20 @@ function showAlertSurfaces(snapshot: AppSnapshot): void {
   }
   showAlertWindows(snapshot);
   closeToastAlertWindows('destroy');
+}
+
+function syncAlertSurfaces(previous: AppSnapshot | null, current: AppSnapshot): void {
+  if (!current.alertVisible) {
+    closeAlertWindows('destroy');
+    closeAlertBackdropWindows('destroy');
+    closeToastAlertWindows('destroy');
+    return;
+  }
+
+  closePreAlertWindows('destroy');
+  if (!previous?.alertVisible || previous.activeAlertSource !== current.activeAlertSource) {
+    showAlertSurfaces(current);
+  }
 }
 
 function showAlertBackdropWindows(snapshot: AppSnapshot): void {
@@ -1992,14 +2016,19 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 
   alertActionInProgress = true;
   const before = latestSnapshot ?? monitor.getSnapshot();
-  const shouldRecord = before.alertVisible && !monitor.isTestAlertActive() && isHistoryAction(action);
+  const alertSource = before.activeAlertSource;
+  const shouldRecord = alertSource === 'audio' && before.alertVisible && !monitor.isTestAlertActive() && isHistoryAction(action);
 
   try {
     closeAlertWindows('destroy');
     closeAlertBackdropWindows('destroy');
     closeToastAlertWindows('destroy');
     closePreAlertWindows('destroy');
-    monitor.handleAlertAction(action);
+    if (alertSource === 'atem_camera') {
+      atemMonitor.handleCameraAlertAction(action);
+    } else {
+      monitor.handleAlertAction(action);
+    }
 
     if (shouldRecord) {
       try {
@@ -2017,8 +2046,13 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
       }
     }
 
+    const previousSnapshot = before;
     latestSnapshot = injectATEMState(monitor.getSnapshot());
     broadcastSnapshot(latestSnapshot);
+    remoteBridge.updateSnapshot(latestSnapshot);
+    updateTray(latestSnapshot);
+    syncFloatingWindow(latestSnapshot);
+    syncAlertSurfaces(previousSnapshot, latestSnapshot);
     return latestSnapshot;
   } finally {
     alertActionInProgress = false;

@@ -14,6 +14,7 @@ export type MonitorStatus =
 export type AlertDisplayMode = 'primary' | 'display_id' | 'all';
 export type AlertReminderMode = 'classic' | 'fullscreen';
 export type AlertSoundPreset = 'clear' | 'strong' | 'low' | 'soft';
+export type AlertSource = 'audio' | 'atem_camera';
 export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
 export type RemoteAccessConnectionState = 'disabled' | 'connecting' | 'connected' | 'error';
 export type RemoteRouteType = 'lan' | 'public' | 'custom' | null;
@@ -195,6 +196,7 @@ export interface ATEMStateSnapshot {
   programInputStartedAt: number | null;
   programInputElapsedSeconds: number;
   programInputOverLimit: boolean;
+  cameraAlertVisible: boolean;
   errorMessage: string | null;
   reconnectAttempt: number;
   nextReconnectAt: number | null;
@@ -424,6 +426,7 @@ export interface AppSnapshot {
   silentForSeconds: number;
   secondsUntilAlert: number | null;
   alertVisible: boolean;
+  activeAlertSource: AlertSource | null;
   readinessReason: ReadinessReason;
   preAlertVisible: boolean;
   preAlertRemainingSeconds: number | null;
@@ -448,6 +451,7 @@ export interface AppSnapshot {
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
+  atemCameraAlertVisible: boolean;
   atemSwitchHistory: ATEMSwitchHistoryEntry[];
   atemReconnectAttempt: number;
   atemNextReconnectAt: number | null;
@@ -510,7 +514,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 600,
+  atemCameraTimeLimitSeconds: 480,
   atemInputCustomizations: {},
   preflightApps: {
     obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },

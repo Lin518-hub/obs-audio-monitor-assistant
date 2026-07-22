@@ -123,12 +123,12 @@ function SettingsApp() {
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
 
-  const { saveState, scheduleSave, flushSave } = useAutoSave();
+  const { saveState, scheduleSave, flushSave } = useAutoSave((next) => setDraft(next.config));
 
   useEffect(() => {
     if (!snapshot) return;
-    setDraft((current) => current ?? snapshot.config);
-  }, [snapshot]);
+    setDraft((current) => current && saveState === 'saving' ? current : snapshot.config);
+  }, [snapshot?.config, saveState]);
 
   // 切换页面时清空搜索框
   useEffect(() => {
@@ -371,6 +371,7 @@ function SettingsApp() {
         onReset={() => void resetToFactoryDefaults()}
         appVersion={APP_VERSION}
         focusSection={settingsFocus}
+        saveState={saveState}
       />
 
       {showGuide && (
@@ -505,7 +506,7 @@ function ATEMConsole({
           <header>
             <span>当前机位计时</span>
             <button type="button" className={`atem-timer-toggle ${draft.atemCameraTimeAlertEnabled ? 'active' : ''}`} onClick={() => onChange('atemCameraTimeAlertEnabled', !draft.atemCameraTimeAlertEnabled)}>
-              {draft.atemCameraTimeAlertEnabled ? '提醒开启' : '提醒关闭'}
+              {draft.atemCameraTimeAlertEnabled ? '报警开启' : '报警关闭'}
             </button>
           </header>
           <strong>{formatATEMTime(elapsed)}</strong>
@@ -576,7 +577,7 @@ function ATEMConsole({
         </div>
       </section>
 
-      <section className="atem-session-panel">
+      {draft.developerModeEnabled && <section className="atem-session-panel">
         <header>
           <div><strong><Clock3 size={17} /> 直播机位统计</strong><span>按直播或录制场次保存，自动保留最近 10 场</span></div>
           {sessions.length > 0 && (
@@ -664,7 +665,7 @@ function ATEMConsole({
             )}
           </>
         ) : <div className="atem-history-empty">直播或录制开始后，PGM 机位停留时间会按场次记录在这里。</div>}
-      </section>
+      </section>}
     </>
   );
 }

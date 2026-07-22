@@ -129,6 +129,81 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
+  it('raises the default eight-minute camera alert and starts a fresh interval after confirmation', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as { programInputStartedAt: number | null };
+    internals.programInputStartedAt = Date.now() - 481_000;
+
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInputOverLimit: true,
+      cameraAlertVisible: true
+    });
+
+    const acknowledgedAt = Date.now();
+    monitor.handleCameraAlertAction('acknowledge', acknowledgedAt);
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInputStartedAt: acknowledgedAt,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false,
+      cameraAlertVisible: false
+    });
+    await monitor.stop();
+  });
+
+  it('snoozes a camera alert for five minutes and starts a fresh interval afterwards', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as {
+      programInputStartedAt: number | null;
+      cameraSnoozedUntil: number | null;
+    };
+    internals.programInputStartedAt = Date.now() - 481_000;
+
+    const ignoredAt = Date.now();
+    monitor.handleCameraAlertAction('ignore_once', ignoredAt);
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInputStartedAt: ignoredAt + 300_000,
+      programInputElapsedSeconds: 0,
+      programInputOverLimit: false,
+      cameraAlertVisible: false
+    });
+
+    internals.cameraSnoozedUntil = Date.now() - 1;
+    internals.programInputStartedAt = Date.now() - 479_000;
+    expect(monitor.getSnapshot().cameraAlertVisible).toBe(false);
+    internals.programInputStartedAt = Date.now() - 481_000;
+    expect(monitor.getSnapshot().cameraAlertVisible).toBe(true);
+    await monitor.stop();
+  });
+
+  it('never raises a camera alert while ATEM is disconnected or the camera alarm is disabled', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240', 480, false);
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as {
+      programInputStartedAt: number | null;
+      atem: { emit: (event: string) => void } | null;
+    };
+    internals.programInputStartedAt = Date.now() - 481_000;
+    expect(monitor.getSnapshot().cameraAlertVisible).toBe(false);
+
+    await monitor.setConfig(true, '192.168.1.240', 480, true);
+    monitor.setLiveActive(false);
+    monitor.setLiveActive(true);
+    internals.programInputStartedAt = Date.now() - 481_000;
+    internals.atem?.emit('disconnected');
+    expect(monitor.getSnapshot()).toMatchObject({
+      connected: false,
+      programInputStartedAt: null,
+      programInputOverLimit: false,
+      cameraAlertVisible: false
+    });
+    await monitor.stop();
+  });
+
   it('does not record camera switches outside live or simulated live mode', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');

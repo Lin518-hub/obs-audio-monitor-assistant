@@ -58,6 +58,9 @@ export const statusText = (status: MonitorStatus): string => {
 };
 
 export const displayStatusText = (snapshot: AppSnapshot): string => {
+  if (snapshot.activeAlertSource === 'atem_camera') {
+    return '机位报警中';
+  }
   if (audioStateKind(snapshot) === 'normal') {
     return '检测中';
   }
@@ -139,6 +142,9 @@ export const floatingWarningProgress = (snapshot: AppSnapshot): number => {
 };
 
 export const floatingHint = (snapshot: AppSnapshot): string => {
+  if (snapshot.activeAlertSource === 'atem_camera') {
+    return '当前机位停留超时';
+  }
   if (snapshot.alertVisible) {
     return '已触发报警';
   }
@@ -179,6 +185,10 @@ const readinessReasonText: Record<string, (s: AppSnapshot) => string> = {
 };
 
 export const readinessText = (snapshot: AppSnapshot): string => {
+  if (snapshot.activeAlertSource === 'atem_camera') {
+    const label = snapshot.atemInputLabels[snapshot.atemProgramInput] || `PGM ${snapshot.atemProgramInput || '--'}`;
+    return `${label} 已连续使用 ${snapshot.atemProgramInputElapsedSeconds} 秒，超过机位报警时长。`;
+  }
   const fn = readinessReasonText[snapshot.readinessReason as ReadinessReason];
   return fn ? fn(snapshot) : '正在读取状态。';
 };
@@ -203,11 +213,17 @@ const readinessActionTextMap: Record<string, (s: AppSnapshot) => string> = {
 };
 
 export const readinessActionText = (snapshot: AppSnapshot): string => {
+  if (snapshot.activeAlertSource === 'atem_camera') {
+    return '请处理机位报警弹窗，确认是否需要切换机位。';
+  }
   const fn = readinessActionTextMap[snapshot.readinessReason as ReadinessReason];
   return fn ? fn(snapshot) : '等待状态更新。';
 };
 
 export const safetyTitle = (snapshot: AppSnapshot): string => {
+  if (snapshot.activeAlertSource === 'atem_camera') {
+    return '机位停留超时';
+  }
   if (snapshot.alertVisible) {
     return '正在报警';
   }
