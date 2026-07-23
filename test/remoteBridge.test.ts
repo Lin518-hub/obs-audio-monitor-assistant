@@ -61,6 +61,7 @@ describe('remote audio telemetry', () => {
     streaming: true,
     recording: false,
     simulatedLive: false,
+    virtualCameraActive: false,
     activeInputName: '麦克风/Aux',
     lastLevelDb: null,
     lastAudioMeterReceivedAt: null,

@@ -419,6 +419,7 @@ export interface AppSnapshot {
   streaming: boolean;
   recording: boolean;
   simulatedLive: boolean;
+  virtualCameraActive: boolean;
   activeInputName: string;
   lastLevelDb: number | null;
   lastAudioMeterReceivedAt: number | null;
@@ -514,7 +515,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 480,
+  atemCameraTimeLimitSeconds: 720,
   atemInputCustomizations: {},
   preflightApps: {
     obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },

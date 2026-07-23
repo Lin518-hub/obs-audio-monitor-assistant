@@ -105,6 +105,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private simulatedLive = false;
   private actualStreaming = false;
   private actualRecording = false;
+  private actualVirtualCamera = false;
 
   constructor(config: AppConfig, displays: DisplayInfo[]) {
     super();
@@ -126,6 +127,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       streaming: this.state.streaming,
       recording: this.state.recording,
       simulatedLive: this.simulatedLive,
+      virtualCameraActive: this.actualVirtualCamera,
       activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
       lastLevelDb: this.state.lastLevelDb,
       lastAudioMeterReceivedAt: this.lastAudioMeterReceivedAt,
@@ -263,7 +265,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const now = Date.now();
     const resetState: MonitorRuntimeState = {
       ...this.state,
-      streaming: this.actualStreaming,
+      streaming: this.actualStreaming || this.actualVirtualCamera,
       recording: this.actualRecording,
       lastLevelDb: null,
       silentSince: null,
@@ -345,7 +347,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
   setSimulatedLive(enabled: boolean): AppSnapshot {
     this.simulatedLive = enabled;
-    this.state = reduceOutputState(this.state, this.config, enabled || this.actualStreaming, this.actualRecording, Date.now());
+    this.applyCurrentOutputState();
     this.emitSnapshot();
     return this.getSnapshot();
   }
@@ -450,6 +452,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.scheduleReconnect();
     });
     obs.on('InputVolumeMeters', (event) => this.handleVolumeMeters(event as OBSInputVolumeMetersEvent));
+    obs.on('VirtualcamStateChanged', (event) => {
+      this.actualVirtualCamera = Boolean(event.outputActive);
+      this.applyCurrentOutputState();
+      this.emitSnapshot();
+    });
 
     try {
       await obs.connect(`ws://${this.config.obsHost}:${this.config.obsPort}`, this.config.obsPassword || undefined, {
@@ -480,6 +487,9 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
   private async disconnect(): Promise<void> {
     this.stopOutputPolling();
+    this.actualStreaming = false;
+    this.actualRecording = false;
+    this.actualVirtualCamera = false;
 
     if (!this.obs) {
       return;
@@ -521,20 +531,15 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     }
 
     try {
-      const [streamStatus, recordStatus] = await Promise.all([
+      const [streamStatus, recordStatus, virtualCameraStatus] = await Promise.all([
         this.obs.call('GetStreamStatus'),
-        this.obs.call('GetRecordStatus')
+        this.obs.call('GetRecordStatus'),
+        this.obs.call('GetVirtualCamStatus').catch(() => null)
       ]);
       this.actualStreaming = Boolean(streamStatus.outputActive);
       this.actualRecording = Boolean(recordStatus.outputActive);
-      const streaming = this.simulatedLive || this.actualStreaming;
-      this.state = reduceOutputState(
-        this.state,
-        this.config,
-        streaming,
-        this.actualRecording,
-        Date.now()
-      );
+      this.actualVirtualCamera = Boolean(virtualCameraStatus?.outputActive);
+      this.applyCurrentOutputState();
       this.errorMessage = null;
       this.emitSnapshot();
     } catch (error) {
@@ -543,6 +548,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.errorMessage = message;
       this.actualStreaming = false;
       this.actualRecording = false;
+      this.actualVirtualCamera = false;
       const next: MonitorRuntimeState = {
         ...this.state,
         streaming: false,
@@ -636,6 +642,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.simulatedLive = false;
     this.actualStreaming = false;
     this.actualRecording = false;
+    this.actualVirtualCamera = false;
     this.inputs = [];
     this.state = this.unavailableState('disconnected');
     this.lastTargetMeterAt = null;
@@ -644,6 +651,16 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.errorMessage = message;
     this.stopOutputPolling();
     this.emitSnapshot();
+  }
+
+  private applyCurrentOutputState(now = Date.now()): void {
+    this.state = reduceOutputState(
+      this.state,
+      this.config,
+      this.simulatedLive || this.actualStreaming || this.actualVirtualCamera,
+      this.actualRecording,
+      now
+    );
   }
 
   private unavailableState(status: 'connecting' | 'disconnected'): MonitorRuntimeState {

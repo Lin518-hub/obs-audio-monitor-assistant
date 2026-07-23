@@ -28,9 +28,9 @@ export class ConfigStore {
         obsPassword: rememberObsPassword ? await this.decryptPassword(parsed.obsPasswordEncrypted) : ''
       };
 
-      // Move previous built-in defaults to the new eight-minute value.
+      // Move previous built-in defaults to the new twelve-minute value.
       // Other custom durations remain untouched.
-      if ([180, 300, 600].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
+      if ([180, 300, 480, 600].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
 

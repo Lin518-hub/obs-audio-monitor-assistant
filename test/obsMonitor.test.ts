@@ -57,6 +57,60 @@ describe('OBSMonitor test alert', () => {
     await monitor.stop();
   });
 
+  it('treats the OBS virtual camera as an active live session', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const call = vi.fn(async (request: string) => {
+      if (request === 'GetVirtualCamStatus') return { outputActive: true };
+      return { outputActive: false };
+    });
+    const internals = monitor as unknown as {
+      obs: { call: typeof call } | null;
+      state: { connected: boolean };
+      pollOutputState: () => Promise<void>;
+    };
+    internals.obs = {
+      call,
+      removeAllListeners: vi.fn(),
+      disconnect: vi.fn().mockResolvedValue(undefined)
+    } as unknown as typeof internals.obs;
+    internals.state.connected = true;
+
+    await internals.pollOutputState();
+    expect(monitor.getSnapshot()).toMatchObject({
+      streaming: true,
+      recording: false,
+      virtualCameraActive: true
+    });
+    await monitor.stop();
+  });
+
+  it('keeps output detection working when virtual camera status is unsupported', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const call = vi.fn(async (request: string) => {
+      if (request === 'GetVirtualCamStatus') throw new Error('Unknown request');
+      return { outputActive: request === 'GetStreamStatus' };
+    });
+    const internals = monitor as unknown as {
+      obs: { call: typeof call } | null;
+      state: { connected: boolean };
+      pollOutputState: () => Promise<void>;
+    };
+    internals.obs = {
+      call,
+      removeAllListeners: vi.fn(),
+      disconnect: vi.fn().mockResolvedValue(undefined)
+    } as unknown as typeof internals.obs;
+    internals.state.connected = true;
+
+    await internals.pollOutputState();
+    expect(monitor.getSnapshot()).toMatchObject({
+      streaming: true,
+      virtualCameraActive: false,
+      errorMessage: null
+    });
+    await monitor.stop();
+  });
+
   it('only establishes speaking after the meter crosses the configured threshold', async () => {
     const monitor = new OBSMonitor(config, displays);
     const internals = monitor as unknown as {

@@ -44,7 +44,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   private connectionGeneration = 0;
   private programInputStartedAt: number | null = null;
   private liveActive = false;
-  private cameraTimeLimitSeconds = 480;
+  private cameraTimeLimitSeconds = 720;
   private cameraTimeAlertEnabled = true;
   private cameraSnoozedUntil: number | null = null;
   private reconnectAttempt = 0;
@@ -111,7 +111,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     };
   }
 
-  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 480, cameraTimeAlertEnabled = true): Promise<ATEMStateSnapshot> {
+  async setConfig(enabled: boolean, host: string, cameraTimeLimitSeconds = 720, cameraTimeAlertEnabled = true): Promise<ATEMStateSnapshot> {
     const normalizedHost = normalizeHost(host);
     const hostChanged = this.host !== normalizedHost;
     const enabledChanged = this.enabled !== enabled;

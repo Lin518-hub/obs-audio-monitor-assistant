@@ -334,6 +334,7 @@ export const snapshotErrorMessage = (snapshot: AppSnapshot): string | null => sn
 
 export const liveStatusLabel = (snapshot: AppSnapshot): string => {
   if (snapshot.simulatedLive) return '模拟开播';
+  if (snapshot.virtualCameraActive) return '虚拟摄像头';
   if (snapshot.streaming) return '进行中';
   return '未开始';
 };
@@ -351,6 +352,7 @@ export const snapshotTargetName = (snapshot: AppSnapshot): string =>
 
 export const snapshotLiveStateLabel = (snapshot: AppSnapshot): string => {
   if (snapshot.simulatedLive) return '模拟开播';
+  if (snapshot.virtualCameraActive) return '虚拟摄像头已开启';
   if (snapshot.streaming) return '直播中';
   if (snapshot.recording) return '录制中';
   return '未开播';

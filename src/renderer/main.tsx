@@ -241,7 +241,7 @@ function SettingsApp() {
     state: saveState
   };
 
-  const liveModeLabel = snapshot.simulatedLive ? '模拟开播' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播';
+  const liveModeLabel = snapshot.simulatedLive ? '模拟开播' : snapshot.virtualCameraActive ? '虚拟摄像头' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播';
   const pageTitle = page === 'dashboard' ? liveModeLabel : page === 'atem' ? 'ATEM 导播台' : page === 'monitor' ? '监控面板 Beta' : '报警历史';
   const hasUpdateNotice = updateState ? ['available', 'downloaded', 'error'].includes(updateState.status) : false;
 
