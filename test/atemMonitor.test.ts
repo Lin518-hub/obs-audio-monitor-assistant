@@ -129,12 +129,12 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
-  it('raises the default twelve-minute camera alert and starts a fresh interval after confirmation', async () => {
+  it('raises the default ten-minute camera alert and starts a fresh interval after confirmation', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
     monitor.setLiveActive(true);
     const internals = monitor as unknown as { programInputStartedAt: number | null };
-    internals.programInputStartedAt = Date.now() - 721_000;
+    internals.programInputStartedAt = Date.now() - 601_000;
 
     expect(monitor.getSnapshot()).toMatchObject({
       programInputOverLimit: true,
@@ -152,6 +152,40 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
+  it('shows a camera pre-alert one minute before the ten-minute limit', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as { programInputStartedAt: number | null };
+    internals.programInputStartedAt = Date.now() - 540_000;
+
+    const snapshot = monitor.getSnapshot();
+    expect(snapshot).toMatchObject({
+      programInputOverLimit: false,
+      cameraPreAlertVisible: true,
+      cameraAlertVisible: false
+    });
+    expect(snapshot.cameraPreAlertRemainingSeconds).toBeGreaterThanOrEqual(59);
+    expect(snapshot.cameraPreAlertRemainingSeconds).toBeLessThanOrEqual(60);
+    await monitor.stop();
+  });
+
+  it('exempts the configured primary camera from pre-alerts and alerts', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240', 600, true, 1);
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as { programInputStartedAt: number | null };
+    internals.programInputStartedAt = Date.now() - 900_000;
+
+    expect(monitor.getSnapshot()).toMatchObject({
+      programInput: 1,
+      programInputOverLimit: false,
+      cameraPreAlertVisible: false,
+      cameraAlertVisible: false
+    });
+    await monitor.stop();
+  });
+
   it('snoozes a camera alert for five minutes and starts a fresh interval afterwards', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
@@ -160,7 +194,7 @@ describe('ATEMMonitor connection lifecycle', () => {
       programInputStartedAt: number | null;
       cameraSnoozedUntil: number | null;
     };
-    internals.programInputStartedAt = Date.now() - 721_000;
+    internals.programInputStartedAt = Date.now() - 601_000;
 
     const ignoredAt = Date.now();
     monitor.handleCameraAlertAction('ignore_once', ignoredAt);
@@ -172,28 +206,28 @@ describe('ATEMMonitor connection lifecycle', () => {
     });
 
     internals.cameraSnoozedUntil = Date.now() - 1;
-    internals.programInputStartedAt = Date.now() - 719_000;
+    internals.programInputStartedAt = Date.now() - 599_000;
     expect(monitor.getSnapshot().cameraAlertVisible).toBe(false);
-    internals.programInputStartedAt = Date.now() - 721_000;
+    internals.programInputStartedAt = Date.now() - 601_000;
     expect(monitor.getSnapshot().cameraAlertVisible).toBe(true);
     await monitor.stop();
   });
 
   it('never raises a camera alert while ATEM is disconnected or the camera alarm is disabled', async () => {
     const monitor = new ATEMMonitor();
-    await monitor.setConfig(true, '192.168.1.240', 720, false);
+    await monitor.setConfig(true, '192.168.1.240', 600, false);
     monitor.setLiveActive(true);
     const internals = monitor as unknown as {
       programInputStartedAt: number | null;
       atem: { emit: (event: string) => void } | null;
     };
-    internals.programInputStartedAt = Date.now() - 721_000;
+    internals.programInputStartedAt = Date.now() - 601_000;
     expect(monitor.getSnapshot().cameraAlertVisible).toBe(false);
 
-    await monitor.setConfig(true, '192.168.1.240', 720, true);
+    await monitor.setConfig(true, '192.168.1.240', 600, true);
     monitor.setLiveActive(false);
     monitor.setLiveActive(true);
-    internals.programInputStartedAt = Date.now() - 721_000;
+    internals.programInputStartedAt = Date.now() - 601_000;
     internals.atem?.emit('disconnected');
     expect(monitor.getSnapshot()).toMatchObject({
       connected: false,

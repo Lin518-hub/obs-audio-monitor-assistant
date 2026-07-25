@@ -28,9 +28,9 @@ export class ConfigStore {
         obsPassword: rememberObsPassword ? await this.decryptPassword(parsed.obsPasswordEncrypted) : ''
       };
 
-      // Move previous built-in defaults to the new twelve-minute value.
+      // Move previous built-in defaults to the new ten-minute value.
       // Other custom durations remain untouched.
-      if ([180, 300, 480, 600].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
+      if ([180, 300, 480, 720].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
 
@@ -164,7 +164,9 @@ export class ConfigStore {
       atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal),
       atemHardCutConfirm: booleanValue(merged.atemHardCutConfirm, DEFAULT_CONFIG.atemHardCutConfirm),
       atemCameraTimeAlertEnabled: booleanValue(merged.atemCameraTimeAlertEnabled, DEFAULT_CONFIG.atemCameraTimeAlertEnabled),
+      atemCameraFullscreenAlertEnabled: booleanValue(merged.atemCameraFullscreenAlertEnabled, DEFAULT_CONFIG.atemCameraFullscreenAlertEnabled),
       atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60),
+      atemPrimaryInputId: nullablePositiveIntegerValue(merged.atemPrimaryInputId),
       atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
       preflightApps: preflightAppsValue(merged.preflightApps),
       preflightProjector: preflightProjectorValue(merged.preflightProjector),
@@ -223,6 +225,11 @@ function numberValue(value: unknown, fallback: number): number {
 
 function nullableIntegerValue(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+}
+
+function nullablePositiveIntegerValue(value: unknown): number | null {
+  const parsed = nullableIntegerValue(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
 }
 
 function booleanValue(value: unknown, fallback: boolean): boolean {

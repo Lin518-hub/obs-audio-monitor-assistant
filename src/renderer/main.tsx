@@ -506,7 +506,7 @@ function ATEMConsole({
           <header>
             <span>当前机位计时</span>
             <button type="button" className={`atem-timer-toggle ${draft.atemCameraTimeAlertEnabled ? 'active' : ''}`} onClick={() => onChange('atemCameraTimeAlertEnabled', !draft.atemCameraTimeAlertEnabled)}>
-              {draft.atemCameraTimeAlertEnabled ? '报警开启' : '报警关闭'}
+              {draft.atemCameraTimeAlertEnabled ? '计时开启' : '计时关闭'}
             </button>
           </header>
           <strong>{formatATEMTime(elapsed)}</strong>

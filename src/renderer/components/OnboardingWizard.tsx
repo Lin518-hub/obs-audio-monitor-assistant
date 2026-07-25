@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Clock,
   Mic2,
+  Power,
   RefreshCw,
   ShieldCheck,
   TestTube2
@@ -18,7 +19,7 @@ import { readableInputKind } from '../utils/status';
 // =============================================================================
 // 步骤定义
 // =============================================================================
-type StepKey = 'welcome' | 'connection' | 'source' | 'rules' | 'complete';
+type StepKey = 'welcome' | 'connection' | 'source' | 'rules' | 'startup' | 'complete';
 
 interface StepDef {
   key: StepKey;
@@ -30,6 +31,7 @@ const STEPS: StepDef[] = [
   { key: 'connection', label: '连接' },
   { key: 'source', label: '音源' },
   { key: 'rules', label: '规则' },
+  { key: 'startup', label: '启动' },
   { key: 'complete', label: '完成' }
 ];
 
@@ -363,7 +365,41 @@ const RulesStep: React.FC<{
 ));
 
 // =============================================================================
-// 步骤 5：完成
+// 步骤 5：开机与后台
+// =============================================================================
+const StartupStep: React.FC<{
+  draft: AppConfig;
+  onUpdateDraft: OnboardingWizardProps['onUpdateDraft'];
+}> = memo(({ draft, onUpdateDraft }) => (
+  <div className="onboarding-card-body step-enter">
+    <div className="onboarding-step-title">
+      <span className="step-icon"><Power size={16} /></span>
+      设置开机启动
+    </div>
+    <p className="onboarding-step-desc">
+      直播工作站建议开机后自动进入“一键开播检查”。关闭主窗口后，助手仍会保留在系统托盘中继续检测。
+    </p>
+
+    <div className="onboarding-toggle">
+      <div>
+        <div className="toggle-label">开机自动启动助手</div>
+        <div className="toggle-hint">
+          Windows 登录后快速打开助手，并直接显示一键开播检查页面
+        </div>
+      </div>
+      <button
+        type="button"
+        className={`onboarding-switch ${draft.autoLaunch ? 'on' : ''}`}
+        onClick={() => onUpdateDraft('autoLaunch', !draft.autoLaunch)}
+        role="switch"
+        aria-checked={draft.autoLaunch}
+      />
+    </div>
+  </div>
+));
+
+// =============================================================================
+// 步骤 6：完成
 // =============================================================================
 const CompleteStep: React.FC<{
   draft: AppConfig;
@@ -405,6 +441,10 @@ const CompleteStep: React.FC<{
           <div className="summary-row">
             <span className="sr-label">预警提醒</span>
             <span className="sr-value">{draft.preAlertEnabled ? '已开启' : '已关闭'}</span>
+          </div>
+          <div className="summary-row">
+            <span className="sr-label">开机启动</span>
+            <span className="sr-value">{draft.autoLaunch ? '已开启' : '已关闭'}</span>
           </div>
         </div>
       </div>
@@ -468,6 +508,20 @@ const StepContent: React.FC<{
       return (
         <React.Fragment key={contentKey}>
           <RulesStep draft={draft} onUpdateDraft={onUpdateDraft} />
+          <div className="onboarding-card-footer">
+            <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
+              <button type="button" className="btn-primary" onClick={onNext}>下一步 <ChevronRight size={16} /></button>
+            </div>
+          </div>
+        </React.Fragment>
+      );
+
+    case 'startup':
+      return (
+        <React.Fragment key={contentKey}>
+          <StartupStep draft={draft} onUpdateDraft={onUpdateDraft} />
           <div className="onboarding-card-footer">
             <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
             <div style={{ display: 'flex', gap: 8 }}>

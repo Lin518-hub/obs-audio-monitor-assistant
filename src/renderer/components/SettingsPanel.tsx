@@ -104,7 +104,8 @@ interface DisclosureProps {
   title: string;
   description: string;
   summary: string;
-  defaultOpen?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
   tone?: 'default' | 'warning' | 'success';
   children: React.ReactNode;
 }
@@ -114,17 +115,13 @@ const SettingsDisclosure: React.FC<DisclosureProps> = ({
   title,
   description,
   summary,
-  defaultOpen = false,
+  expanded,
+  onToggle,
   tone = 'default',
   children
 }) => {
-  const [expanded, setExpanded] = useState(defaultOpen);
   const innerRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState(0);
-
-  useEffect(() => {
-    if (defaultOpen) setExpanded(true);
-  }, [defaultOpen]);
 
   useLayoutEffect(() => {
     const inner = innerRef.current;
@@ -145,7 +142,7 @@ const SettingsDisclosure: React.FC<DisclosureProps> = ({
         type="button"
         className="settings-disclosure-trigger"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={onToggle}
       >
         <span className="settings-disclosure-icon"><Icon size={18} /></span>
         <span className="settings-disclosure-copy">
@@ -178,6 +175,32 @@ const selectedSourceSummary = (draft: AppConfig) => {
   return `${names.length} 个音源独立守护`;
 };
 
+const disclosureForFocus = (
+  focus: string | null | undefined,
+  snapshot: AppSnapshot,
+  draft: AppConfig
+): string | null => {
+  switch (focus) {
+    case 'connection': return 'devices-obs';
+    case 'source': return 'devices-source';
+    case 'atem': return 'devices-atem';
+    case 'remote': return 'devices-remote';
+    case 'rules':
+    case 'monitor': return 'rules-audio';
+    case 'display': return 'alerts-display';
+    case 'window': return 'alerts-floating';
+    case 'system': return 'system-background';
+    case 'updates': return 'system-updates';
+    case 'history': return 'system-history';
+    case 'about': return 'system-about';
+    case 'diagnostics': return 'maintenance-tests';
+    default:
+      if (!snapshot.connected) return 'devices-obs';
+      if (!draft.targetInputName && draft.targetInputNames.length === 0) return 'devices-source';
+      return null;
+  }
+};
+
 const DEVELOPER_PASSWORD_SHA256 = '36135da9586652aa0bdefee628001c4c4eb6901e278a44233a23cd2811eadc19';
 const DEVELOPER_CLICK_GAP_MS = 1600;
 
@@ -208,6 +231,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     saveState
   } = props;
   const [active, setActive] = useState<SectionId>('devices');
+  const [expandedDisclosure, setExpandedDisclosure] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [developerDialogOpen, setDeveloperDialogOpen] = useState(false);
   const [developerPassword, setDeveloperPassword] = useState('');
@@ -241,6 +265,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   useEffect(() => {
     if (!open) return;
     setActive(sectionForFocus(focusSection));
+    setExpandedDisclosure(disclosureForFocus(focusSection, snapshot, draft));
   }, [open, focusSection]);
 
   useEffect(() => {
@@ -284,6 +309,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     setDeveloperPasswordError('');
   }, []);
 
+  const disclosureState = useCallback((id: string) => ({
+    expanded: expandedDisclosure === id,
+    onToggle: () => setExpandedDisclosure((current) => current === id ? null : id)
+  }), [expandedDisclosure]);
+
+  const selectTab = useCallback((id: SectionId) => {
+    setActive(id);
+    setExpandedDisclosure(null);
+  }, []);
+
   if (!open && !closing) return null;
 
   const activeTab = tabs.find((tab) => tab.id === active) ?? tabs[0];
@@ -296,8 +331,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
         : `当前 v${updateState.currentVersion}`;
   const alertSummary = `${draft.silenceDurationSeconds} 秒 · ${draft.silenceThresholdDb} dB · ${draft.alertSoundEnabled ? '声音开启' : '静音提醒'}`;
   const atemTimerSummary = draft.atemCameraTimeAlertEnabled
-    ? `${Math.round(draft.atemCameraTimeLimitSeconds / 60)} 分钟报警`
-    : '机位报警已关闭';
+    ? `${Math.round(draft.atemCameraTimeLimitSeconds / 60)} 分钟标红 · ${draft.atemCameraFullscreenAlertEnabled ? '强提醒开启' : '仅小浮窗'}`
+    : '机位计时已关闭';
 
   return (
     <div className={`settings-overlay ${closing ? 'closing' : ''}`} role="dialog" aria-modal="true" aria-label="设置" onClick={(event) => { if (event.target === event.currentTarget) handleClose(); }}>
@@ -318,7 +353,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   key={tab.id}
                   type="button"
                   className={`settings-nav-item ${active === tab.id ? 'active' : ''}`}
-                  onClick={() => setActive(tab.id)}
+                  onClick={() => selectTab(tab.id)}
                 >
                   <span className="settings-nav-icon"><Icon size={17} /></span>
                   <span className="settings-nav-copy">
@@ -346,42 +381,42 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             {active === 'devices' && (
               <>
                 <SettingsDisclosure
+                  {...disclosureState('devices-obs')}
                   icon={Cable}
                   title="OBS 连接"
                   description="WebSocket 与连接状态"
                   summary={snapshot.connected ? `已连接 · ${draft.obsHost}:${draft.obsPort}` : '未连接 · 展开检查'}
-                  defaultOpen={!snapshot.connected || focusSection === 'connection'}
                   tone={snapshot.connected ? 'success' : 'warning'}
                 >
                   <ConnectionSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('devices-source')}
                   icon={Mic2}
                   title="守护音源"
                   description="选择需要独立检测的声音输入"
                   summary={selectedSourceSummary(draft)}
-                  defaultOpen={(!draft.targetInputName && draft.targetInputNames.length === 0) || focusSection === 'source'}
                   tone={(draft.targetInputName || draft.targetInputNames.length > 0) ? 'success' : 'warning'}
                 >
                   <AudioSourceSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('devices-atem')}
                   icon={Video}
                   title="ATEM 导播台"
                   description="网络连接、信号源与机位名称"
                   summary={draft.atemEnabled ? (snapshot.atemConnected ? `已连接 · ${draft.atemHost}` : '已启用 · 等待连接') : '未启用'}
-                  defaultOpen={focusSection === 'atem'}
                   tone={snapshot.atemConnected ? 'success' : draft.atemEnabled ? 'warning' : 'default'}
                 >
                   <ATEMSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 {draft.developerModeEnabled && (
                   <SettingsDisclosure
+                    {...disclosureState('devices-remote')}
                     icon={Smartphone}
                     title="手机远程"
                     description="扫码申请、线路与访问状态"
                     summary={draft.remoteAccessEnabled ? (snapshot.remoteAccessConnected ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · ${snapshot.remoteAccessOnlineMobileClients} 台在线` : '已启用 · 等待服务') : '未启用'}
-                    defaultOpen={focusSection === 'remote'}
                     tone={snapshot.remoteAccessConnected ? 'success' : draft.remoteAccessEnabled ? 'warning' : 'default'}
                   >
                     <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
@@ -393,21 +428,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             {active === 'rules' && (
               <>
                 <SettingsDisclosure
+                  {...disclosureState('rules-audio')}
                   icon={Mic2}
                   title="音频静音检测"
                   description="多音源独立计时与静音判定"
                   summary={alertSummary}
-                  defaultOpen={focusSection === 'rules' || focusSection === 'monitor' || !focusSection}
                 >
                   <RulesSection draft={draft} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('rules-atem')}
                   icon={Video}
                   title="机位停留检测"
                   description="ATEM 单机位计时与安全切台"
                   summary={atemTimerSummary}
                 >
-                  <ATEMRulesSection draft={draft} onChange={onChangeDraft} />
+                  <ATEMRulesSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
               </>
             )}
@@ -415,29 +451,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             {active === 'alerts' && (
               <>
                 <SettingsDisclosure
+                  {...disclosureState('alerts-experience')}
                   icon={BellRing}
                   title="正式报警与预警"
                   description="报警外观、提示音和预警时机"
-                  summary={`${draft.alertReminderMode === 'fullscreen' ? '全屏红边' : '经典弹窗'} · ${draft.preAlertEnabled ? `${Math.round(draft.preAlertRatio * 100)}% 预警` : '无预警'}`}
-                  defaultOpen={!focusSection}
+                  summary={`${draft.alertReminderMode === 'fullscreen' ? '全屏红边' : '经典弹窗'} · ${draft.preAlertEnabled ? `${Math.round(draft.preAlertRatio * 100)}% 预警` : '无预警'} · 机位${draft.atemCameraFullscreenAlertEnabled ? '强提醒' : '仅标红'}`}
                 >
                   <AlertExperienceSection draft={draft} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('alerts-floating')}
                   icon={Monitor}
                   title="小浮窗"
                   description="置顶状态条与显示模块"
                   summary={draft.floatingWindowEnabled ? `已开启 · ${draft.floatingWindowMode === 'audio' ? '音频' : draft.floatingWindowMode === 'audio_atem' ? '音频 + 机位' : '多功能'}` : '未开启'}
-                  defaultOpen={focusSection === 'window'}
                 >
                   <FloatingWindowSection draft={draft} onChange={onChangeDraft} snapshot={snapshot} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('alerts-display')}
                   icon={Monitor}
                   title="报警屏幕与位置"
                   description="多屏显示和弹窗位置记忆"
                   summary={snapshot.displays.length <= 1 ? '单屏自动居中' : `${snapshot.displays.length} 个屏幕 · ${draft.alertDisplayMode === 'all' ? '全部显示' : '指定显示'}`}
-                  defaultOpen={focusSection === 'display'}
                 >
                   <DisplaySection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
@@ -447,15 +483,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             {active === 'system' && (
               <>
                 <SettingsDisclosure
+                  {...disclosureState('system-background')}
                   icon={Settings2}
                   title="后台运行"
                   description="开机启动与关闭窗口行为"
                   summary={draft.autoLaunch ? '开机自动启动' : '手动启动'}
-                  defaultOpen={focusSection === 'system' || !focusSection}
                 >
                   <BackgroundSection draft={draft} onChange={onChangeDraft} snapshot={snapshot} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('system-updates')}
                   icon={Download}
                   title="软件更新"
                   description="版本状态与更新线路"
@@ -465,6 +502,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('system-history')}
                   icon={History}
                   title="本地记录"
                   description="报警历史与数据清理"
@@ -473,6 +511,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   <HistorySection snapshot={snapshot} onClear={() => void window.obsGuard.clearHistory()} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('system-about')}
                   icon={Info}
                   title="关于软件"
                   description="版本与当前守护对象"
@@ -496,15 +535,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   </div>
                 )}
                 <SettingsDisclosure
+                  {...disclosureState('maintenance-tests')}
                   icon={TestTube2}
                   title="检测与调试"
                   description="仅在排查或开播前验证时使用"
                   summary={snapshot.simulatedLive ? '模拟开播已开启' : '默认收起'}
-                  defaultOpen={focusSection === 'diagnostics'}
                 >
                   <DiagnosticsSection mode="tests" snapshot={snapshot} testingConnection={testingConnection} testResult={testResult} onTestConnection={onTestConnection} onOpenManual={onOpenManual} onReset={onReset} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
+                  {...disclosureState('maintenance-support')}
                   icon={BookOpen}
                   title="帮助与恢复"
                   description="说明书与危险维护操作"

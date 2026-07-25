@@ -137,24 +137,23 @@ async function initializeApp(): Promise<void> {
   atemHistoryStore = new ATEMHistoryStore();
   atemSessionStore = new ATEMSessionStore();
   let config = await configStore.load();
-  // Persist generated remote UUID/secret and one-time config migrations.
-  config = await configStore.save(config);
   const systemAutoLaunchEnabled = getAutoLaunchEnabled();
   if (systemAutoLaunchEnabled && !config.autoLaunch) {
-    config = await configStore.save({ ...config, autoLaunch: true });
-  } else if (config.autoLaunch) {
-    await applyAutoLaunch(true);
+    config = { ...config, autoLaunch: true };
+  } else if (config.autoLaunch && !systemAutoLaunchEnabled) {
+    void applyAutoLaunch(true);
   }
-  const [history, loadedATEMSwitchHistory, storedSessions] = await Promise.all([
+  // Persist generated UUIDs and migrations without holding the first visible
+  // window behind disk encryption or login-item reconciliation.
+  void configStore.save(config).catch((error) => {
+    console.error(`[config] failed to persist startup config: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  const persistedStatePromise = Promise.all([
     historyStore.load(),
     atemHistoryStore.load(),
     atemSessionStore.load()
   ]);
-  atemSwitchHistory = loadedATEMSwitchHistory;
-  atemCurrentSession = storedSessions.activeSession;
-  atemRecentSessions = storedSessions.sessions;
   monitor = new OBSMonitor(config, getDisplays());
-  monitor.setHistory(history);
 
   atemMonitor = new ATEMMonitor();
   remoteBridge = new RemoteBridge();
@@ -170,18 +169,24 @@ async function initializeApp(): Promise<void> {
   remoteBridge.updateSnapshot(latestSnapshot);
   void remoteBridge.configure(config);
 
-  void atemMonitor.setConfig(config.atemEnabled, config.atemHost, config.atemCameraTimeLimitSeconds, config.atemCameraTimeAlertEnabled).then(() => {
+  void atemMonitor.setConfig(
+    config.atemEnabled,
+    config.atemHost,
+    config.atemCameraTimeLimitSeconds,
+    config.atemCameraTimeAlertEnabled,
+    config.atemPrimaryInputId
+  ).then(() => {
     const merged = injectATEMState(monitor.getSnapshot());
     latestSnapshot = merged;
     broadcastSnapshot(merged);
   });
 
   registerIpc();
-  createTray();
-  initializeUpdater();
   if (!launchHidden) {
     createSettingsWindow(launchPreflight ? 'preflight' : undefined);
   }
+  createTray();
+  initializeUpdater();
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
   }
@@ -209,11 +214,7 @@ async function initializeApp(): Promise<void> {
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
     syncATEMLiveSession(snapshot);
-    if (latestSnapshot.preAlertVisible && !latestSnapshot.alertVisible) {
-      showPreAlertWindows(latestSnapshot);
-    } else {
-      closePreAlertWindows('destroy');
-    }
+    syncPreAlertSurfaces(latestSnapshot);
     syncAlertSurfaces(previousSnapshot, latestSnapshot);
   });
   monitor.on('meter', (frame) => {
@@ -236,6 +237,7 @@ async function initializeApp(): Promise<void> {
       remoteBridge.updateSnapshot(merged);
       updateTray(merged);
       syncFloatingWindow(merged);
+      syncPreAlertSurfaces(merged);
       syncAlertSurfaces(previousSnapshot, merged);
     }
   });
@@ -255,6 +257,15 @@ async function initializeApp(): Promise<void> {
       console.error(`[atem-session] failed to record camera switch: ${error instanceof Error ? error.message : String(error)}`);
     });
   });
+
+  const [history, loadedATEMSwitchHistory, storedSessions] = await persistedStatePromise;
+  monitor.setHistory(history);
+  atemSwitchHistory = loadedATEMSwitchHistory;
+  atemCurrentSession = storedSessions.activeSession;
+  atemRecentSessions = storedSessions.sessions;
+  latestSnapshot = injectATEMState(monitor.getSnapshot());
+  broadcastSnapshot(latestSnapshot);
+  remoteBridge.updateSnapshot(latestSnapshot);
 
   await monitor.start();
 }
@@ -311,7 +322,8 @@ async function applyAutoLaunch(enabled: boolean): Promise<void> {
 function registerIpc(): void {
   ipcMain.handle('snapshot:get', () => rendererSnapshot(latestSnapshot ?? monitor.getSnapshot()));
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
-    const previous = (latestSnapshot ?? monitor.getSnapshot()).config;
+    const previousSnapshot = latestSnapshot ?? monitor.getSnapshot();
+    const previous = previousSnapshot.config;
     const protectedPatch = {
       ...patch,
       ...(Object.hasOwn(patch, 'floatingWindowMode') && patch.floatingWindowMode !== previous.floatingWindowMode
@@ -328,6 +340,8 @@ function registerIpc(): void {
     latestSnapshot = injectATEMState(snapshot);
     broadcastSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
+    syncPreAlertSurfaces(latestSnapshot);
+    syncAlertSurfaces(previousSnapshot, latestSnapshot);
     const floatingWindowChanged =
       Object.hasOwn(patch, 'floatingWindowEnabled') ||
       Object.hasOwn(patch, 'floatingWindowBounds') ||
@@ -339,12 +353,21 @@ function registerIpc(): void {
       }
       syncFloatingWindow(latestSnapshot);
     }
-    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds') || Object.hasOwn(patch, 'atemCameraTimeAlertEnabled')) {
-      void atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds, nextConfig.atemCameraTimeAlertEnabled).then(() => {
+    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds') || Object.hasOwn(patch, 'atemCameraTimeAlertEnabled') || Object.hasOwn(patch, 'atemPrimaryInputId')) {
+      void atemMonitor.setConfig(
+        nextConfig.atemEnabled,
+        nextConfig.atemHost,
+        nextConfig.atemCameraTimeLimitSeconds,
+        nextConfig.atemCameraTimeAlertEnabled,
+        nextConfig.atemPrimaryInputId
+      ).then(() => {
         if (latestSnapshot) {
+          const previousATEMSnapshot = latestSnapshot;
           const merged = injectATEMState(latestSnapshot);
           latestSnapshot = merged;
           broadcastSnapshot(merged);
+          syncPreAlertSurfaces(merged);
+          syncAlertSurfaces(previousATEMSnapshot, merged);
         }
         syncATEMHotkeys();
       });
@@ -410,7 +433,13 @@ function registerIpc(): void {
   });
   ipcMain.handle('prealert:dismiss', () => {
     closePreAlertWindows('destroy');
-    const snapshot = injectATEMState(monitor.dismissPreAlert());
+    const current = latestSnapshot ?? injectATEMState(monitor.getSnapshot());
+    if (current.activePreAlertSource === 'atem_camera') {
+      atemMonitor.dismissCameraPreAlert();
+    } else {
+      monitor.dismissPreAlert();
+    }
+    const snapshot = injectATEMState(monitor.getSnapshot());
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
     remoteBridge.updateSnapshot(snapshot);
@@ -445,8 +474,11 @@ function registerIpc(): void {
   });
   ipcMain.handle('preflight:launch-all', async (_event, settings: unknown) => {
     const resolvedSettings = preflightSettingsValue(settings);
+    // Projector readiness depends only on OBS. Start waiting in parallel with
+    // the other launch items so it is not placed at the end of the full list.
+    const projectorPromise = executePreflightProjector(resolvedSettings, false);
     const result = await preflightCheckService.launchAll(resolvedSettings);
-    result.projector = await executePreflightProjector(resolvedSettings, false);
+    result.projector = await projectorPromise;
     return result;
   });
   ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown) => {
@@ -614,6 +646,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
       if (placement) {
         await preflightCheckService.restoreWindow(inspection.projector, placement);
+        scheduleProjectorPlacementStabilization(settings, placement);
         return {
           result: { state: 'already_open', message: '节目输出投影已打开并恢复到固定位置', positionRestored: true } as PreflightProjectorResult,
           handles: inspection.handles
@@ -653,6 +686,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
       if (placement) {
         await preflightCheckService.restoreWindow(projector, placement);
+        scheduleProjectorPlacementStabilization(settings, placement);
         positionRestored = true;
       }
     }
@@ -665,6 +699,20 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
   } catch (error) {
     return { state: 'failed', message: error instanceof Error ? error.message : '打开节目输出投影失败', positionRestored: false };
   }
+}
+
+function scheduleProjectorPlacementStabilization(
+  settings: PreflightSettings,
+  placement: PreflightWindowPlacement
+): void {
+  if (process.platform !== 'win32') return;
+  setTimeout(() => {
+    void preflightCheckService.inspectOBSWindows(settings.apps).then(async ({ projector }) => {
+      if (projector) await preflightCheckService.restoreWindow(projector, placement);
+    }).catch((error) => {
+      console.error(`[preflight] failed to stabilize projector placement: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, 1_200);
 }
 
 async function waitForOBSConnection(timeoutMs: number): Promise<boolean> {
@@ -687,11 +735,29 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     customizations[inputId]?.name || label
   ]));
   const audioAlertVisible = snapshot.activeAlertSource === 'audio';
-  const cameraAlertVisible = Boolean(snapshot.config.atemCameraTimeAlertEnabled && atem?.cameraAlertVisible);
+  const cameraAlertVisible = Boolean(
+    snapshot.config.atemCameraTimeAlertEnabled
+    && snapshot.config.atemCameraFullscreenAlertEnabled
+    && atem?.cameraAlertVisible
+  );
+  const audioPreAlertVisible = snapshot.preAlertVisible && snapshot.activePreAlertSource !== 'atem_camera';
+  const cameraPreAlertVisible = Boolean(
+    snapshot.config.preAlertEnabled
+    && snapshot.config.atemCameraTimeAlertEnabled
+    && snapshot.config.atemCameraFullscreenAlertEnabled
+    && atem?.cameraPreAlertVisible
+  );
   return {
     ...snapshot,
     alertVisible: audioAlertVisible || cameraAlertVisible,
     activeAlertSource: audioAlertVisible ? 'audio' : cameraAlertVisible ? 'atem_camera' : null,
+    preAlertVisible: audioPreAlertVisible || cameraPreAlertVisible,
+    activePreAlertSource: audioPreAlertVisible ? 'audio' : cameraPreAlertVisible ? 'atem_camera' : null,
+    preAlertRemainingSeconds: audioPreAlertVisible
+      ? snapshot.preAlertRemainingSeconds
+      : cameraPreAlertVisible
+        ? atem?.cameraPreAlertRemainingSeconds ?? null
+        : null,
     ...(atem ? {
       atemConnected: atem.connected,
       atemConnectionState: atem.connectionState,
@@ -705,6 +771,7 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemProgramInputStartedAt: atem.programInputStartedAt,
       atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
       atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit,
+      atemCameraPreAlertVisible: cameraPreAlertVisible,
       atemCameraAlertVisible: cameraAlertVisible,
       atemSwitchHistory: atemSwitchHistory.map((entry) => ({
         ...entry,
@@ -1696,7 +1763,13 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
   await remoteBridge.configure(nextConfig);
-  await atemMonitor.setConfig(nextConfig.atemEnabled, nextConfig.atemHost, nextConfig.atemCameraTimeLimitSeconds, nextConfig.atemCameraTimeAlertEnabled);
+  await atemMonitor.setConfig(
+    nextConfig.atemEnabled,
+    nextConfig.atemHost,
+    nextConfig.atemCameraTimeLimitSeconds,
+    nextConfig.atemCameraTimeAlertEnabled,
+    nextConfig.atemPrimaryInputId
+  );
   latestSnapshot = injectATEMState(monitor.getSnapshot());
   syncATEMHotkeys();
 
@@ -1954,6 +2027,14 @@ function showPreAlertWindows(snapshot: AppSnapshot): void {
 
     preAlertWindows.set(display.id, preAlertWindow);
     loadRendererSafely(preAlertWindow, '#prealert', `prealert:${display.id}`);
+  }
+}
+
+function syncPreAlertSurfaces(snapshot: AppSnapshot): void {
+  if (snapshot.preAlertVisible && !snapshot.alertVisible) {
+    showPreAlertWindows(snapshot);
+  } else {
+    closePreAlertWindows('destroy');
   }
 }
 

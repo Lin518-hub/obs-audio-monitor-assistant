@@ -138,6 +138,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       activeAlertSource: this.state.alertVisible ? 'audio' : null,
       readinessReason,
       preAlertVisible,
+      activePreAlertSource: preAlertVisible ? 'audio' : null,
       preAlertRemainingSeconds: preAlertVisible ? preAlertRemainingSeconds(this.state, this.config, now) : null,
       preAlertDismissed: this.state.silentSince !== null && this.state.preAlertDismissedSilentSince === this.state.silentSince,
       snoozedUntil: this.state.snoozedUntil,
@@ -161,6 +162,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemProgramInputStartedAt: null,
       atemProgramInputElapsedSeconds: 0,
       atemProgramInputOverLimit: false,
+      atemCameraPreAlertVisible: false,
       atemCameraAlertVisible: false,
       atemSwitchHistory: [],
       atemReconnectAttempt: 0,
@@ -654,6 +656,14 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private applyCurrentOutputState(now = Date.now()): void {
+    const wasMonitoring = this.state.streaming || this.state.recording;
+    const willMonitor = this.simulatedLive || this.actualStreaming || this.actualVirtualCamera || this.actualRecording;
+    if (!wasMonitoring && willMonitor) {
+      // Meter events continue while OBS is idle. Never inherit those old
+      // silent intervals when a new live/recording session begins.
+      this.clearSilentInputStates(false);
+      this.lastTargetMeterAt = null;
+    }
     this.state = reduceOutputState(
       this.state,
       this.config,
@@ -875,6 +885,15 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.lastTargetMeterAt = Math.max(this.lastTargetMeterAt ?? 0, now);
     this.lastAudioMeterReceivedAt = Math.max(this.lastAudioMeterReceivedAt ?? 0, now);
 
+    if (!this.state.streaming && !this.state.recording) {
+      state.silentSince = null;
+      state.activeEventId = null;
+      state.alertTriggered = false;
+      state.lastAboveThresholdAt = null;
+      state.aboveThresholdSince = null;
+      return;
+    }
+
     const wasConfirmedSpeaking = state.silentSince === null && state.lastAboveThresholdAt !== null;
     const audibleThreshold = this.config.silenceThresholdDb + (wasConfirmedSpeaking ? -THRESHOLD_HYSTERESIS_DB : THRESHOLD_HYSTERESIS_DB);
     if (levelDb > audibleThreshold) {
@@ -1009,10 +1028,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     return now - state.lastAboveThresholdAt < 3000;
   }
 
-  private clearSilentInputStates(): void {
+  private clearSilentInputStates(recordCompletedEvents = true): void {
     const now = Date.now();
     for (const state of this.inputStates.values()) {
-      if (state.silentSince !== null) {
+      if (recordCompletedEvents && state.silentSince !== null) {
         this.finishSilenceEvent(state, now);
       }
       state.silentSince = null;

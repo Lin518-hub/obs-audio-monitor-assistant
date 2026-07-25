@@ -145,6 +145,43 @@ describe('OBSMonitor test alert', () => {
     await monitor.stop();
   });
 
+  it('starts a fresh silence interval when a new live session begins', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const internals = monitor as unknown as {
+      state: { connected: boolean; streaming: boolean; recording: boolean };
+      actualStreaming: boolean;
+      lastTargetMeterAt: number | null;
+      ensureInputState: (name: string, kind: string) => {
+        silentSince: number | null;
+        alertTriggered: boolean;
+      };
+      applyCurrentOutputState: (now: number) => void;
+      recomputeAggregateState: (now: number) => void;
+    };
+    const now = Date.now();
+    const input = internals.ensureInputState('Mic', 'wasapi_input_capture');
+    internals.state.connected = true;
+    internals.state.streaming = false;
+    internals.state.recording = false;
+    input.silentSince = now - 10 * 60_000;
+    input.alertTriggered = true;
+    internals.lastTargetMeterAt = now;
+    internals.actualStreaming = true;
+
+    internals.applyCurrentOutputState(now);
+    internals.recomputeAggregateState(now);
+
+    expect(input.silentSince).toBeNull();
+    expect(monitor.getSnapshot(now)).toMatchObject({
+      streaming: true,
+      alertVisible: false,
+      preAlertVisible: false,
+      silentForSeconds: 0,
+      readinessReason: 'no_target_meter'
+    });
+    await monitor.stop();
+  });
+
   it('opens a windowed OBS program projector only while connected', async () => {
     const monitor = new OBSMonitor(config, displays);
     const call = vi.fn().mockResolvedValue({});

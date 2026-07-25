@@ -196,6 +196,8 @@ export interface ATEMStateSnapshot {
   programInputStartedAt: number | null;
   programInputElapsedSeconds: number;
   programInputOverLimit: boolean;
+  cameraPreAlertVisible: boolean;
+  cameraPreAlertRemainingSeconds: number | null;
   cameraAlertVisible: boolean;
   errorMessage: string | null;
   reconnectAttempt: number;
@@ -385,7 +387,9 @@ export interface AppConfig {
   atemHotkeyGlobal: boolean;
   atemHardCutConfirm: boolean;
   atemCameraTimeAlertEnabled: boolean;
+  atemCameraFullscreenAlertEnabled: boolean;
   atemCameraTimeLimitSeconds: number;
+  atemPrimaryInputId: number | null;
   atemInputCustomizations: Record<string, ATEMInputCustomization>;
   preflightApps: PreflightAppConfigs;
   preflightProjector: PreflightProjectorConfig;
@@ -430,6 +434,7 @@ export interface AppSnapshot {
   activeAlertSource: AlertSource | null;
   readinessReason: ReadinessReason;
   preAlertVisible: boolean;
+  activePreAlertSource: AlertSource | null;
   preAlertRemainingSeconds: number | null;
   preAlertDismissed: boolean;
   snoozedUntil: number | null;
@@ -452,6 +457,7 @@ export interface AppSnapshot {
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
+  atemCameraPreAlertVisible: boolean;
   atemCameraAlertVisible: boolean;
   atemSwitchHistory: ATEMSwitchHistoryEntry[];
   atemReconnectAttempt: number;
@@ -515,7 +521,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemHotkeyGlobal: false,
   atemHardCutConfirm: true,
   atemCameraTimeAlertEnabled: true,
-  atemCameraTimeLimitSeconds: 720,
+  atemCameraFullscreenAlertEnabled: false,
+  atemCameraTimeLimitSeconds: 600,
+  atemPrimaryInputId: null,
   atemInputCustomizations: {},
   preflightApps: {
     obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },

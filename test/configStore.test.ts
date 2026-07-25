@@ -255,7 +255,7 @@ describe('ConfigStore', () => {
     expect(sessionOnlyReload.rememberObsPassword).toBe(false);
   });
 
-  it('migrates legacy ATEM defaults to twelve minutes and preserves the combined floating mode', async () => {
+  it('migrates legacy ATEM defaults to ten minutes and preserves the combined floating mode', async () => {
     const store = new ConfigStore();
     await store.save({
       ...DEFAULT_CONFIG,
@@ -266,25 +266,26 @@ describe('ConfigStore', () => {
     const reloaded = await new ConfigStore().load();
 
     expect(reloaded.floatingWindowMode).toBe('audio_atem');
-    expect(reloaded.atemCameraTimeLimitSeconds).toBe(720);
+    expect(reloaded.atemCameraTimeLimitSeconds).toBe(600);
+    expect(reloaded.atemCameraFullscreenAlertEnabled).toBe(false);
 
     await store.save({
       ...DEFAULT_CONFIG,
       atemCameraTimeLimitSeconds: 300
     });
-    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(720);
+    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
 
     await store.save({
       ...DEFAULT_CONFIG,
       atemCameraTimeLimitSeconds: 480
     });
-    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(720);
+    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
 
     await store.save({
       ...DEFAULT_CONFIG,
-      atemCameraTimeLimitSeconds: 600
+      atemCameraTimeLimitSeconds: 720
     });
-    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(720);
+    expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
   });
 
   it('resets the legacy wide audio and ATEM bounds to the compact preview size', async () => {

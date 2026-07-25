@@ -545,20 +545,21 @@ export const ATEMSection: React.FC<{
 
 export const ATEMRulesSection: React.FC<{
   draft: AppConfig;
+  snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, onChange }) => (
-  <Section id="settings-atem-rules" icon={Video} title="机位检测规则" description="单机位停留报警与切台保护">
+}> = ({ draft, snapshot, onChange }) => (
+  <Section id="settings-atem-rules" icon={Video} title="机位检测规则" description="单机位停留计时、提醒与切台保护">
     <ToggleRow
       id="atem-camera-timer"
-      title="启用单机位超时报警"
-      description="直播、录制或模拟开播后从零计时；同一 PGM 机位停留超时后使用与音频相同的报警样式、提示音和多屏策略"
+      title="启用单机位停留计时"
+      description="直播、录制或模拟开播后从零计时；达到上限后小浮窗中的机位模块变为红色"
       checked={draft.atemCameraTimeAlertEnabled}
       onChange={(value) => onChange('atemCameraTimeAlertEnabled', value)}
     />
     {draft.atemCameraTimeAlertEnabled && (
       <div className="settings-progressive-block">
         <div className="settings-field">
-          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位报警时长</label>
+          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位标红时长</label>
           <NumberField
             value={draft.atemCameraTimeLimitSeconds}
             min={10}
@@ -567,6 +568,43 @@ export const ATEMRulesSection: React.FC<{
             suffix="秒"
             onChange={(value) => onChange('atemCameraTimeLimitSeconds', value)}
           />
+          <span className="settings-field-hint">默认 10 分钟；达到时间后小浮窗继续计时，并将机位模块标红。</span>
+        </div>
+        <ToggleRow
+          id="atem-camera-fullscreen-alert"
+          title="机位超时强提醒（全屏/弹窗）"
+          description="默认关闭；开启后才使用“提醒与窗口”中选择的正式报警样式、提示音和多屏策略"
+          checked={draft.atemCameraFullscreenAlertEnabled}
+          onChange={(value) => onChange('atemCameraFullscreenAlertEnabled', value)}
+        />
+        <div className="settings-field">
+          <label className="settings-field-label">出镜主机位</label>
+          <StyledSelect
+            value={draft.atemPrimaryInputId ?? 0}
+            ariaLabel="选择出镜主机位"
+            options={[
+              { value: 0, label: '不设置主机位', description: '所有机位都参与停留计时与超时标红' },
+              ...(draft.atemPrimaryInputId && !snapshot.atemInputIds.includes(draft.atemPrimaryInputId)
+                ? [{
+                    value: draft.atemPrimaryInputId,
+                    label: draft.atemInputCustomizations[String(draft.atemPrimaryInputId)]?.name || `机位 ${draft.atemPrimaryInputId}`,
+                    description: `已保存的 PGM ${draft.atemPrimaryInputId} · ATEM 连接后校验`,
+                    swatch: draft.atemInputCustomizations[String(draft.atemPrimaryInputId)]?.color || defaultATEMInputColor(draft.atemPrimaryInputId)
+                  }]
+                : []),
+              ...snapshot.atemInputIds.map((inputId) => {
+                const customization = draft.atemInputCustomizations[String(inputId)];
+                return {
+                  value: inputId,
+                  label: customization?.name || snapshot.atemInputLabels[inputId] || `机位 ${inputId}`,
+                  description: `PGM ${inputId} · 此机位连续出镜时不计时`,
+                  swatch: customization?.color || defaultATEMInputColor(inputId)
+                };
+              })
+            ]}
+            onChange={(value) => onChange('atemPrimaryInputId', value === 0 ? null : value)}
+          />
+          <span className="settings-field-hint">主播长期出镜的固定机位可设为主机位，该机位不参与停留计时、标红或正式报警。</span>
         </div>
         <ToggleRow
           id="atem-floating-module"

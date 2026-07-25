@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock3 } from 'lucide-react';
+import { Clock3, Video } from 'lucide-react';
 import type { AppSnapshot } from '../../shared/types';
 
 export const PreAlertApp: React.FC = () => {
@@ -14,6 +14,9 @@ export const PreAlertApp: React.FC = () => {
   }, []);
 
   if (!snapshot) return null;
+  const isCameraPreAlert = snapshot.activePreAlertSource === 'atem_camera';
+  const cameraLabel = snapshot.atemInputLabels[snapshot.atemProgramInput]
+    || `机位 ${snapshot.atemProgramInput || '--'}`;
 
   return (
     <main className="prealert-shell">
@@ -26,10 +29,16 @@ export const PreAlertApp: React.FC = () => {
           void window.obsGuard.dismissPreAlert().catch(() => setDismissing(false));
         }}
       >×</button>
-      <div className="prealert-icon"><Clock3 size={24} /></div>
+      <div className="prealert-icon">
+        {isCameraPreAlert ? <Video size={24} /> : <Clock3 size={24} />}
+      </div>
       <section>
-        <div className="prealert-kicker">静音预警</div>
-        <strong>{snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 已静音 {snapshot.silentForSeconds} 秒</strong>
+        <div className="prealert-kicker">{isCameraPreAlert ? '机位停留预警' : '静音预警'}</div>
+        <strong>
+          {isCameraPreAlert
+            ? `${cameraLabel} 已连续播出 ${Math.floor(snapshot.atemProgramInputElapsedSeconds / 60)} 分钟`
+            : `${snapshot.activeInputName || snapshot.config.targetInputName || '目标音源'} 已静音 ${snapshot.silentForSeconds} 秒`}
+        </strong>
         <p>约 {snapshot.preAlertRemainingSeconds ?? 0} 秒后触发正式报警</p>
       </section>
     </main>
