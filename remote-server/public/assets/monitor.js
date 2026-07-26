@@ -180,46 +180,33 @@ function deviceMatches(device) {
 }
 
 function roomView(room) {
-  const section = document.createElement('section');
-  section.className = `monitor-room tone-${room.tone}`;
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = `monitor-room-row tone-${room.tone}`;
   const device = room.devices[0];
+  row.addEventListener('click', () => openDrawer(device.uuid));
 
-  const header = document.createElement('header');
-  const titleWrap = document.createElement('div');
+  const identity = document.createElement('div');
+  identity.className = 'monitor-room-identity';
+  identity.append(statusDot(device.overallTone));
+  const titleWrap = document.createElement('span');
+  titleWrap.className = 'monitor-room-copy';
+  const titleLine = document.createElement('span');
+  titleLine.className = 'monitor-room-title';
   const title = document.createElement('h2');
   title.textContent = room.name;
+  const roomState = device.overallTone === 'danger'
+    ? chip('需要处理', 'danger')
+    : device.overallTone === 'warning'
+      ? chip('请留意', 'warning')
+      : chip(device.online ? (device.obs.liveActive ? '直播中' : '状态正常') : '电脑离线', device.online ? 'safe' : 'offline');
+  titleLine.append(title, roomState);
   const subtitle = document.createElement('p');
   subtitle.textContent = device.online
     ? `${device.label} · ${routeLabel(device.service.routeType)} · ${relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)}`
     : `${device.label} · 离线 ${relativeTime(device.lastSeenAt)}`;
-  titleWrap.append(title, subtitle);
-  const chips = document.createElement('div');
-  chips.className = 'monitor-room-chips';
-  if (device.overallTone === 'danger') chips.append(chip('需要处理', 'danger'));
-  else if (device.overallTone === 'warning') chips.append(chip('请留意', 'warning'));
-  else chips.append(chip(device.online ? (device.obs.liveActive ? '直播中' : '状态正常') : '电脑离线', device.online ? 'safe' : 'offline'));
-  header.append(titleWrap, chips);
-
-  const columnHeader = document.createElement('div');
-  columnHeader.className = 'monitor-device-columns';
-  for (const value of ['OBS', '音频', '当前机位', '软件版本']) {
-    const node = document.createElement('span');
-    node.textContent = value;
-    columnHeader.append(node);
-  }
-
-  const devices = document.createElement('div');
-  devices.className = 'monitor-device-list';
-  devices.append(deviceView(device));
-  section.append(header, columnHeader, devices);
-  return section;
-}
-
-function deviceView(device) {
-  const row = document.createElement('button');
-  row.type = 'button';
-  row.className = `monitor-device tone-${device.overallTone}`;
-  row.addEventListener('click', () => openDrawer(device.uuid));
+  titleWrap.append(titleLine, subtitle);
+  identity.append(titleWrap);
 
   const obs = metricBlock(
     obsDisplay(device.obs),
@@ -248,7 +235,7 @@ function deviceView(device) {
     device.app.updateAvailable ? 'warning' : device.online ? 'safe' : 'idle'
   );
 
-  row.append(obs, audio, camera, version);
+  row.append(identity, obs, audio, camera, version);
   return row;
 }
 
@@ -300,8 +287,8 @@ function closeDrawer() {
 }
 
 function renderDrawer(device) {
-  $('monitor-device-title').textContent = device.label;
-  $('monitor-device-subtitle').textContent = `${device.roomName} · ${device.online ? '电脑在线' : `离线 ${relativeTime(device.lastSeenAt)}`}`;
+  $('monitor-device-title').textContent = device.roomName;
+  $('monitor-device-subtitle').textContent = `${device.label} · ${device.online ? '电脑在线' : `离线 ${relativeTime(device.lastSeenAt)}`}`;
   const detail = $('monitor-device-detail');
   detail.replaceChildren(
     detailSection('运行状态', [
@@ -320,9 +307,7 @@ function renderDrawer(device) {
     detailSection('远程服务', [
       ['线路', routeLabel(device.service.routeType)],
       ['延迟', device.service.latencyMs == null ? '--' : `${Math.round(device.service.latencyMs)} ms`],
-      ['最后同步', relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)],
-      ['手机在线', `${device.onlineMobileClients} 台`],
-      ['手机访问', device.app.mobileAccessEnabled ? '已允许' : '已关闭']
+      ['最后同步', relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)]
     ])
   );
 
@@ -350,6 +335,12 @@ function renderDrawer(device) {
     });
     actions.append(button);
   }
+  const weComButton = document.createElement('button');
+  weComButton.type = 'button';
+  weComButton.className = 'monitor-action primary-action';
+  weComButton.textContent = '发送企业微信测试';
+  weComButton.addEventListener('click', () => void sendWeComTest(device.uuid));
+  actions.append(weComButton);
 }
 
 function detailSection(title, rows) {
@@ -381,6 +372,22 @@ async function runCommand(deviceUuid, command, confirmed) {
     await refresh();
   } catch (error) {
     toast(commandErrorText(error));
+  } finally {
+    const current = findDevice(deviceUuid);
+    if (current) renderDrawer(current);
+  }
+}
+
+async function sendWeComTest(deviceUuid) {
+  const actionButtons = [...$('monitor-device-actions').querySelectorAll('button')];
+  actionButtons.forEach((button) => { button.disabled = true; });
+  try {
+    const result = await api(`/api/monitor/devices/${encodeURIComponent(deviceUuid)}/wecom-test`, {
+      method: 'POST'
+    });
+    toast(result.message || '企业微信测试消息已发送');
+  } catch (error) {
+    toast(error.payload?.message || error.message || '企业微信测试发送失败');
   } finally {
     const current = findDevice(deviceUuid);
     if (current) renderDrawer(current);

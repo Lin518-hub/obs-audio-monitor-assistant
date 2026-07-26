@@ -260,14 +260,20 @@ function currentStatusPayload(device, state, occurredAt) {
   const programName = cleanText(atem.inputLabels?.[programInput], 100)
     || (Number.isFinite(programInput) && programInput > 0 ? `机位 ${programInput}` : '未读取机位');
   const lines = [
-    '<font color="info">OBS 直播监控测试</font>',
-    `> **${escapeMarkdown(device?.roomName || '未命名直播间')}** · 当前状态发送成功`,
-    `> 直播：${live ? '进行中' : '未开播'} · OBS：${obs.connected === true ? '已连接' : '未连接'}`,
-    `> 音频：${escapeMarkdown(audio.display || '等待音频数据')}${Number.isFinite(level) ? ` · ${level.toFixed(1)} dB` : ''}`,
-    `> 机位：${atem.connected === true ? escapeMarkdown(programName) : 'ATEM 未连接'}`,
-    `> 软件：${cleanText(app.version, 32) ? `v${escapeMarkdown(app.version)}` : '版本未知'} · ${formatTime(occurredAt)}`
+    'OBS 直播监控测试',
+    `${cleanText(device?.roomName, 60) || '未命名直播间'} · 当前状态发送成功`,
+    `直播：${live ? '进行中' : '未开播'} · OBS：${obs.connected === true ? '已连接' : '未连接'}`,
+    `音频：${cleanText(audio.display, 80) || '等待音频数据'}${Number.isFinite(level) ? ` · ${level.toFixed(1)} dB` : ''}`,
+    `机位：${atem.connected === true ? programName : 'ATEM 未连接'}`,
+    `软件：${cleanText(app.version, 32) ? `v${cleanText(app.version, 32)}` : '版本未知'} · ${formatTime(occurredAt)}`
   ];
-  return { msgtype: 'markdown', markdown: { content: lines.join('\n') } };
+  return {
+    msgtype: 'text',
+    text: {
+      content: lines.join('\n'),
+      mentioned_list: ['@all']
+    }
+  };
 }
 
 function markdownPayloads(events) {

@@ -13,8 +13,7 @@ import {
   type RemoteAccessSnapshot,
   type RemoteAdminCommand,
   type RemoteAdminCommandResult,
-  type UpdateSnapshot,
-  type WeComTestResult
+  type UpdateSnapshot
 } from '../shared/types.js';
 
 export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types.js';
@@ -139,71 +138,6 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   updateUpdateState(snapshot: UpdateSnapshot): void {
     this.latestUpdateSnapshot = snapshot;
     if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
-  }
-
-  async testWeCom(): Promise<WeComTestResult> {
-    if (!this.roomName) {
-      return { ok: false, message: '请先填写直播间名称', sentAt: null };
-    }
-    if (!this.latestSnapshot || !this.uuid || this.secret.length < 32) {
-      return { ok: false, message: '监控中心尚未完成初始化', sentAt: null };
-    }
-
-    const candidates = Array.from(new Set([
-      this.state.activeServerUrl,
-      this.serverUrl,
-      ...this.serverCandidates
-    ].filter((value): value is string => Boolean(value))));
-    let lastError: unknown = null;
-    const { session } = await import('electron');
-    const state = remoteTelemetry(
-      this.latestSnapshot,
-      this.latestUpdateSnapshot,
-      {
-        version: this.appVersion,
-        platform: this.platform,
-        arch: this.architecture,
-        osRelease: this.osRelease,
-        mobileAccessEnabled: false
-      }
-    );
-
-    for (const candidate of candidates) {
-      try {
-        const response = await session.defaultSession.fetch(`${candidate}/api/devices/wecom-test`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uuid: this.uuid,
-            secret: this.secret,
-            monitoringIdentityRevision: 1,
-            state
-          }),
-          signal: AbortSignal.timeout(candidate === LAN_REMOTE_SERVER_URL ? 12_000 : 20_000)
-        });
-        const body = await response.json() as Partial<WeComTestResult> & { error?: string };
-        if (!response.ok) {
-          return {
-            ok: false,
-            message: body.message || body.error || `服务器返回 ${response.status}`,
-            sentAt: null
-          };
-        }
-        return {
-          ok: body.ok === true,
-          message: body.message || '企业微信测试消息已发送',
-          sentAt: typeof body.sentAt === 'number' ? body.sentAt : Date.now()
-        };
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    return {
-      ok: false,
-      message: friendlyError(lastError),
-      sentAt: null
-    };
   }
 
   async stop(): Promise<void> {

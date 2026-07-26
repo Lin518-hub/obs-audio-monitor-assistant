@@ -306,13 +306,22 @@ function monitorDevice(device) {
     device.appVersion
   );
   const updateStatus = cleanText(appState.updateStatus, 32) || 'unknown';
-  const updateAvailableVersion = cleanText(appState.updateAvailableVersion, 32) || null;
-  const updateDownloadedVersion = cleanText(appState.updateDownloadedVersion, 32) || null;
-  const updateAvailable = Boolean(
-    updateAvailableVersion
-    || updateDownloadedVersion
-    || (installedVersion && latestVersion && compareVersions(installedVersion, latestVersion) < 0)
+  const reportedAvailableVersion = appVersion(appState.updateAvailableVersion);
+  const reportedDownloadedVersion = appVersion(appState.updateDownloadedVersion);
+  const isNewerThanInstalled = (candidate) => Boolean(
+    installedVersion
+    && candidate
+    && compareVersions(installedVersion, candidate) < 0
   );
+  const updateAvailableVersion = isNewerThanInstalled(reportedAvailableVersion)
+    ? reportedAvailableVersion
+    : isNewerThanInstalled(latestVersion)
+      ? latestVersion
+      : null;
+  const updateDownloadedVersion = isNewerThanInstalled(reportedDownloadedVersion)
+    ? reportedDownloadedVersion
+    : null;
+  const updateAvailable = Boolean(updateAvailableVersion || updateDownloadedVersion);
   const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
   const audioTone = !online
     ? 'offline'
@@ -699,29 +708,6 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, device: publicDevice(device) });
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/devices/wecom-test') {
-    if (!allowRequest(req, 'wecom-test', 6, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests', message: '测试过于频繁，请稍后再试' });
-    const body = await readJson(req);
-    const uuid = cleanUuid(body.uuid);
-    const secret = String(body.secret || '');
-    const device = data.devices.find((item) => item.uuid === uuid);
-    if (!device || !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed', message: '监控中心设备认证失败' });
-    if (Number(body.monitoringIdentityRevision) !== MONITORING_IDENTITY_REVISION) {
-      return json(res, 426, { error: 'client_upgrade_required', message: '请先升级检测助手' });
-    }
-    const state = normalizeDesktopState(body.state);
-    device.lastState = state;
-    device.appVersion = appVersion(state.app?.version, state.app?.updateCurrentVersion, device.appVersion) || '';
-    device.lastSeenAt = now();
-    try {
-      const result = await weComNotifier.sendStatusTest(device, state);
-      await saveData();
-      return json(res, 200, { ok: true, message: '当前直播间状态已发送到企业微信', sentAt: result.sentAt });
-    } catch (error) {
-      return json(res, 503, { error: 'wecom_test_failed', message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
   if (req.method === 'GET' && url.pathname === '/api/pair/info') {
     return json(res, 410, { error: 'mobile_access_removed' });
   }
@@ -856,6 +842,21 @@ async function handleApi(req, res, url) {
     if (!adminSession(req)) return json(res, 401, { error: 'admin_auth_required' });
     if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
       return json(res, 200, monitorOverview());
+    }
+    const weComTestMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/wecom-test$/);
+    if (req.method === 'POST' && weComTestMatch) {
+      if (!allowRequest(req, 'monitor-wecom-test', 12, 10 * 60_000)) {
+        return json(res, 429, { error: 'too_many_requests', message: '测试过于频繁，请稍后再试' });
+      }
+      const deviceUuid = cleanUuid(weComTestMatch[1]);
+      const device = data.devices.find((item) => item.uuid === deviceUuid);
+      if (!device) return json(res, 404, { error: 'device_not_found', message: '未找到该直播间电脑' });
+      try {
+        const result = await weComNotifier.sendStatusTest(device, normalizeDesktopState(device.lastState));
+        return json(res, 200, { ok: true, message: `${device.roomName || '当前直播间'}状态已发送到企业微信`, sentAt: result.sentAt });
+      } catch (error) {
+        return json(res, 503, { error: 'wecom_test_failed', message: error instanceof Error ? error.message : String(error) });
+      }
     }
     const commandMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/commands$/);
     if (req.method === 'POST' && commandMatch) {

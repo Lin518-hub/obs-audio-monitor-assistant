@@ -253,19 +253,6 @@ test('keeps central monitoring always on and recognizes the reported app version
   assert.equal(registered.response.status, 200);
   assert.equal(registered.body.device.mobileAccessEnabled, false);
   assert.equal(registered.body.device.pairUrl, null);
-  const weComTest = await request('/api/devices/wecom-test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      uuid,
-      secret,
-      monitoringIdentityRevision: 1,
-      state: { app: { version: '3.9.1' }, obs: { connected: false }, audio: {}, atem: {} }
-    })
-  });
-  assert.equal(weComTest.response.status, 503);
-  assert.match(weComTest.body.message, /尚未配置企业微信机器人/);
-
   const wsBase = base.replace('http:', 'ws:');
   const desktop = trackedSocket(`${wsBase}/ws/desktop?uuid=${uuid}&secret=${secret}`);
   await desktop.open();
@@ -273,7 +260,15 @@ test('keeps central monitoring always on and recognizes the reported app version
     type: 'state',
     state: {
       timestamp: Date.now(),
-      app: { updateCurrentVersion: '3.9.1', platform: 'win32', arch: 'x64', paused: false, autoUpdateEnabled: true },
+      app: {
+        updateCurrentVersion: '3.9.1',
+        updateAvailableVersion: '3.9.1',
+        updateDownloadedVersion: 'v3.9.1',
+        platform: 'win32',
+        arch: 'x64',
+        paused: false,
+        autoUpdateEnabled: true
+      },
       audio: { ready: false, levelDb: null, lastMeterReceivedAt: null },
       atem: { connected: false },
       obs: { connected: false },
@@ -293,7 +288,22 @@ test('keeps central monitoring always on and recognizes the reported app version
   assert.ok(device);
   assert.equal(device.online, true);
   assert.equal(device.app.version, '3.9.1');
+  assert.equal(device.app.updateAvailable, false);
+  assert.equal(device.app.updateAvailableVersion, null);
+  assert.equal(device.app.updateDownloadedVersion, null);
   assert.equal(device.app.mobileAccessEnabled, false);
+
+  const weComTest = await request(`/api/monitor/devices/${uuid}/wecom-test`, {
+    method: 'POST',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(weComTest.response.status, 503);
+  assert.match(weComTest.body.message, /尚未配置企业微信机器人/);
+
+  const monitorPage = await fetch(`${base}/monitor`);
+  const monitorHtml = await monitorPage.text();
+  assert.match(monitorHtml, /monitor-room-columns/);
+  assert.match(monitorHtml, /直播间状态列表/);
   desktop.socket.close();
 });
 

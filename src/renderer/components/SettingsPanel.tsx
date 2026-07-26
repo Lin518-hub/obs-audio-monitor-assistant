@@ -412,14 +412,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 <SettingsDisclosure
                   {...disclosureState('devices-remote')}
                   icon={Monitor}
-                  title="监控中心"
-                  description="直播间标识、连接状态与企业微信测试"
-                  summary={snapshot.remoteAccessConnected
-                    ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · v${appVersion}`
-                    : '自动连接中'}
-                  tone={snapshot.remoteAccessConnected ? 'success' : 'warning'}
+                  title="直播间名称"
+                  description="标记这台检测电脑所属的直播间"
+                  summary={draft.livestreamRoomName.trim() || '尚未命名'}
+                  tone={draft.livestreamRoomName.trim() ? 'success' : 'warning'}
                 >
-                  <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+                  <RemoteAccessSection draft={draft} onChange={onChangeDraft} />
                 </SettingsDisclosure>
               </>
             )}

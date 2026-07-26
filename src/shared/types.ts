@@ -499,12 +499,6 @@ export interface RemoteAdminCommandResult {
   message: string;
 }
 
-export interface WeComTestResult {
-  ok: boolean;
-  message: string;
-  sentAt: number | null;
-}
-
 export const DEFAULT_CONFIG: AppConfig = {
   obsHost: '127.0.0.1',
   obsPort: 4455,

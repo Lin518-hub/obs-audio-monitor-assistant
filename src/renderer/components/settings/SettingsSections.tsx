@@ -15,7 +15,6 @@ import {
   Power,
   RefreshCw,
   Route,
-  Send,
   TestTube2,
   Timer,
   Trash2,
@@ -34,7 +33,6 @@ import {
   type TestConnectionResult,
   type UpdateSnapshot
 } from '../../../shared/types';
-import { APP_VERSION } from '../../utils/appVersion';
 import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
@@ -885,68 +883,22 @@ export const BackgroundSection: React.FC<{
 
 export const RemoteAccessSection: React.FC<{
   draft: AppConfig;
-  snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, snapshot, onChange }) => {
-  const [testing, setTesting] = React.useState(false);
-  const [testResult, setTestResult] = React.useState<{ ok: boolean; message: string } | null>(null);
-
-  const status = snapshot.remoteAccessConnected
-    ? { label: '监控中心已连接，当前状态正在自动同步', tone: 'ok' }
-    : snapshot.remoteAccessConnectionState === 'connecting'
-      ? { label: '正在自动选择局域网或公网线路', tone: 'pending' }
-      : snapshot.remoteAccessErrorMessage
-        ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
-        : { label: '集中监控服务未连接', tone: 'idle' };
-
-  const testWeCom = async () => {
-    if (testing) return;
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await window.obsGuard.testWeCom();
-      setTestResult(result);
-    } catch (error) {
-      setTestResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <Section id="settings-remote" icon={Monitor} title="监控中心" description="开机自动连接并上报直播间状态">
-      <div className="settings-field">
-        <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
-        <input
-          id="livestream-room-name"
-          className="input"
-          value={draft.livestreamRoomName}
-          maxLength={60}
-          onChange={(event) => onChange('livestreamRoomName', event.target.value)}
-          placeholder="例如：品牌 A 一号直播间"
-          aria-required="true"
-        />
-        <span className="settings-field-help">每个直播间只使用一台检测电脑。名称会作为监控中心与企业微信通知中的唯一标识。</span>
-      </div>
-      <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
-      <div className="remote-metrics-grid">
-        <div><span>线路类型</span><strong>{snapshot.remoteAccessRouteType === 'lan' ? '局域网' : snapshot.remoteAccessRouteType === 'public' ? '公网 HTTPS' : snapshot.remoteAccessRouteType === 'custom' ? '自定义' : '--'}</strong></div>
-        <div><span>服务延迟</span><strong>{snapshot.remoteAccessLatencyMs === null ? '--' : `${snapshot.remoteAccessLatencyMs} ms`}</strong></div>
-        <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
-        <div><span>软件版本</span><strong>v{APP_VERSION}</strong></div>
-      </div>
-      <div className="settings-inline-row monitoring-test-row">
-        <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessConnected || testing} onClick={() => void testWeCom()}>
-          <Send size={16} />
-          {testing ? '正在发送…' : '发送企业微信测试'}
-        </button>
-        <span>发送本机此刻的 OBS、音频、ATEM 和版本状态。</span>
-      </div>
-      {testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
-      <div className="settings-hint">监控连接会随软件自动启动，无需手机扫码或手动开启。断线后会在后台自动切换线路并重试。</div>
-    </Section>
-  );
-};
+}> = ({ draft, onChange }) => (
+  <div id="settings-remote" className="room-identity-setting">
+    <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
+    <input
+      id="livestream-room-name"
+      className="input"
+      value={draft.livestreamRoomName}
+      maxLength={60}
+      onChange={(event) => onChange('livestreamRoomName', event.target.value)}
+      placeholder="例如：品牌 A 一号直播间"
+      aria-required="true"
+    />
+    <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
+  </div>
+);
 
 // ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#eaf6ee">
   <title>直播间监控中心</title>
-  <link rel="stylesheet" href="/assets/app.css?v=3.9.1">
+  <link rel="stylesheet" href="/assets/app.css?v=3.9.2">
 </head>
 <body class="monitor-page">
   <section id="monitor-login" class="auth-shell">
@@ -56,7 +56,16 @@
           <button type="button" data-filter="update">待更新</button>
         </div>
       </section>
-      <section id="monitor-rooms" class="monitor-rooms" aria-live="polite"></section>
+      <section class="monitor-room-table" aria-label="直播间状态列表">
+        <div class="monitor-room-columns" aria-hidden="true">
+          <span>直播间</span>
+          <span>OBS</span>
+          <span>音频</span>
+          <span>当前机位</span>
+          <span>软件版本</span>
+        </div>
+        <div id="monitor-rooms" class="monitor-rooms" aria-live="polite"></div>
+      </section>
       <section class="monitor-activity">
         <header><div><span class="eyebrow">操作审计</span><h2>最近后台操作</h2></div><span>仅保留最近 30 天</span></header>
         <div id="monitor-command-log" class="monitor-command-log"></div>
@@ -83,6 +92,6 @@
     </article>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/assets/monitor.js?v=3.9.1" defer></script>
+  <script src="/assets/monitor.js?v=3.9.2" defer></script>
 </body>
 </html>

@@ -135,7 +135,9 @@ test('sends an immediate current-status test message', async () => {
 
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
-  assert.match(calls[0].markdown.content, /当前状态发送成功/);
-  assert.match(calls[0].markdown.content, /正在讲话 · -23.4 dB/);
-  assert.match(calls[0].markdown.content, /v3.9.1/);
+  assert.equal(calls[0].msgtype, 'text');
+  assert.deepEqual(calls[0].text.mentioned_list, ['@all']);
+  assert.match(calls[0].text.content, /当前状态发送成功/);
+  assert.match(calls[0].text.content, /正在讲话 · -23.4 dB/);
+  assert.match(calls[0].text.content, /v3.9.1/);
 });
