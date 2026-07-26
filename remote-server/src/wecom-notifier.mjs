@@ -110,6 +110,20 @@ class WeComNotifier {
     });
   }
 
+  async sendStatusTest(device, state) {
+    if (!this.enabled) {
+      throw new Error(isValidWeComWebhook(this.webhookUrl)
+        ? '企业微信通知当前已停用'
+        : '服务器尚未配置企业微信机器人');
+    }
+    const payload = currentStatusPayload(device, state, this.clock());
+    const operation = this.sendQueue.catch(() => undefined).then(() => this.sendWithRetry(payload));
+    this.sendQueue = operation;
+    const sent = await operation;
+    if (!sent) throw new Error(this.lastError || '企业微信测试消息发送失败');
+    return { ok: true, sentAt: this.lastSuccessAt };
+  }
+
   enqueue(event) {
     this.queue.push(event);
     if (this.flushTimer) return;
@@ -155,13 +169,14 @@ class WeComNotifier {
         }
         this.lastSuccessAt = this.clock();
         this.lastError = null;
-        return;
+        return true;
       } catch (error) {
         lastError = error;
       }
     }
     this.lastError = lastError instanceof Error ? lastError.message : String(lastError || 'send_failed');
     this.logger.warn?.(`[wecom] notification failed: ${this.lastError}`);
+    return false;
   }
 }
 
@@ -231,6 +246,28 @@ function cameraRecoveryEvent(identity, state, startedAt, occurredAt) {
     occurredAt,
     detail: `${inputName}开始播出，上一次超时状态持续约 ${durationText(occurredAt - startedAt)}`
   };
+}
+
+function currentStatusPayload(device, state, occurredAt) {
+  const normalizedState = state && typeof state === 'object' ? state : {};
+  const obs = normalizedState.obs && typeof normalizedState.obs === 'object' ? normalizedState.obs : {};
+  const audio = normalizedState.audio && typeof normalizedState.audio === 'object' ? normalizedState.audio : {};
+  const atem = normalizedState.atem && typeof normalizedState.atem === 'object' ? normalizedState.atem : {};
+  const app = normalizedState.app && typeof normalizedState.app === 'object' ? normalizedState.app : {};
+  const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
+  const level = Number(audio.levelDb);
+  const programInput = Number(atem.programInput);
+  const programName = cleanText(atem.inputLabels?.[programInput], 100)
+    || (Number.isFinite(programInput) && programInput > 0 ? `机位 ${programInput}` : '未读取机位');
+  const lines = [
+    '<font color="info">OBS 直播监控测试</font>',
+    `> **${escapeMarkdown(device?.roomName || '未命名直播间')}** · 当前状态发送成功`,
+    `> 直播：${live ? '进行中' : '未开播'} · OBS：${obs.connected === true ? '已连接' : '未连接'}`,
+    `> 音频：${escapeMarkdown(audio.display || '等待音频数据')}${Number.isFinite(level) ? ` · ${level.toFixed(1)} dB` : ''}`,
+    `> 机位：${atem.connected === true ? escapeMarkdown(programName) : 'ATEM 未连接'}`,
+    `> 软件：${cleanText(app.version, 32) ? `v${escapeMarkdown(app.version)}` : '版本未知'} · ${formatTime(occurredAt)}`
+  ];
+  return { msgtype: 'markdown', markdown: { content: lines.join('\n') } };
 }
 
 function markdownPayloads(events) {

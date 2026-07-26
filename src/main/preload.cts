@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
+import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot, WeComTestResult } from '../shared/types.js';
 
 contextBridge.exposeInMainWorld('obsGuard', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
+  testWeCom: () => ipcRenderer.invoke('monitor:test-wecom') as Promise<WeComTestResult>,
   saveConfig: (patch: Partial<AppConfig>) => ipcRenderer.invoke('config:save', patch) as Promise<AppSnapshot>,
   resetConfig: () => ipcRenderer.invoke('config:reset') as Promise<AppSnapshot>,
   refreshInputs: () => ipcRenderer.invoke('inputs:refresh'),

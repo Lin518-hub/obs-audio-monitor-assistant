@@ -108,6 +108,26 @@ describe('ConfigStore', () => {
     expect(migrated.autoUpdateEnabled).toBe(true);
   });
 
+  it('resets the legacy room identity once while keeping central monitoring always on', async () => {
+    mkdirSync(electronMock.userData, { recursive: true });
+    const { monitoringIdentityRevision: _removed, ...legacyConfig } = DEFAULT_CONFIG;
+    writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify({
+      ...legacyConfig,
+      livestreamRoomName: '旧直播间名称',
+      centralMonitoringEnabled: false,
+      remoteAccessEnabled: true,
+      remoteServerUrl: 'https://legacy.example.com'
+    }));
+
+    const migrated = await new ConfigStore().load();
+
+    expect(migrated.livestreamRoomName).toBe('');
+    expect(migrated.centralMonitoringEnabled).toBe(true);
+    expect(migrated.remoteAccessEnabled).toBe(false);
+    expect(migrated.remoteServerUrl).toBe(DEFAULT_CONFIG.remoteServerUrl);
+    expect(migrated.monitoringIdentityRevision).toBe(DEFAULT_CONFIG.monitoringIdentityRevision);
+  });
+
   it('normalizes and persists the preflight checklist', async () => {
     const store = new ConfigStore();
     const saved = await store.save({

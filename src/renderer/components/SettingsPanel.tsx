@@ -12,7 +12,6 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Smartphone,
   TestTube2,
   Video,
   Wrench,
@@ -410,18 +409,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 >
                   <ATEMSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
-                {draft.developerModeEnabled && (
-                  <SettingsDisclosure
-                    {...disclosureState('devices-remote')}
-                    icon={Smartphone}
-                    title="手机远程"
-                    description="扫码申请、线路与访问状态"
-                    summary={draft.remoteAccessEnabled ? (snapshot.remoteAccessConnected ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · ${snapshot.remoteAccessOnlineMobileClients} 台在线` : '已启用 · 等待服务') : '未启用'}
-                    tone={snapshot.remoteAccessConnected ? 'success' : draft.remoteAccessEnabled ? 'warning' : 'default'}
-                  >
-                    <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
-                  </SettingsDisclosure>
-                )}
+                <SettingsDisclosure
+                  {...disclosureState('devices-remote')}
+                  icon={Monitor}
+                  title="监控中心"
+                  description="直播间标识、连接状态与企业微信测试"
+                  summary={snapshot.remoteAccessConnected
+                    ? `${snapshot.remoteAccessRouteType === 'lan' ? '局域网' : '公网'} · v${appVersion}`
+                    : '自动连接中'}
+                  tone={snapshot.remoteAccessConnected ? 'success' : 'warning'}
+                >
+                  <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+                </SettingsDisclosure>
               </>
             )}
 
@@ -529,7 +528,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                     <span className="developer-mode-status-icon"><ShieldCheck size={18} /></span>
                     <span className="developer-mode-status-copy">
                       <strong>开发者模式已启用</strong>
-                      <em>手机远程功能已显示，原有远程配置保持不变。</em>
+                      <em>实验功能与高级调试工具已显示。</em>
                     </span>
                     <button type="button" className="btn-secondary" onClick={() => onChangeDraft('developerModeEnabled', false)}>关闭开发者模式</button>
                   </div>
@@ -565,7 +564,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             <span className="developer-dialog-icon"><ShieldCheck size={22} /></span>
             <div className="developer-dialog-heading">
               <strong>启用开发者模式</strong>
-              <span>输入开发者密码后，将显示手机远程功能。</span>
+              <span>输入开发者密码后，将显示实验功能与高级调试工具。</span>
             </div>
             <label className="developer-dialog-field">
               <span>开发者密码</span>

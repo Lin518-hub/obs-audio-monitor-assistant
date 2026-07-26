@@ -13,7 +13,8 @@ import {
   type RemoteAccessSnapshot,
   type RemoteAdminCommand,
   type RemoteAdminCommandResult,
-  type UpdateSnapshot
+  type UpdateSnapshot,
+  type WeComTestResult
 } from '../shared/types.js';
 
 export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types.js';
@@ -81,15 +82,14 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   async configure(config: AppConfig): Promise<void> {
     const normalizedUrl = normalizeServerUrl(config.remoteServerUrl);
     const roomName = config.livestreamRoomName.trim();
-    const enabled = config.centralMonitoringEnabled || config.remoteAccessEnabled;
+    const enabled = true;
     const changed = this.enabled !== enabled
-      || this.mobileAccessEnabled !== config.remoteAccessEnabled
       || this.configuredServerUrl !== normalizedUrl
       || this.roomName !== roomName
       || this.uuid !== config.remoteDeviceUuid
       || this.secret !== config.remoteDeviceSecret;
     this.enabled = enabled;
-    this.mobileAccessEnabled = config.remoteAccessEnabled;
+    this.mobileAccessEnabled = false;
     this.configuredServerUrl = normalizedUrl;
     this.serverCandidates = remoteServerCandidates(normalizedUrl);
     this.serverUrl = this.serverCandidates[0] ?? '';
@@ -100,8 +100,17 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.generation += 1;
     this.clearTimers();
     this.closeSocket();
-    if (!this.enabled) {
-      this.setState({ connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, routeType: null, latencyMs: null, onlineMobileClients: 0 });
+    if (!this.roomName) {
+      this.setState({
+        connectionState: 'disabled',
+        connected: false,
+        activeServerUrl: null,
+        pairUrl: null,
+        errorMessage: '等待填写直播间名称',
+        routeType: null,
+        latencyMs: null,
+        onlineMobileClients: 0
+      });
       return;
     }
     await this.connect(this.generation);
@@ -132,6 +141,71 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
   }
 
+  async testWeCom(): Promise<WeComTestResult> {
+    if (!this.roomName) {
+      return { ok: false, message: '请先填写直播间名称', sentAt: null };
+    }
+    if (!this.latestSnapshot || !this.uuid || this.secret.length < 32) {
+      return { ok: false, message: '监控中心尚未完成初始化', sentAt: null };
+    }
+
+    const candidates = Array.from(new Set([
+      this.state.activeServerUrl,
+      this.serverUrl,
+      ...this.serverCandidates
+    ].filter((value): value is string => Boolean(value))));
+    let lastError: unknown = null;
+    const { session } = await import('electron');
+    const state = remoteTelemetry(
+      this.latestSnapshot,
+      this.latestUpdateSnapshot,
+      {
+        version: this.appVersion,
+        platform: this.platform,
+        arch: this.architecture,
+        osRelease: this.osRelease,
+        mobileAccessEnabled: false
+      }
+    );
+
+    for (const candidate of candidates) {
+      try {
+        const response = await session.defaultSession.fetch(`${candidate}/api/devices/wecom-test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uuid: this.uuid,
+            secret: this.secret,
+            monitoringIdentityRevision: 1,
+            state
+          }),
+          signal: AbortSignal.timeout(candidate === LAN_REMOTE_SERVER_URL ? 12_000 : 20_000)
+        });
+        const body = await response.json() as Partial<WeComTestResult> & { error?: string };
+        if (!response.ok) {
+          return {
+            ok: false,
+            message: body.message || body.error || `服务器返回 ${response.status}`,
+            sentAt: null
+          };
+        }
+        return {
+          ok: body.ok === true,
+          message: body.message || '企业微信测试消息已发送',
+          sentAt: typeof body.sentAt === 'number' ? body.sentAt : Date.now()
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    return {
+      ok: false,
+      message: friendlyError(lastError),
+      sentAt: null
+    };
+  }
+
   async stop(): Promise<void> {
     this.enabled = false;
     this.generation += 1;
@@ -146,7 +220,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       return;
     }
     if (this.serverCandidates.length === 0 || !this.uuid || this.secret.length < 32) {
-      this.setState({ connectionState: 'error', connected: false, errorMessage: '远程访问配置无效' });
+      this.setState({ connectionState: 'error', connected: false, errorMessage: '监控中心配置无效' });
       return;
     }
     this.setState({
@@ -173,7 +247,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       controllers.forEach((controller) => controller.abort());
       if (!this.enabled || generation !== this.generation) return;
       this.serverUrl = registered.serverUrl;
-      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: publicPairUrl(registered.pairUrl), routeType: remoteRouteType(registered.serverUrl) });
+      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: null, routeType: remoteRouteType(registered.serverUrl) });
       await this.openSocket(generation);
       return;
     } catch (error) {
@@ -186,7 +260,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.scheduleReconnect(generation);
   }
 
-  private async registerWithServer(serverUrl: string, delayMs: number, signal: AbortSignal): Promise<{ serverUrl: string; pairUrl: string }> {
+  private async registerWithServer(serverUrl: string, delayMs: number, signal: AbortSignal): Promise<{ serverUrl: string }> {
     if (delayMs > 0) await abortableDelay(delayMs, signal);
     const timeout = serverUrl === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS;
     const { session } = await import('electron');
@@ -204,7 +278,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         secret: this.secret,
         label: hostname(),
         roomName: this.roomName,
-        mobileAccessEnabled: this.mobileAccessEnabled,
+        mobileAccessEnabled: false,
+        monitoringIdentityRevision: 1,
         appVersion: this.appVersion,
         platform: this.platform,
         arch: this.architecture,
@@ -212,9 +287,9 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)])
     });
-    const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
-    if (!response.ok || !body.device?.pairUrl) throw new Error(body.error || `服务器返回 ${response.status}`);
-    return { serverUrl, pairUrl: body.device.pairUrl };
+    const body = await response.json() as { device?: { uuid?: string }; error?: string };
+    if (!response.ok || !body.device?.uuid) throw new Error(body.error || `服务器返回 ${response.status}`);
+    return { serverUrl };
   }
 
   private async openSocket(generation: number): Promise<void> {
@@ -243,8 +318,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       if (socket !== this.socket || generation !== this.generation) return;
       try {
         const message = JSON.parse(raw.toString()) as { type?: string; pairUrl?: string; id?: string; command?: string; payload?: Record<string, unknown>; sentAt?: number; receivedAt?: number; onlineMobileClients?: number };
-        if (message.type === 'registered' && message.pairUrl) {
-          this.setState({ pairUrl: publicPairUrl(message.pairUrl), onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0) });
+        if (message.type === 'registered') {
+          this.setState({ pairUrl: null, onlineMobileClients: 0 });
         } else if (message.type === 'presence') {
           this.setState({ onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0) });
         } else if (message.type === 'latency-pong' && Number.isFinite(message.sentAt)) {
@@ -255,7 +330,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         } else if (message.type === 'admin-command' && message.id && isRemoteAdminCommand(message.command)) {
           void this.executeAdminCommand(message.id, message.command);
         } else if (message.type === 'command' && message.id) {
-          this.send({ type: 'command-result', id: message.id, ok: false, message: '手机远程当前仅支持监看' });
+          this.send({ type: 'command-result', id: message.id, ok: false, message: '监控中心不支持该操作' });
         }
       } catch {
         // Ignore malformed server messages.
@@ -267,7 +342,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       this.socketConnectTimer = null;
       this.socket = null;
       this.stopLatencyMonitor();
-      this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, routeType: null, errorMessage: '远程服务连接已断开，正在重试', latencyMs: null, onlineMobileClients: 0 });
+      this.setState({ connectionState: 'error', connected: false, activeServerUrl: null, routeType: null, errorMessage: '监控中心连接已断开，正在重试', latencyMs: null, onlineMobileClients: 0 });
       this.scheduleReconnect(generation);
     });
     socket.on('error', () => {

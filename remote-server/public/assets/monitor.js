@@ -93,7 +93,7 @@ function render() {
   const { summary, rooms, generatedAt, notifications, updates, commands } = overview;
   $('monitor-updated-at').textContent = `更新于 ${relativeTime(generatedAt)}`;
   $('monitor-service-chip').className = 'state-pill';
-  $('monitor-service-chip').textContent = summary.onlineDevices > 0 ? `${summary.onlineDevices} 台电脑在线` : '暂无电脑在线';
+  $('monitor-service-chip').textContent = summary.onlineRooms > 0 ? `${summary.onlineRooms} 个直播间在线` : '暂无直播间在线';
   const notifyFailed = Boolean(notifications?.enabled && notifications?.lastError);
   $('monitor-notify-chip').className = `state-pill ${notifyFailed ? 'danger' : notifications?.enabled ? '' : 'offline'}`;
   $('monitor-notify-chip').textContent = notifyFailed
@@ -116,7 +116,6 @@ function render() {
 function renderSummary(summary, updates) {
   const items = [
     ['在线直播间', `${summary.onlineRooms} / ${summary.totalRooms}`, summary.onlineRooms > 0 ? 'safe' : 'idle'],
-    ['电脑在线', `${summary.onlineDevices} / ${summary.totalDevices}`, summary.onlineDevices > 0 ? 'safe' : 'idle'],
     ['直播中', String(summary.activeLiveDevices), summary.activeLiveDevices > 0 ? 'safe' : 'idle'],
     ['当前异常', String(summary.alertCount), summary.alertCount > 0 ? 'danger' : 'safe'],
     ['当前预警', String(summary.warningCount), summary.warningCount > 0 ? 'warning' : 'safe'],
@@ -183,28 +182,27 @@ function deviceMatches(device) {
 function roomView(room) {
   const section = document.createElement('section');
   section.className = `monitor-room tone-${room.tone}`;
+  const device = room.devices[0];
 
   const header = document.createElement('header');
   const titleWrap = document.createElement('div');
   const title = document.createElement('h2');
   title.textContent = room.name;
-  const visibleOnline = room.devices.filter((device) => device.online).length;
-  const visibleLive = room.devices.filter((device) => device.obs.liveActive).length;
   const subtitle = document.createElement('p');
-  subtitle.textContent = `${visibleOnline}/${room.devices.length} 台电脑在线 · ${visibleLive} 台直播中`;
+  subtitle.textContent = device.online
+    ? `${device.label} · ${routeLabel(device.service.routeType)} · ${relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)}`
+    : `${device.label} · 离线 ${relativeTime(device.lastSeenAt)}`;
   titleWrap.append(title, subtitle);
   const chips = document.createElement('div');
   chips.className = 'monitor-room-chips';
-  const alertCount = room.devices.filter((device) => device.overallTone === 'danger').length;
-  const warningCount = room.devices.filter((device) => device.overallTone === 'warning').length;
-  if (alertCount > 0) chips.append(chip(`${alertCount} 台报警`, 'danger'));
-  if (warningCount > 0) chips.append(chip(`${warningCount} 台预警`, 'warning'));
-  if (alertCount === 0 && warningCount === 0) chips.append(chip(visibleOnline > 0 ? '状态正常' : '全部离线', visibleOnline > 0 ? 'safe' : 'offline'));
+  if (device.overallTone === 'danger') chips.append(chip('需要处理', 'danger'));
+  else if (device.overallTone === 'warning') chips.append(chip('请留意', 'warning'));
+  else chips.append(chip(device.online ? (device.obs.liveActive ? '直播中' : '状态正常') : '电脑离线', device.online ? 'safe' : 'offline'));
   header.append(titleWrap, chips);
 
   const columnHeader = document.createElement('div');
   columnHeader.className = 'monitor-device-columns';
-  for (const value of ['电脑', 'OBS', '音频', '当前机位', '版本']) {
+  for (const value of ['OBS', '音频', '当前机位', '软件版本']) {
     const node = document.createElement('span');
     node.textContent = value;
     columnHeader.append(node);
@@ -212,7 +210,7 @@ function roomView(room) {
 
   const devices = document.createElement('div');
   devices.className = 'monitor-device-list';
-  for (const device of room.devices) devices.append(deviceView(device));
+  devices.append(deviceView(device));
   section.append(header, columnHeader, devices);
   return section;
 }
@@ -222,16 +220,6 @@ function deviceView(device) {
   row.type = 'button';
   row.className = `monitor-device tone-${device.overallTone}`;
   row.addEventListener('click', () => openDrawer(device.uuid));
-
-  const identity = document.createElement('div');
-  identity.className = 'monitor-device-identity';
-  const name = document.createElement('strong');
-  name.textContent = device.label;
-  const sync = document.createElement('span');
-  sync.textContent = device.online
-    ? `${routeLabel(device.service.routeType)} · ${device.service.latencyMs == null ? '延迟 --' : `${Math.round(device.service.latencyMs)} ms`} · ${relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)}`
-    : `离线 · ${relativeTime(device.lastSeenAt)}`;
-  identity.append(statusDot(device.online ? device.overallTone : 'offline'), name, sync);
 
   const obs = metricBlock(
     obsDisplay(device.obs),
@@ -260,7 +248,7 @@ function deviceView(device) {
     device.app.updateAvailable ? 'warning' : device.online ? 'safe' : 'idle'
   );
 
-  row.append(identity, obs, audio, camera, version);
+  row.append(obs, audio, camera, version);
   return row;
 }
 

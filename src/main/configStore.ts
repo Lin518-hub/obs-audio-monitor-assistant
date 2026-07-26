@@ -50,6 +50,18 @@ export class ConfigStore {
         config.preflightConfigRevision = DEFAULT_CONFIG.preflightConfigRevision;
       }
 
+      // v3.9.1 replaces mobile pairing with one always-on monitoring identity
+      // per livestream room. Reset only the legacy room assignment so the
+      // operator confirms the correct room after updating; all other settings
+      // and the stable computer UUID remain intact.
+      if (numberValue(parsed.monitoringIdentityRevision, 0) < DEFAULT_CONFIG.monitoringIdentityRevision) {
+        config.centralMonitoringEnabled = true;
+        config.remoteAccessEnabled = false;
+        config.remoteServerUrl = DEFAULT_CONFIG.remoteServerUrl;
+        config.livestreamRoomName = '';
+        config.monitoringIdentityRevision = DEFAULT_CONFIG.monitoringIdentityRevision;
+      }
+
       this.currentConfig = this.normalize(config);
       return this.currentConfig;
     } catch {
@@ -150,10 +162,11 @@ export class ConfigStore {
       floatingWindowLayoutVersion: clamp(Math.round(numberValue(merged.floatingWindowLayoutVersion, DEFAULT_CONFIG.floatingWindowLayoutVersion)), 1, DEFAULT_CONFIG.floatingWindowLayoutVersion),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       floatingWindowModules,
-      centralMonitoringEnabled: booleanValue(merged.centralMonitoringEnabled, DEFAULT_CONFIG.centralMonitoringEnabled),
-      remoteAccessEnabled: booleanValue(merged.remoteAccessEnabled, DEFAULT_CONFIG.remoteAccessEnabled),
+      centralMonitoringEnabled: true,
+      remoteAccessEnabled: false,
       remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
       livestreamRoomName: cleanRoomName(merged.livestreamRoomName),
+      monitoringIdentityRevision: DEFAULT_CONFIG.monitoringIdentityRevision,
       remoteDeviceUuid,
       remoteDeviceSecret,
       developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),

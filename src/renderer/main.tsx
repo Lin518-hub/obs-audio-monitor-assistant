@@ -130,7 +130,7 @@ function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unkno
         <div className="room-name-copy">
           <span>直播工作站识别</span>
           <h1>这台电脑属于哪个直播间？</h1>
-          <p>名称用于汇总音频、机位和报警状态。同一直播间的多台电脑请填写完全相同的名称。</p>
+          <p>每个直播间对应一台检测电脑。填写后，软件会自动连接监控中心并汇总音频、机位、报警和版本状态。</p>
         </div>
         <label className="room-name-field">
           <span>直播间名称</span>
@@ -146,7 +146,7 @@ function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unkno
         <button type="submit" className="btn-primary" disabled={!normalized || saving}>
           {saving ? '正在保存…' : '确认并继续'} <ArrowRight size={17} />
         </button>
-        <small>以后可以在“设置 → 连接与设备 → 手机远程”中修改。</small>
+        <small>以后可以在“设置 → 连接与设备 → 监控中心”中修改。</small>
       </form>
     </main>
   );

@@ -13,9 +13,9 @@ import {
   Monitor,
   Play,
   Power,
-  QrCode,
   RefreshCw,
   Route,
+  Send,
   TestTube2,
   Timer,
   Trash2,
@@ -23,11 +23,8 @@ import {
   Volume2,
   Wifi
 } from 'lucide-react';
-import QRCode from 'qrcode';
 import { defaultATEMInputColor } from '../../../shared/atemPalette';
 import {
-  LAN_REMOTE_SERVER_URL,
-  PUBLIC_REMOTE_SERVER_URL,
   type AlertSoundPreset,
   type AppConfig,
   type AppSnapshot,
@@ -37,6 +34,7 @@ import {
   type TestConnectionResult,
   type UpdateSnapshot
 } from '../../../shared/types';
+import { APP_VERSION } from '../../utils/appVersion';
 import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
@@ -890,48 +888,33 @@ export const RemoteAccessSection: React.FC<{
   snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, snapshot, onChange }) => {
-  const [qrDataUrl, setQrDataUrl] = React.useState('');
-  const [copyLabel, setCopyLabel] = React.useState('复制扫码链接');
-  const normalizedServerUrl = draft.remoteServerUrl.trim().replace(/\/$/, '');
-  const usingBuiltInService = normalizedServerUrl === LAN_REMOTE_SERVER_URL || normalizedServerUrl === PUBLIC_REMOTE_SERVER_URL;
-  const activeRoute = snapshot.remoteAccessActiveServerUrl === LAN_REMOTE_SERVER_URL
-    ? '局域网线路'
-    : snapshot.remoteAccessActiveServerUrl === PUBLIC_REMOTE_SERVER_URL
-      ? '公网 HTTPS'
-      : snapshot.remoteAccessActiveServerUrl
-        ? '自定义线路'
-        : '';
-  const pairFallbackBase = usingBuiltInService ? PUBLIC_REMOTE_SERVER_URL : normalizedServerUrl;
-
-  React.useEffect(() => {
-    let active = true;
-    if (!snapshot.remoteAccessPairUrl) {
-      setQrDataUrl('');
-      return () => { active = false; };
-    }
-    void QRCode.toDataURL(snapshot.remoteAccessPairUrl, {
-      width: 320, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#0F172A', light: '#FFFFFF' }
-    }).then((url) => { if (active) setQrDataUrl(url); });
-    return () => { active = false; };
-  }, [snapshot.remoteAccessPairUrl]);
+  const [testing, setTesting] = React.useState(false);
+  const [testResult, setTestResult] = React.useState<{ ok: boolean; message: string } | null>(null);
 
   const status = snapshot.remoteAccessConnected
-    ? { label: `集中监控已连接${activeRoute ? ` · ${activeRoute}` : ''}`, tone: 'ok' }
+    ? { label: '监控中心已连接，当前状态正在自动同步', tone: 'ok' }
     : snapshot.remoteAccessConnectionState === 'connecting'
-      ? { label: usingBuiltInService ? '正在自动检测局域网与公网线路' : '正在连接自定义远程服务', tone: 'pending' }
+      ? { label: '正在自动选择局域网或公网线路', tone: 'pending' }
       : snapshot.remoteAccessErrorMessage
         ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
         : { label: '集中监控服务未连接', tone: 'idle' };
 
-  const copyPairUrl = async () => {
-    if (!snapshot.remoteAccessPairUrl) return;
-    await navigator.clipboard.writeText(snapshot.remoteAccessPairUrl);
-    setCopyLabel('已复制');
-    window.setTimeout(() => setCopyLabel('复制扫码链接'), 1500);
+  const testWeCom = async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await window.obsGuard.testWeCom();
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
-    <Section id="settings-remote" icon={QrCode} title="手机远程访问" description="扫码申请、移动监看和访问审批">
+    <Section id="settings-remote" icon={Monitor} title="监控中心" description="开机自动连接并上报直播间状态">
       <div className="settings-field">
         <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
         <input
@@ -943,55 +926,24 @@ export const RemoteAccessSection: React.FC<{
           placeholder="例如：品牌 A 一号直播间"
           aria-required="true"
         />
-        <span className="settings-field-help">用于服务器聚合、移动监看和外部报警通知；同一直播间的电脑请填写相同名称。</span>
+        <span className="settings-field-help">每个直播间只使用一台检测电脑。名称会作为监控中心与企业微信通知中的唯一标识。</span>
       </div>
-      <ToggleRow
-        id="remote-access-enabled"
-        title="启用手机扫码访问"
-        description="只控制手机申请与查看权限；关闭后电脑仍以低开销方式向内部监控中心上报状态"
-        checked={draft.remoteAccessEnabled}
-        onChange={(value) => onChange('remoteAccessEnabled', value)}
-      />
-      <div className={`remote-route-card ${usingBuiltInService ? 'auto' : 'custom'}`}>
-        <Route size={18} />
-        <div>
-          <strong>{usingBuiltInService ? '自动选择连接线路' : '使用自定义远程服务'}</strong>
-          <span>{usingBuiltInService ? '局域网与公网错峰连接，局域网可用时优先使用，否则自动转到公网 HTTPS。' : normalizedServerUrl}</span>
-        </div>
-        {usingBuiltInService && <b>自动</b>}
-      </div>
-      <details className="remote-custom-server" open={!usingBuiltInService}>
-        <summary>自定义服务器地址</summary>
-        <div className="settings-field">
-          <label className="settings-field-label" htmlFor="remote-server-url">服务器 URL</label>
-          <input id="remote-server-url" className="input" value={draft.remoteServerUrl} onChange={(event) => onChange('remoteServerUrl', event.target.value)} placeholder="https://example.com:8088" />
-          {!usingBuiltInService && <button type="button" className="btn-secondary" onClick={() => onChange('remoteServerUrl', PUBLIC_REMOTE_SERVER_URL)}>恢复自动连接</button>}
-        </div>
-      </details>
       <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
       <div className="remote-metrics-grid">
         <div><span>线路类型</span><strong>{snapshot.remoteAccessRouteType === 'lan' ? '局域网' : snapshot.remoteAccessRouteType === 'public' ? '公网 HTTPS' : snapshot.remoteAccessRouteType === 'custom' ? '自定义' : '--'}</strong></div>
         <div><span>服务延迟</span><strong>{snapshot.remoteAccessLatencyMs === null ? '--' : `${snapshot.remoteAccessLatencyMs} ms`}</strong></div>
-        <div><span>在线手机</span><strong>{snapshot.remoteAccessOnlineMobileClients} 台</strong></div>
         <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
+        <div><span>软件版本</span><strong>v{APP_VERSION}</strong></div>
       </div>
-      <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
-      {draft.remoteAccessEnabled ? (
-        <div className="remote-access-grid">
-          <div className="remote-qr-card">
-            {qrDataUrl ? <img src={qrDataUrl} alt="手机远程访问二维码" /> : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
-          </div>
-          <div className="remote-access-copy">
-            <strong>首次扫码需要审批</strong>
-            <p>手机提交访问申请后，管理员在统一后台批准，该浏览器才会进入当前直播间的监控面板。</p>
-            <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
-            <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
-          </div>
-        </div>
-      ) : (
-        <div className="settings-hint">手机访问当前已关闭。集中监控、版本上报和企业微信报警不受影响。</div>
-      )}
-      <div className="settings-hint warn">手机端仅提供只读监看，不允许远程切换 ATEM。公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
+      <div className="settings-inline-row monitoring-test-row">
+        <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessConnected || testing} onClick={() => void testWeCom()}>
+          <Send size={16} />
+          {testing ? '正在发送…' : '发送企业微信测试'}
+        </button>
+        <span>发送本机此刻的 OBS、音频、ATEM 和版本状态。</span>
+      </div>
+      {testResult && <div className={`diagnostic-result ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
+      <div className="settings-hint">监控连接会随软件自动启动，无需手机扫码或手动开启。断线后会在后台自动切换线路并重试。</div>
     </Section>
   );
 };
@@ -1215,7 +1167,7 @@ export const UpdatesSection: React.FC<{
             <div className="update-source-grid">
               {[
                 { value: 'auto', title: '自动选择', desc: '内部服务器优先，不可用时再切换镜像和 GitHub', icon: <Route size={16} /> },
-                { value: 'lan', title: '内部服务器', desc: '使用手机远程服务中的更新目录', icon: <Wifi size={16} /> },
+                { value: 'lan', title: '内部服务器', desc: '使用直播监控服务中的更新目录', icon: <Wifi size={16} /> },
                 { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
                 { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },
                 { value: 'ghproxy_net', title: 'ghproxy.net', desc: '备用公共加速代理', icon: <Download size={16} /> },

@@ -26,6 +26,7 @@ const updateSyncToken = String(process.env.UPDATE_SYNC_TOKEN || '');
 const updateGithubToken = String(process.env.UPDATE_GITHUB_TOKEN || '');
 const weComWebhookUrl = String(process.env.WECOM_WEBHOOK_URL || '');
 const weComNotifyEnabled = !/^(0|false|off)$/i.test(String(process.env.WECOM_NOTIFY_ENABLED || 'true'));
+const MONITORING_IDENTITY_REVISION = 1;
 if (adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters');
 
 await mkdir(dataDir, { recursive: true });
@@ -61,7 +62,7 @@ const REMOTE_ADMIN_COMMAND_LABELS = {
   resume_monitoring: '恢复检测'
 };
 const COMMAND_TIMEOUT_MS = 20_000;
-const emptyData = () => ({ devices: [], requests: [], approvals: [], commands: [] });
+const emptyData = () => ({ schemaVersion: MONITORING_IDENTITY_REVISION, devices: [], requests: [], approvals: [], commands: [] });
 let data = await loadData();
 const desktopSockets = new Map();
 const mobileSockets = new Map();
@@ -71,10 +72,16 @@ const loginAttempts = new Map();
 const requestLimits = new Map();
 let saveQueue = Promise.resolve();
 
+if (data.schemaVersion < MONITORING_IDENTITY_REVISION) {
+  data = emptyData();
+  await saveData();
+}
+
 async function loadData() {
   try {
     const parsed = JSON.parse(await readFile(dataFile, 'utf8'));
     return {
+      schemaVersion: Number.isFinite(Number(parsed.schemaVersion)) ? Number(parsed.schemaVersion) : 0,
       devices: Array.isArray(parsed.devices) ? parsed.devices : [],
       requests: Array.isArray(parsed.requests) ? parsed.requests : [],
       approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
@@ -239,15 +246,15 @@ function publicDevice(device) {
     label: device.label,
     roomName: device.roomName || '',
     online: desktopSockets.has(device.uuid),
-    onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
-    mobileAccessEnabled: device.mobileAccessEnabled !== false,
-    appVersion: cleanText(device.appVersion, 32) || null,
+    onlineMobileClients: 0,
+    mobileAccessEnabled: false,
+    appVersion: appVersion(device.appVersion),
     platform: cleanText(device.platform, 20) || null,
     arch: cleanText(device.arch, 20) || null,
     osRelease: cleanText(device.osRelease, 80) || null,
     lastSeenAt: device.lastSeenAt || null,
     createdAt: device.createdAt,
-    pairUrl: `${publicBaseUrl}/pair/${encodeURIComponent(device.pairToken)}`
+    pairUrl: null
   };
 }
 
@@ -289,7 +296,11 @@ function monitorDevice(device) {
   const service = state?.service && typeof state.service === 'object' ? state.service : {};
   const appState = state?.app && typeof state.app === 'object' ? state.app : {};
   const latestVersion = cleanText(updateCache.getStatus().version, 32) || null;
-  const installedVersion = cleanText(appState.version, 32) || cleanText(device.appVersion, 32) || null;
+  const installedVersion = appVersion(
+    appState.version,
+    appState.updateCurrentVersion,
+    device.appVersion
+  );
   const updateStatus = cleanText(appState.updateStatus, 32) || 'unknown';
   const updateAvailableVersion = cleanText(appState.updateAvailableVersion, 32) || null;
   const updateDownloadedVersion = cleanText(appState.updateDownloadedVersion, 32) || null;
@@ -371,7 +382,7 @@ function monitorDevice(device) {
       osRelease: cleanText(appState.osRelease, 80) || cleanText(device.osRelease, 80) || null,
       paused: appState.paused === true,
       autoUpdateEnabled: appState.autoUpdateEnabled !== false,
-      mobileAccessEnabled: appState.mobileAccessEnabled !== false && device.mobileAccessEnabled !== false,
+      mobileAccessEnabled: false,
       updateStatus,
       updateAvailable,
       updateAvailableVersion,
@@ -390,7 +401,8 @@ function monitorDevice(device) {
 
 function monitorOverview() {
   const grouped = new Map();
-  for (const device of data.devices) {
+  const monitoringDevices = data.devices.filter((device) => device.monitoringIdentityRevision === MONITORING_IDENTITY_REVISION);
+  for (const device of monitoringDevices) {
     const item = monitorDevice(device);
     const room = grouped.get(item.roomName) || { name: item.roomName, devices: [] };
     room.devices.push(item);
@@ -408,7 +420,7 @@ function monitorOverview() {
       activeLiveDevices: room.devices.filter((device) => device.obs.liveActive).length,
       alertCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'danger') + Number(device.atem.tone === 'danger'), 0),
       warningCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'warning') + Number(device.atem.tone === 'warning'), 0),
-      onlineMobileClients: room.devices.reduce((count, device) => count + device.onlineMobileClients, 0),
+      onlineMobileClients: 0,
       updateAvailableDevices: room.devices.filter((device) => device.app.updateAvailable).length,
       devices: room.devices
     };
@@ -419,13 +431,13 @@ function monitorOverview() {
     summary: {
       totalRooms: rooms.length,
       onlineRooms: rooms.filter((room) => room.onlineDevices > 0).length,
-      totalDevices: data.devices.length,
-      onlineDevices: desktopSockets.size,
+      totalDevices: monitoringDevices.length,
+      onlineDevices: monitoringDevices.filter((device) => desktopSockets.has(device.uuid)).length,
       activeLiveDevices: rooms.reduce((count, room) => count + room.activeLiveDevices, 0),
       alertCount: rooms.reduce((count, room) => count + room.alertCount, 0),
       warningCount: rooms.reduce((count, room) => count + room.warningCount, 0),
       updateAvailableDevices: rooms.reduce((count, room) => count + room.updateAvailableDevices, 0),
-      onlineMobileClients: Array.from(mobileSockets.values()).reduce((count, sockets) => count + sockets.size, 0)
+      onlineMobileClients: 0
     },
     notifications: weComNotifier.getStatus(),
     updates: publicUpdateCacheStatus(),
@@ -463,6 +475,14 @@ function publicUpdateCacheStatus() {
     lastSuccessAt: status.lastSuccessAt,
     error: status.error
   };
+}
+
+function appVersion(...values) {
+  for (const value of values) {
+    const normalized = cleanText(value, 32).replace(/^v/i, '');
+    if (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(normalized)) return normalized;
+  }
+  return null;
 }
 
 function compareVersions(left, right) {
@@ -621,20 +641,23 @@ async function handleApi(req, res, url) {
     const uuid = cleanUuid(body.uuid);
     const secret = String(body.secret || '');
     if (!uuid || secret.length < 32) return json(res, 400, { error: 'invalid_device_credentials' });
+    if (Number(body.monitoringIdentityRevision) !== MONITORING_IDENTITY_REVISION) {
+      return json(res, 426, { error: 'client_upgrade_required' });
+    }
+    const roomName = cleanText(body.roomName, 60);
+    if (roomName.length < 2) return json(res, 400, { error: 'room_name_required' });
     let device = data.devices.find((item) => item.uuid === uuid);
     if (device && !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed' });
-    const mobileAccessEnabled = typeof body.mobileAccessEnabled === 'boolean'
-      ? body.mobileAccessEnabled
-      : device?.mobileAccessEnabled !== false;
     if (!device) {
       device = {
         uuid,
         secretHash: sha256(secret),
         pairToken: token(24),
         label: cleanText(body.label, 80) || `电脑 ${uuid.slice(0, 8)}`,
-        roomName: cleanText(body.roomName, 60),
-        mobileAccessEnabled,
-        appVersion: cleanText(body.appVersion, 32),
+        roomName,
+        mobileAccessEnabled: false,
+        monitoringIdentityRevision: MONITORING_IDENTITY_REVISION,
+        appVersion: appVersion(body.appVersion) || '',
         platform: cleanText(body.platform, 20),
         arch: cleanText(body.arch, 20),
         osRelease: cleanText(body.osRelease, 80),
@@ -645,65 +668,71 @@ async function handleApi(req, res, url) {
       data.devices.push(device);
     } else {
       device.label = cleanText(body.label, 80) || device.label;
-      device.roomName = cleanText(body.roomName, 60) || device.roomName;
-      device.mobileAccessEnabled = mobileAccessEnabled;
-      device.appVersion = cleanText(body.appVersion, 32) || device.appVersion || '';
+      device.roomName = roomName;
+      device.mobileAccessEnabled = false;
+      device.monitoringIdentityRevision = MONITORING_IDENTITY_REVISION;
+      device.appVersion = appVersion(body.appVersion, device.appVersion) || '';
       device.platform = cleanText(body.platform, 20) || device.platform || '';
       device.arch = cleanText(body.arch, 20) || device.arch || '';
       device.osRelease = cleanText(body.osRelease, 80) || device.osRelease || '';
       device.lastSeenAt = now();
     }
-    if (!mobileAccessEnabled) closeMobileAccessForDevice(device.uuid, 4003, 'mobile_access_disabled');
+
+    const duplicateUuids = new Set(data.devices
+      .filter((item) => item.uuid !== device.uuid && cleanText(item.roomName, 60).toLocaleLowerCase('zh-CN') === roomName.toLocaleLowerCase('zh-CN'))
+      .map((item) => item.uuid));
+    for (const duplicateUuid of duplicateUuids) {
+      desktopSockets.get(duplicateUuid)?.close(4000, 'room_reassigned');
+      closeMobileAccessForDevice(duplicateUuid, 4003, 'mobile_access_removed');
+    }
+    if (duplicateUuids.size > 0) {
+      data.devices = data.devices.filter((item) => !duplicateUuids.has(item.uuid));
+      data.requests = data.requests.filter((item) => !duplicateUuids.has(item.deviceUuid));
+      data.approvals = data.approvals.filter((item) => !duplicateUuids.has(item.deviceUuid));
+    }
+    closeMobileAccessForDevice(device.uuid, 4003, 'mobile_access_removed');
     await saveData();
     return json(res, 200, { ok: true, device: publicDevice(device) });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/devices/wecom-test') {
+    if (!allowRequest(req, 'wecom-test', 6, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests', message: '测试过于频繁，请稍后再试' });
+    const body = await readJson(req);
+    const uuid = cleanUuid(body.uuid);
+    const secret = String(body.secret || '');
+    const device = data.devices.find((item) => item.uuid === uuid);
+    if (!device || !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed', message: '监控中心设备认证失败' });
+    if (Number(body.monitoringIdentityRevision) !== MONITORING_IDENTITY_REVISION) {
+      return json(res, 426, { error: 'client_upgrade_required', message: '请先升级检测助手' });
+    }
+    const state = normalizeDesktopState(body.state);
+    device.lastState = state;
+    device.appVersion = appVersion(state.app?.version, state.app?.updateCurrentVersion, device.appVersion) || '';
+    device.lastSeenAt = now();
+    try {
+      const result = await weComNotifier.sendStatusTest(device, state);
+      await saveData();
+      return json(res, 200, { ok: true, message: '当前直播间状态已发送到企业微信', sentAt: result.sentAt });
+    } catch (error) {
+      return json(res, 503, { error: 'wecom_test_failed', message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/pair/info') {
-    const device = deviceByPairToken(url.searchParams.get('token') || '');
-    if (!device) return json(res, 404, { error: 'pair_link_invalid' });
-    if (device.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
-    return json(res, 200, { device: publicDevice(device) });
+    return json(res, 410, { error: 'mobile_access_removed' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/pair/request') {
-    if (!allowRequest(req, 'pair', 12, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests' });
-    const body = await readJson(req);
-    const device = deviceByPairToken(body.pairToken || '');
-    if (device?.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
-    const clientId = cleanUuid(body.clientId);
-    const roomName = cleanText(device?.roomName, 60) || cleanText(body.roomName, 60);
-    if (!device || !clientId || roomName.length < 2) return json(res, 400, { error: 'invalid_request' });
-    const recent = data.requests.find((item) => item.deviceUuid === device.uuid && item.clientId === clientId && item.status === 'pending');
-    if (recent) return json(res, 200, { request: publicRequest(recent) });
-    const request = { id: token(12), deviceUuid: device.uuid, clientId, clientName: cleanText(body.clientName, 60) || '移动浏览器', roomName, status: 'pending', createdAt: now() };
-    data.requests.push(request);
-    await saveData();
-    notifyAdmins();
-    return json(res, 201, { request: publicRequest(request) });
+    return json(res, 410, { error: 'mobile_access_removed' });
   }
 
   const requestMatch = url.pathname.match(/^\/api\/pair\/request\/([^/]+)$/);
   if (req.method === 'GET' && requestMatch) {
-    const request = data.requests.find((item) => item.id === requestMatch[1] && item.clientId === url.searchParams.get('clientId'));
-    if (!request) return json(res, 404, { error: 'request_not_found' });
-    const payload = { request: publicRequest(request) };
-    if (request.status === 'approved' && request.approvedToken) payload.accessToken = request.approvedToken;
-    return json(res, 200, payload);
+    return json(res, 410, { error: 'mobile_access_removed' });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/mobile/session') {
-    const approval = approvalByToken(url.searchParams.get('token') || '');
-    if (!approval) return json(res, 403, { error: 'access_denied' });
-    const device = data.devices.find((item) => item.uuid === approval.deviceUuid);
-    if (!device) return json(res, 404, { error: 'device_not_found' });
-    if (device.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
-    approval.lastUsedAt = now();
-    void saveData();
-    return json(res, 200, {
-      approval: publicApproval(approval),
-      device: publicDevice(device),
-      state: device.lastState ? normalizeDesktopState(device.lastState) : null
-    });
+    return json(res, 410, { error: 'mobile_access_removed' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/admin/login') {
@@ -860,7 +889,7 @@ const requestListener = async (req, res) => {
     if (url.pathname === '/monitor/') return redirect(res, '/monitor');
     if (url.pathname === '/admin') return serveFile(req, res, join(publicDir, 'admin.html'));
     if (url.pathname === '/monitor') return serveFile(req, res, join(publicDir, 'monitor.html'));
-    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(req, res, join(publicDir, 'mobile.html'));
+    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return redirect(res, '/monitor');
     if (url.pathname.startsWith('/assets/')) {
       const file = resolve(publicDir, `.${url.pathname}`);
       if (!file.startsWith(publicDir)) return json(res, 403, { error: 'forbidden' });
@@ -910,7 +939,7 @@ const server = httpsServer
 const wss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });
 const handleUpgrade = (req, socket, head) => {
   const url = new URL(req.url || '/', publicBaseUrl);
-  if (!['/ws/desktop', '/ws/mobile'].includes(url.pathname)) return socket.destroy();
+  if (url.pathname !== '/ws/desktop') return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, url));
 };
 httpServer.on('upgrade', handleUpgrade);
@@ -930,8 +959,7 @@ wss.on('connection', (socket, req, url) => {
     void saveData();
     socket.send(JSON.stringify({
       type: 'registered',
-      pairUrl: `${publicBaseUrl}/pair/${device.pairToken}`,
-      onlineMobileClients: mobileSockets.get(uuid)?.size || 0
+      onlineMobileClients: 0
     }));
     socket.on('message', (raw) => {
       try {
@@ -939,34 +967,19 @@ wss.on('connection', (socket, req, url) => {
         if (message.type === 'state' && message.state && typeof message.state === 'object') {
           device.lastState = normalizeDesktopState(message.state);
           const appState = device.lastState.app && typeof device.lastState.app === 'object' ? device.lastState.app : {};
-          device.appVersion = cleanText(appState.version, 32) || device.appVersion || '';
+          device.appVersion = appVersion(appState.version, appState.updateCurrentVersion, device.appVersion) || '';
           device.platform = cleanText(appState.platform, 20) || device.platform || '';
           device.arch = cleanText(appState.arch, 20) || device.arch || '';
           device.osRelease = cleanText(appState.osRelease, 80) || device.osRelease || '';
-          if (typeof appState.mobileAccessEnabled === 'boolean') {
-            device.mobileAccessEnabled = appState.mobileAccessEnabled;
-          }
+          device.mobileAccessEnabled = false;
           device.lastSeenAt = now();
           weComNotifier.observeDevice(device, device.lastState);
-          if (device.mobileAccessEnabled !== false) {
-            broadcastMobile(uuid, { type: 'state', state: device.lastState });
-          }
           socket.send(JSON.stringify({ type: 'state-ack', receivedAt: now() }));
         } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
           socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
-        } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
-          const rawLevelDb = message.meter.levelDb;
-          const levelDb = typeof rawLevelDb === 'number' && Number.isFinite(rawLevelDb)
-            ? Math.max(-100, Math.min(12, rawLevelDb))
-            : null;
-          broadcastMobile(uuid, {
-            type: 'meter',
-            meter: {
-              timestamp: Number.isFinite(Number(message.meter.timestamp)) ? Number(message.meter.timestamp) : now(),
-              activeInputName: cleanText(message.meter.activeInputName, 100),
-              levelDb
-            }
-          });
+        } else if (message.type === 'meter') {
+          // Central monitoring uses the throttled state snapshot; the former
+          // high-frequency meter stream was only needed by mobile clients.
         } else if (message.type === 'admin-command-result') {
           const id = cleanText(message.id, 80);
           const pending = pendingAdminCommands.get(id);

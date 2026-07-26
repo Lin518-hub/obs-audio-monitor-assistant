@@ -2,10 +2,11 @@
  * 集中声明 window.obsGuard API 的 TypeScript 类型。
  * 真实实现在 src/main/preload.cts,这里只做类型声明,避免每个组件重复写。
  */
-import type { AlertAction, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, AudioMeterFrame, InputOption, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types';
+import type { AlertAction, AppConfig, AppSnapshot, ATEMScanResult, ATEMTestResult, AudioMeterFrame, InputOption, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot, WeComTestResult } from '../shared/types';
 
 export interface ObsGuardApi {
   getSnapshot: () => Promise<AppSnapshot>;
+  testWeCom: () => Promise<WeComTestResult>;
   saveConfig: (patch: Partial<AppConfig>) => Promise<AppSnapshot>;
   resetConfig: () => Promise<AppSnapshot>;
   refreshInputs: () => Promise<InputOption[]>;

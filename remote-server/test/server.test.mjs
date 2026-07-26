@@ -61,106 +61,58 @@ function trackedSocket(url) {
   };
 }
 
-test('requires approval before a mobile browser receives access', async () => {
+test('removes legacy mobile pairing and keeps one monitoring identity per room', async () => {
   const uuid = '11111111-1111-4111-8111-111111111111';
-  const registered = await request('/api/devices/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uuid, secret: '1'.repeat(64), label: 'Test Desktop' }) });
+  const registered = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid,
+      secret: '1'.repeat(64),
+      label: 'Test Desktop',
+      roomName: '测试直播间',
+      monitoringIdentityRevision: 1,
+      appVersion: '3.9.1'
+    })
+  });
   assert.equal(registered.response.status, 200);
-  const pairToken = registered.body.device.pairUrl.split('/').at(-1);
+  assert.equal(registered.body.device.pairUrl, null);
+  assert.equal(registered.body.device.mobileAccessEnabled, false);
 
-  const paired = await request('/api/pair/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairToken, clientId: '22222222-2222-4222-8222-222222222222', roomName: '测试直播间', clientName: '测试平板' }) });
-  assert.equal(paired.response.status, 201);
-  assert.equal(paired.body.request.status, 'pending');
+  const pairInfo = await request('/api/pair/info?token=legacy');
+  assert.equal(pairInfo.response.status, 410);
+  assert.equal(pairInfo.body.error, 'mobile_access_removed');
+  const pairRequest = await request('/api/pair/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairToken: 'legacy' })
+  });
+  assert.equal(pairRequest.response.status, 410);
 
   const login = await request('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'remote-admin-test-password' }) });
   const cookie = login.response.headers.get('set-cookie').split(';')[0];
   assert.equal(login.response.status, 200);
-
-  const approved = await request(`/api/admin/requests/${paired.body.request.id}/approve`, { method: 'POST', headers: { Cookie: cookie } });
-  assert.equal(approved.body.request.status, 'approved');
-
-  const status = await request(`/api/pair/request/${paired.body.request.id}?clientId=22222222-2222-4222-8222-222222222222`);
-  assert.ok(status.body.accessToken);
-  const replacedPair = await request('/api/pair/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairToken, clientId: '22222222-2222-4222-8222-222222222222', roomName: '测试直播间', clientName: '测试平板' }) });
-  await request(`/api/admin/requests/${replacedPair.body.request.id}/approve`, { method: 'POST', headers: { Cookie: cookie } });
-  const replacedStatus = await request(`/api/pair/request/${replacedPair.body.request.id}?clientId=22222222-2222-4222-8222-222222222222`);
-  const oldSession = await request(`/api/mobile/session?token=${encodeURIComponent(status.body.accessToken)}`);
-  assert.equal(oldSession.response.status, 403);
-  const primaryAccessToken = replacedStatus.body.accessToken;
-
-  const session = await request(`/api/mobile/session?token=${encodeURIComponent(primaryAccessToken)}`);
-  assert.equal(session.response.status, 200);
-  assert.equal(session.body.device.uuid, uuid);
-
-  const secondPair = await request('/api/pair/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairToken, clientId: '33333333-3333-4333-8333-333333333333', roomName: '测试直播间', clientName: '备用手机' }) });
-  await request(`/api/admin/requests/${secondPair.body.request.id}/approve`, { method: 'POST', headers: { Cookie: cookie } });
-  const secondStatus = await request(`/api/pair/request/${secondPair.body.request.id}?clientId=33333333-3333-4333-8333-333333333333`);
-
-  const wsBase = base.replace('http:', 'ws:');
-  const desktop = trackedSocket(`${wsBase}/ws/desktop?uuid=${encodeURIComponent(uuid)}&secret=${'1'.repeat(64)}`);
-  await desktop.open();
-  const mobile = trackedSocket(`${wsBase}/ws/mobile?token=${encodeURIComponent(primaryAccessToken)}`);
-  const secondMobile = trackedSocket(`${wsBase}/ws/mobile?token=${encodeURIComponent(secondStatus.body.accessToken)}`);
-  await Promise.all([mobile.open(), secondMobile.open()]);
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  mobile.clear();
-  secondMobile.clear();
-
-  desktop.socket.send(JSON.stringify({
-    type: 'state',
-    state: {
-      desktopOnline: true,
-      audio: { ready: false, tone: 'safe', levelDb: null, lastMeterReceivedAt: null, silentForSeconds: 0, display: '正在讲话', hint: '音频正常' },
-      obs: { connected: true, streaming: false, recording: false }
-    }
-  }));
-  const [waitingState, secondWaitingState] = await Promise.all([mobile.next(), secondMobile.next()]);
-  assert.equal(waitingState.type, 'state');
-  assert.equal(waitingState.state.audio.levelDb, null);
-  assert.equal(waitingState.state.audio.ready, false);
-  assert.equal(waitingState.state.audio.display, '等待音频数据');
-  assert.equal(secondWaitingState.state.audio.display, '等待音频数据');
-
-  mobile.socket.send(JSON.stringify({ type: 'command', id: 'unconfirmed-auto', command: 'atem.auto', payload: {} }));
-  const unconfirmedResult = await mobile.next();
-  assert.equal(unconfirmedResult.id, 'unconfirmed-auto');
-  assert.equal(unconfirmedResult.ok, false);
-  assert.equal(unconfirmedResult.message, '手机远程当前仅支持监看');
-
-  desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: -18.25 } }));
-  const [meter, secondMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
-  assert.equal(meter.type, 'meter');
-  assert.equal(meter.meter.activeInputName, 'Mic');
-  assert.equal(meter.meter.levelDb, -18.25);
-  assert.equal(secondMeter.type, 'meter');
-
-  desktop.socket.send(JSON.stringify({ type: 'meter', meter: { timestamp: Date.now(), activeInputName: 'Mic', levelDb: null } }));
-  const [emptyMeter, secondEmptyMeter] = await Promise.all([mobile.next(), secondMobile.next()]);
-  assert.equal(emptyMeter.type, 'meter');
-  assert.equal(emptyMeter.meter.levelDb, null);
-  assert.equal(secondEmptyMeter.meter.levelDb, null);
-
-  mobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-1', command: 'atem.auto', payload: { confirmed: true } }));
-  const commandResult = await mobile.next();
-  assert.equal(commandResult.id, 'client-command-1');
-  assert.equal(commandResult.ok, false);
-  assert.equal(commandResult.message, '手机远程当前仅支持监看');
-  await assert.rejects(secondMobile.next(120), /message_timeout/);
-
   const overview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
-  const approval = overview.body.approvals.find((item) => item.clientName === '测试平板');
-  const revokedClose = new Promise((resolve) => mobile.socket.once('close', (code) => resolve(code)));
-  const revoked = await request(`/api/admin/approvals/${approval.id}`, { method: 'DELETE', headers: { Cookie: cookie } });
-  assert.equal(revoked.body.ok, true);
-  assert.equal(await revokedClose, 4003);
-  assert.equal(secondMobile.socket.readyState, WebSocket.OPEN);
-  secondMobile.socket.send(JSON.stringify({ type: 'command', id: 'client-command-2', command: 'atem.auto', payload: { confirmed: true } }));
-  const secondCommandResult = await secondMobile.next();
-  assert.equal(secondCommandResult.id, 'client-command-2');
-  assert.equal(secondCommandResult.ok, false);
-  const denied = await request(`/api/mobile/session?token=${encodeURIComponent(primaryAccessToken)}`);
-  assert.equal(denied.response.status, 403);
-  secondMobile.socket.close();
-  desktop.socket.close();
+  assert.deepEqual(overview.body.requests, []);
+  assert.deepEqual(overview.body.approvals, []);
+
+  const replacementUuid = '22222222-2222-4222-8222-222222222222';
+  const replacement = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid: replacementUuid,
+      secret: '2'.repeat(64),
+      label: 'Replacement Desktop',
+      roomName: '测试直播间',
+      monitoringIdentityRevision: 1,
+      appVersion: '3.9.1'
+    })
+  });
+  assert.equal(replacement.response.status, 200);
+  const replacedOverview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
+  assert.equal(replacedOverview.body.devices.some((item) => item.uuid === uuid), false);
+  assert.equal(replacedOverview.body.devices.some((item) => item.uuid === replacementUuid), true);
 });
 
 test('protects and aggregates the live room monitor', async () => {
@@ -171,11 +123,16 @@ test('protects and aggregates the live room monitor', async () => {
     { uuid: '44444444-4444-4444-8444-444444444444', secret: '4'.repeat(64), label: '主控电脑' },
     { uuid: '55555555-5555-4555-8555-555555555555', secret: '5'.repeat(64), label: '备用电脑' }
   ];
-  for (const device of devices) {
+  for (const [index, device] of devices.entries()) {
     const registered = await request('/api/devices/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...device, roomName: '品牌一号直播间' })
+      body: JSON.stringify({
+        ...device,
+        roomName: index === 0 ? '品牌一号直播间' : '品牌二号直播间',
+        monitoringIdentityRevision: 1,
+        appVersion: '3.9.1'
+      })
     });
     assert.equal(registered.response.status, 200);
   }
@@ -225,11 +182,11 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(monitor.response.status, 200);
   const room = monitor.body.rooms.find((item) => item.name === '品牌一号直播间');
   assert.ok(room);
-  assert.equal(room.totalDevices, 2);
-  assert.equal(room.onlineDevices, 2);
-  assert.equal(room.activeLiveDevices, 2);
+  assert.equal(room.totalDevices, 1);
+  assert.equal(room.onlineDevices, 1);
+  assert.equal(room.activeLiveDevices, 1);
   assert.equal(room.alertCount, 1);
-  assert.equal(room.warningCount, 1);
+  assert.equal(room.warningCount, 0);
   assert.equal(room.devices[0].audio.inputName.length > 0, true);
   assert.equal(monitor.body.summary.onlineDevices >= 2, true);
 
@@ -267,7 +224,7 @@ test('protects and aggregates the live room monitor', async () => {
   backup.socket.close();
 });
 
-test('keeps central monitoring available while mobile access is disabled', async () => {
+test('keeps central monitoring always on and recognizes the reported app version', async () => {
   const uuid = '66666666-6666-4666-8666-666666666666';
   const secret = '6'.repeat(64);
   const registered = await request('/api/devices/register', {
@@ -279,17 +236,27 @@ test('keeps central monitoring available while mobile access is disabled', async
       label: '只上报电脑',
       roomName: '后台监控直播间',
       mobileAccessEnabled: false,
-      appVersion: '3.8.2',
+      monitoringIdentityRevision: 1,
+      appVersion: 'unknown',
       platform: 'win32',
       arch: 'x64'
     })
   });
   assert.equal(registered.response.status, 200);
   assert.equal(registered.body.device.mobileAccessEnabled, false);
-  const pairToken = registered.body.device.pairUrl.split('/').at(-1);
-  const pairInfo = await request(`/api/pair/info?token=${encodeURIComponent(pairToken)}`);
-  assert.equal(pairInfo.response.status, 403);
-  assert.equal(pairInfo.body.error, 'mobile_access_disabled');
+  assert.equal(registered.body.device.pairUrl, null);
+  const weComTest = await request('/api/devices/wecom-test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid,
+      secret,
+      monitoringIdentityRevision: 1,
+      state: { app: { version: '3.9.1' }, obs: { connected: false }, audio: {}, atem: {} }
+    })
+  });
+  assert.equal(weComTest.response.status, 503);
+  assert.match(weComTest.body.message, /尚未配置企业微信机器人/);
 
   const wsBase = base.replace('http:', 'ws:');
   const desktop = trackedSocket(`${wsBase}/ws/desktop?uuid=${uuid}&secret=${secret}`);
@@ -298,7 +265,7 @@ test('keeps central monitoring available while mobile access is disabled', async
     type: 'state',
     state: {
       timestamp: Date.now(),
-      app: { version: '3.8.2', platform: 'win32', arch: 'x64', paused: false, autoUpdateEnabled: true },
+      app: { updateCurrentVersion: '3.9.1', platform: 'win32', arch: 'x64', paused: false, autoUpdateEnabled: true },
       audio: { ready: false, levelDb: null, lastMeterReceivedAt: null },
       atem: { connected: false },
       obs: { connected: false },
@@ -317,7 +284,7 @@ test('keeps central monitoring available while mobile access is disabled', async
   const device = monitor.body.rooms.flatMap((room) => room.devices).find((item) => item.uuid === uuid);
   assert.ok(device);
   assert.equal(device.online, true);
-  assert.equal(device.app.version, '3.8.2');
+  assert.equal(device.app.version, '3.9.1');
   assert.equal(device.app.mobileAccessEnabled, false);
   desktop.socket.close();
 });

@@ -323,6 +323,7 @@ async function applyAutoLaunch(enabled: boolean): Promise<void> {
 
 function registerIpc(): void {
   ipcMain.handle('snapshot:get', () => rendererSnapshot(latestSnapshot ?? monitor.getSnapshot()));
+  ipcMain.handle('monitor:test-wecom', () => remoteBridge.testWeCom());
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
     const previousSnapshot = latestSnapshot ?? monitor.getSnapshot();
     const previous = previousSnapshot.config;

@@ -380,6 +380,7 @@ export interface AppConfig {
   remoteAccessEnabled: boolean;
   remoteServerUrl: string;
   livestreamRoomName: string;
+  monitoringIdentityRevision: number;
   remoteDeviceUuid: string;
   remoteDeviceSecret: string;
   developerModeEnabled: boolean;
@@ -498,6 +499,12 @@ export interface RemoteAdminCommandResult {
   message: string;
 }
 
+export interface WeComTestResult {
+  ok: boolean;
+  message: string;
+  sentAt: number | null;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   obsHost: '127.0.0.1',
   obsPort: 4455,
@@ -532,6 +539,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteAccessEnabled: false,
   remoteServerUrl: 'https://obs.huaweilive.top:8088',
   livestreamRoomName: '',
+  monitoringIdentityRevision: 1,
   remoteDeviceUuid: '',
   remoteDeviceSecret: '',
   developerModeEnabled: false,
