@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -12,9 +12,17 @@ const root = await mkdtemp(join(tmpdir(), 'obs-remote-server-'));
 let child;
 
 before(async () => {
+  const dataDir = join(root, 'data');
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(join(dataDir, 'remote-state.json'), JSON.stringify({
+    devices: [{ uuid: 'legacy-mobile-device', roomName: '旧直播间' }],
+    requests: [{ id: 'legacy-request' }],
+    approvals: [{ id: 'legacy-approval' }],
+    commands: []
+  }));
   child = spawn(process.execPath, ['src/server.mjs'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: join(root, 'data'), UPDATE_DIR: join(root, 'updates'), UPDATE_SYNC_ENABLED: 'false' },
+    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: dataDir, UPDATE_DIR: join(root, 'updates'), UPDATE_SYNC_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   for (let index = 0; index < 50; index += 1) {

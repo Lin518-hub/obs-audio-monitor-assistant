@@ -104,14 +104,18 @@ function saveData() {
   return operation;
 }
 
-const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
+function token(bytes = 32) {
+  return randomBytes(bytes).toString('base64url');
+}
 const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left));
   const b = Buffer.from(String(right));
   return a.length === b.length && timingSafeEqual(a, b);
 };
-const now = () => Date.now();
+function now() {
+  return Date.now();
+}
 const cleanText = (value, max = 80) => String(value || '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, max);
 const cleanUuid = (value) => /^[0-9a-f-]{20,64}$/i.test(String(value || '')) ? String(value) : '';
 
