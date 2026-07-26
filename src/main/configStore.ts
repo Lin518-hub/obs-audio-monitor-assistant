@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
-import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type PreflightAppConfigs, type PreflightPathSource, type PreflightWindowPlacement, type PreflightWindowPlacements, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type PreflightAppConfigs, type PreflightPathSource, type PreflightWindowPlacement, type PreflightWindowPlacements, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
   obsPasswordEncrypted?: string;
@@ -172,7 +172,7 @@ export class ConfigStore {
       developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
       autoUpdateEnabled: booleanValue(merged.autoUpdateEnabled, DEFAULT_CONFIG.autoUpdateEnabled),
-      updateSource: updateSourceValue(merged.updateSource),
+      updateSource: 'auto',
       aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
       atemEnabled: booleanValue(merged.atemEnabled, DEFAULT_CONFIG.atemEnabled),
       atemHost: stringValue(merged.atemHost, DEFAULT_CONFIG.atemHost).trim() || DEFAULT_CONFIG.atemHost,
@@ -304,12 +304,6 @@ function floatingWindowModeValue(value: unknown, modules: AppConfig['floatingWin
 
   // Existing versions used the module switches as the implicit mode.
   return modules.atem || modules.obsStats ? 'multifunction' : DEFAULT_CONFIG.floatingWindowMode;
-}
-
-function updateSourceValue(value: unknown): UpdateSource {
-  return value === 'auto' || value === 'github' || value === 'gh_proxy' || value === 'ghproxy_net' || value === 'aliyun' || value === 'lan'
-    ? value
-    : DEFAULT_CONFIG.updateSource;
 }
 
 function normalizeUpdateBaseUrl(value: unknown): string {

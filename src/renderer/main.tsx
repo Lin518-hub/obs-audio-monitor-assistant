@@ -241,7 +241,6 @@ function SettingsApp() {
   }, [draft]);
 
   const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
-  const downloadUpdate = useCallback(async () => { await window.obsGuard.downloadUpdate(); }, []);
   const completeOnboarding = useCallback(() => {
     void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION });
   }, [flushSave]);
@@ -411,8 +410,6 @@ function SettingsApp() {
         onChangeDraft={updateDraft}
         updateState={updateState}
         onCheckUpdate={() => void checkForUpdates()}
-        onDownloadUpdate={() => void downloadUpdate()}
-        onInstallUpdate={() => void window.obsGuard.installUpdate()}
         testingConnection={testingConnection}
         testResult={testResult}
         onTestConnection={() => void testConnection()}

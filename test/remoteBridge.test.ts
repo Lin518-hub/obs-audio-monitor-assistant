@@ -99,6 +99,7 @@ describe('remote audio telemetry', () => {
     expect(audio.phase).toBe('speaking');
     expect(audio.levelDb).toBe(-21.5);
     expect(audio.display).toBe('正在讲话');
+    expect(audio.meterAgeMs).toBe(500);
   });
 
   it('keeps silence state separate from the gradual warning color', () => {
@@ -125,6 +126,7 @@ describe('remote audio telemetry', () => {
     expect(audio.levelDb).toBeNull();
     expect(audio.display).toBe('等待音频数据');
     expect(audio.hint).toBe('音频电平链路已中断');
+    expect(audio.meterAgeMs).toBe(9000);
   });
 
   it('does not expose a camera alarm as an audio alarm on the mobile monitor', () => {

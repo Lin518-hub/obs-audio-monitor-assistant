@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,6 +34,27 @@ describe('PendingUpdateStore', () => {
 
     await store.clear();
     expect(await store.load()).toBeNull();
+  });
+
+  it('removes only the tracked installer artifact when cleanup is requested', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'obs-pending-update-cleanup-'));
+    roots.push(root);
+    const installer = join(root, 'OBS-Audio-Monitor-Assistant-Setup.exe');
+    await writeFile(installer, 'installer');
+    const store = new PendingUpdateStore(root);
+    await store.save({
+      version: '3.9.3',
+      downloadedAt: 1234,
+      filePath: installer,
+      sourceLabel: '内部服务器',
+      sourceUrl: 'https://example.com/updates/',
+      installAttempts: 0,
+      lastInstallAttemptAt: null
+    });
+
+    await store.clear({ removeArtifact: true });
+    expect(await store.load()).toBeNull();
+    await expect(readFile(installer)).rejects.toThrow();
   });
 
   it('compares release versions without treating a v prefix as different', () => {

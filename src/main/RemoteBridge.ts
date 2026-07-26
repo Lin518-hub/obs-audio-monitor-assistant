@@ -467,9 +467,10 @@ export function publicPairUrl(value: string | null): string | null {
 
 export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
   const lastMeterAt = snapshot.lastAudioMeterReceivedAt;
+  const meterAgeMs = lastMeterAt === null ? null : Math.max(0, now - lastMeterAt);
   const hasFreshMeter = snapshot.lastLevelDb !== null
-    && lastMeterAt !== null
-    && now - lastMeterAt <= REMOTE_METER_FRESH_MS;
+    && meterAgeMs !== null
+    && meterAgeMs <= REMOTE_METER_FRESH_MS;
   const activelyMonitoring = snapshot.readinessReason === 'ready' || snapshot.readinessReason === 'alerting';
   const ready = activelyMonitoring && hasFreshMeter;
   const audioAlertVisible = snapshot.activeAlertSource === 'audio';
@@ -532,7 +533,8 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
     silentForSeconds: ready ? snapshot.silentForSeconds : 0,
     display,
     hint,
-    lastMeterReceivedAt: lastMeterAt
+    lastMeterReceivedAt: lastMeterAt,
+    meterAgeMs
   };
 }
 

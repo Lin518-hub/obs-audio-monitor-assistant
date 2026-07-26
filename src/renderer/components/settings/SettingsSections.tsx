@@ -4,9 +4,7 @@ import {
   BellOff,
   BookOpen,
   Cable,
-  Cloud,
   Download,
-  Globe2,
   History,
   Info,
   Mic2,
@@ -885,19 +883,21 @@ export const RemoteAccessSection: React.FC<{
   draft: AppConfig;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }> = ({ draft, onChange }) => (
-  <div id="settings-remote" className="room-identity-setting">
-    <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
-    <input
-      id="livestream-room-name"
-      className="input"
-      value={draft.livestreamRoomName}
-      maxLength={60}
-      onChange={(event) => onChange('livestreamRoomName', event.target.value)}
-      placeholder="例如：品牌 A 一号直播间"
-      aria-required="true"
-    />
-    <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
-  </div>
+  <Section id="settings-remote" icon={Monitor} title="直播间名称" description="标记这台检测电脑所属的直播间">
+    <div className="room-identity-setting">
+      <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
+      <input
+        id="livestream-room-name"
+        className="input"
+        value={draft.livestreamRoomName}
+        maxLength={60}
+        onChange={(event) => onChange('livestreamRoomName', event.target.value)}
+        placeholder="例如：品牌 A 一号直播间"
+        aria-required="true"
+      />
+      <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
+    </div>
+  </Section>
 );
 
 // ====== 6. 诊断测试 ======
@@ -1050,16 +1050,12 @@ export const UpdatesSection: React.FC<{
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   updateState: UpdateSnapshot | null;
   onCheck: () => void;
-  onDownload: () => void;
-  onInstall: () => void;
-}> = ({ draft, onChange, updateState, onCheck, onDownload, onInstall }) => {
+}> = ({ draft, onChange, updateState, onCheck }) => {
   if (!updateState) {
     return <Section id="settings-updates" icon={Download} title="软件更新" description="正在加载…"><div className="empty-block">正在加载更新信息</div></Section>;
   }
   const busy = updateState.status === 'checking' || updateState.status === 'downloading';
   const canCheck = updateState.status !== 'unsupported' && !busy;
-  const canDownload = updateState.status === 'available';
-  const canInstall = updateState.status === 'downloaded';
   const tone = updateTone(updateState);
   return (
     <Section id="settings-updates" icon={Download} title="软件更新" description="内部服务器优先，自动保持最新">
@@ -1077,8 +1073,8 @@ export const UpdatesSection: React.FC<{
           onChange={(checked) => onChange('autoUpdateEnabled', checked)}
           title="自动保持软件最新"
           description={updateState.installMode === 'manual'
-            ? '后台优先从内部服务器预下载；macOS 下次启动时会打开已下载的安装包'
-            : '后台优先从内部服务器预下载，下次启动时静默安装并自动重启'}
+            ? '自动检测新版本；macOS 需要从发布页下载并替换应用'
+            : '后台优先从内部服务器预下载，退出或下次启动时静默安装'}
         />
         <div className="about-list">
           <div className="about-row"><span>当前版本</span><strong>v{updateState.currentVersion}</strong></div>
@@ -1093,67 +1089,18 @@ export const UpdatesSection: React.FC<{
         <div className="update-actions">
           <button type="button" className="btn-secondary" onClick={onCheck} disabled={!canCheck}>
             <RefreshCw size={14} />
-            {updateState.status === 'checking' ? '检查中…' : '检查更新'}
+            {updateState.status === 'checking'
+              ? '检查中…'
+              : updateState.status === 'downloading'
+                ? `下载中${updateState.percent === null ? '' : ` ${Math.round(updateState.percent)}%`}`
+                : '检查更新'}
           </button>
-          {canDownload && (
-            <button type="button" className="btn-primary" onClick={onDownload}>
-              <Download size={14} /> 下载更新
-            </button>
-          )}
-          {canInstall && (
-            <button type="button" className="btn-primary" onClick={onInstall}>
-              <Power size={14} /> {updateState.installMode === 'manual' ? '打开安装包' : '重启安装'}
-            </button>
-          )}
         </div>
         {updateState.status === 'unsupported' && (
           <div className="settings-hint warn">开发模式不会检查更新。安装包版本会自动启用。</div>
         )}
       </div>
 
-      <details className="settings-action-drawer settings-content-drawer">
-        <summary><Route size={14} />高级更新线路</summary>
-        <div className="settings-advanced-update">
-          <div className="settings-field">
-            <span className="settings-field-label">更新源策略</span>
-            <div className="update-source-grid">
-              {[
-                { value: 'auto', title: '自动选择', desc: '内部服务器优先，不可用时再切换镜像和 GitHub', icon: <Route size={16} /> },
-                { value: 'lan', title: '内部服务器', desc: '使用直播监控服务中的更新目录', icon: <Wifi size={16} /> },
-                { value: 'github', title: 'GitHub', desc: '官方 Release 源，海外网络最稳', icon: <Globe2 size={16} /> },
-                { value: 'gh_proxy', title: 'gh-proxy.com', desc: '公共 GitHub 加速代理', icon: <Download size={16} /> },
-                { value: 'ghproxy_net', title: 'ghproxy.net', desc: '备用公共加速代理', icon: <Download size={16} /> },
-                { value: 'aliyun', title: '阿里云镜像', desc: '使用你的 OSS/CDN 镜像地址', icon: <Cloud size={16} /> }
-              ].map((item) => (
-                <button
-                  type="button"
-                  key={item.value}
-                  className={`update-source-option ${draft.updateSource === item.value ? 'active' : ''}`}
-                  onClick={() => onChange('updateSource', item.value as AppConfig['updateSource'])}
-                >
-                  <span className="update-source-option-icon">{item.icon}</span>
-                  <span>
-                    <strong>{item.title}</strong>
-                    <em>{item.desc}</em>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="settings-field">
-            <label className="settings-field-label" htmlFor="aliyun-update-url">阿里云 OSS/CDN 镜像地址</label>
-            <input
-              id="aliyun-update-url"
-              className="input"
-              value={draft.aliyunUpdateBaseUrl}
-              onChange={(event) => onChange('aliyunUpdateBaseUrl', event.target.value)}
-              placeholder="例如 https://your-bucket.oss-cn-hangzhou.aliyuncs.com/obs-audio-monitor-assistant/latest/"
-            />
-            <p className="settings-section-hint">地址中应直接包含更新描述文件、安装包和 blockmap；没有自建镜像时保持自动选择即可。</p>
-          </div>
-        </div>
-      </details>
     </Section>
   );
 };

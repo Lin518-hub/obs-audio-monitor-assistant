@@ -171,7 +171,7 @@ test('protects and aggregates the live room monitor', async () => {
       audio: {
         ready: true, phase: 'speaking', tone: 'safe', inputName: '备用麦克风', levelDb: -22,
         thresholdDb: -55, silentForSeconds: 0, silenceDurationSeconds: 120, display: '正在讲话',
-        hint: '音频正常', lastMeterReceivedAt: timestamp
+        hint: '音频正常', lastMeterReceivedAt: timestamp - 60_000, meterAgeMs: 120
       },
       atem: { connected: true, programInput: 3, previewInput: 4, inputLabels: { 3: '全景', 4: '手部特写' }, elapsedSeconds: 650, limitSeconds: 720, overLimit: false },
       obs: { connected: true, streaming: true, recording: true, fps: 59.94, cpu: 11, bitrateKbps: 5800 },
@@ -197,6 +197,9 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(room.warningCount, 0);
   assert.equal(room.devices[0].audio.inputName.length > 0, true);
   assert.equal(monitor.body.summary.onlineDevices >= 2, true);
+  const backupRoom = monitor.body.rooms.find((item) => item.name === '品牌二号直播间');
+  assert.equal(backupRoom.devices[0].audio.ready, true);
+  assert.equal(backupRoom.devices[0].audio.display, '正在讲话');
 
   primary.clear();
   const commandRequest = request(`/api/monitor/devices/${devices[0].uuid}/commands`, {

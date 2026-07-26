@@ -265,7 +265,7 @@ export const updateTriggerLabel = (state: UpdateSnapshot): string => {
     case 'downloading':
       return state.percent === null ? '下载更新中' : `下载 ${Math.round(state.percent)}%`;
     case 'downloaded':
-      return state.installMode === 'manual' ? '打开安装包' : '重启安装更新';
+      return state.installMode === 'manual' ? '发现 macOS 新版' : '更新已准备好';
     case 'error':
       return '更新失败';
     case 'not_available':

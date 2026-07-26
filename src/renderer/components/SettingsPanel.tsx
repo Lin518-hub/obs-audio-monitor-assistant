@@ -46,8 +46,6 @@ interface SettingsPanelProps {
   onChangeDraft: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   updateState: UpdateSnapshot | null;
   onCheckUpdate: () => void;
-  onDownloadUpdate: () => void;
-  onInstallUpdate: () => void;
   testingConnection: boolean;
   testResult: TestConnectionResult | null;
   onTestConnection: () => void;
@@ -126,14 +124,14 @@ const SettingsDisclosure: React.FC<DisclosureProps> = ({
     const inner = innerRef.current;
     if (!inner) return;
     const updateHeight = () => {
-      const nextHeight = Math.ceil(inner.getBoundingClientRect().height);
+      const nextHeight = Math.ceil(Math.max(inner.scrollHeight, inner.getBoundingClientRect().height));
       setContentHeight((current) => current === nextHeight ? current : nextHeight);
     };
     updateHeight();
     const observer = new ResizeObserver(updateHeight);
     observer.observe(inner);
     return () => observer.disconnect();
-  }, []);
+  }, [expanded]);
 
   return (
     <section className={`settings-disclosure ${expanded ? 'expanded' : ''} tone-${tone}`}>
@@ -218,8 +216,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     onChangeDraft,
     updateState,
     onCheckUpdate,
-    onDownloadUpdate,
-    onInstallUpdate,
     testingConnection,
     testResult,
     onTestConnection,
@@ -496,7 +492,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   summary={updateSummary}
                   tone={updateState?.status === 'available' || updateState?.status === 'downloaded' ? 'warning' : 'default'}
                 >
-                  <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} />
+                  <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
                   {...disclosureState('system-history')}

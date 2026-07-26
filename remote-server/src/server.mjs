@@ -124,12 +124,17 @@ function normalizeDesktopState(value) {
   const audio = state.audio && typeof state.audio === 'object' ? { ...state.audio } : {};
   const rawLevel = audio.levelDb;
   const lastMeterAt = Number(audio.lastMeterReceivedAt);
+  const meterAgeMs = typeof audio.meterAgeMs === 'number' && Number.isFinite(audio.meterAgeMs)
+    ? audio.meterAgeMs
+    : Number.NaN;
   const hasFreshMeter = typeof rawLevel === 'number'
     && Number.isFinite(rawLevel)
-    && Number.isFinite(lastMeterAt)
-    && now() - lastMeterAt <= 5000;
+    && (Number.isFinite(meterAgeMs)
+      ? meterAgeMs >= 0 && meterAgeMs <= 5000
+      : audio.ready === true);
 
   audio.levelDb = hasFreshMeter ? Math.max(-100, Math.min(12, rawLevel)) : null;
+  audio.meterAgeMs = Number.isFinite(meterAgeMs) ? Math.max(0, Math.min(60_000, meterAgeMs)) : null;
   if (!hasFreshMeter) {
     audio.ready = false;
     audio.phase = 'idle';

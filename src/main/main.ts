@@ -11,7 +11,7 @@ import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
 import { PreflightCheckService } from './preflightCheck.js';
-import { compareVersions, fileExists, PendingUpdateStore, type PendingUpdate } from './pendingUpdateStore.js';
+import { compareVersions, PendingUpdateStore, type PendingUpdate } from './pendingUpdateStore.js';
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { isPreflightAppId } from '../shared/preflight.js';
@@ -183,11 +183,14 @@ async function initializeApp(): Promise<void> {
   });
 
   registerIpc();
+  const installingPendingUpdate = await initializeUpdater();
+  if (installingPendingUpdate || isQuitting) {
+    return;
+  }
   if (!launchHidden) {
     createSettingsWindow(launchPreflight ? 'preflight' : undefined);
   }
   createTray();
-  initializeUpdater();
   remoteBridge.updateUpdateState(getUpdateState());
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
@@ -387,7 +390,19 @@ function registerIpc(): void {
       if (nextConfig.autoUpdateEnabled) {
         void runScheduledUpdateCycle();
       } else {
-        await pendingUpdateStore.clear();
+        await pendingUpdateStore.clear({ removeArtifact: true });
+        if (getUpdateState().status === 'downloaded') {
+          downloadedUpdateFilePath = null;
+          setUpdateState({
+            status: 'idle',
+            availableVersion: null,
+            downloadedVersion: null,
+            downloadedFilePath: null,
+            percent: null,
+            errorMessage: null,
+            message: '自动更新已关闭，已清理预下载安装包'
+          });
+        }
       }
     }
     return latestSnapshot;
@@ -468,7 +483,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('displays:get', () => getDisplays());
   ipcMain.handle('update:get-state', () => getUpdateState());
-  ipcMain.handle('update:check', () => checkForUpdates(true));
+  ipcMain.handle('update:check', () => checkAndStageUpdate(true));
   ipcMain.handle('update:download', () => downloadUpdate('manual'));
   ipcMain.handle('update:install', () => installDownloadedUpdate());
   ipcMain.handle('preflight:check', (_event, settings: unknown) => {
@@ -968,16 +983,17 @@ function unregisterATEMHotkeys(): void {
   }
 }
 
-function initializeUpdater(): void {
+async function initializeUpdater(): Promise<boolean> {
   updateState = createInitialUpdateState();
   broadcastUpdateState();
 
   if (!isUpdaterSupported()) {
-    return;
+    return false;
   }
 
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoInstallOnAppQuit = process.platform === 'win32';
+  autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.disableDifferentialDownload = true;
@@ -1045,7 +1061,6 @@ function initializeUpdater(): void {
     }
     const version = info.version ?? getUpdateState().availableVersion;
     const manualInstall = usesManualMacInstall();
-    const stagedInBackground = updateDownloadMode === 'background';
     setUpdateState({
       status: 'downloaded',
       availableVersion: version,
@@ -1054,13 +1069,9 @@ function initializeUpdater(): void {
       installMode: manualInstall ? 'manual' : 'auto',
       percent: 100,
       errorMessage: null,
-      message: stagedInBackground
-        ? manualInstall
-          ? (version ? `新版本 ${version} 已在后台下载，下次启动时会打开安装包` : '更新已在后台下载，下次启动时会打开安装包')
-          : (version ? `新版本 ${version} 已在后台下载，下次启动时自动安装` : '更新已在后台下载，下次启动时自动安装')
-        : manualInstall
-          ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
-          : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
+      message: manualInstall
+        ? (version ? `已检测到新版本 ${version}，请从发布页下载 macOS 安装包` : '已检测到新版，请从发布页下载 macOS 安装包')
+        : (version ? `新版本 ${version} 已在后台准备好，退出或下次启动时静默安装` : '更新已在后台准备好，退出或下次启动时静默安装')
     });
   });
   autoUpdater.on('error', (error: Error) => {
@@ -1077,12 +1088,12 @@ function initializeUpdater(): void {
     });
   });
 
-  void startUpdaterLifecycle();
+  return startUpdaterLifecycle();
 }
 
-async function startUpdaterLifecycle(): Promise<void> {
+async function startUpdaterLifecycle(): Promise<boolean> {
   const installing = await resumePendingUpdateAtStartup();
-  if (installing || isQuitting) return;
+  if (installing || isQuitting) return installing;
 
   updateInitialTimer = setTimeout(() => {
     void runScheduledUpdateCycle();
@@ -1090,14 +1101,13 @@ async function startUpdaterLifecycle(): Promise<void> {
   updateCheckTimer = setInterval(() => {
     void runScheduledUpdateCycle();
   }, UPDATE_CHECK_INTERVAL_MS);
+  return false;
 }
 
 async function runScheduledUpdateCycle(): Promise<void> {
   if (!isUpdaterSupported() || startupUpdateInProgress || isQuitting) return;
-  const checked = await checkForUpdates(false);
-  if (currentUpdateConfig().autoUpdateEnabled && checked.status === 'available') {
-    await downloadUpdate('background');
-  }
+  if (!currentUpdateConfig().autoUpdateEnabled) return;
+  await checkAndStageUpdate(false);
 }
 
 async function resumePendingUpdateAtStartup(): Promise<boolean> {
@@ -1107,38 +1117,33 @@ async function resumePendingUpdateAtStartup(): Promise<boolean> {
 
   const currentVersion = app.getVersion();
   if (compareVersions(currentVersion, pending.version) >= 0) {
-    await pendingUpdateStore.clear();
+    await pendingUpdateStore.clear({ removeArtifact: true, pending });
     return false;
   }
   if (!currentUpdateConfig().autoUpdateEnabled) {
-    await pendingUpdateStore.clear();
+    await pendingUpdateStore.clear({ removeArtifact: true, pending });
     return false;
   }
 
   if (usesManualMacInstall()) {
-    const filePath = pending.filePath;
-    if (filePath && await fileExists(filePath)) {
-      downloadedUpdateFilePath = filePath;
-      setUpdateState({
-        status: 'downloaded',
-        sourceLabel: pending.sourceLabel || getUpdateState().sourceLabel,
-        sourceUrl: pending.sourceUrl,
-        availableVersion: pending.version,
-        downloadedVersion: pending.version,
-        downloadedFilePath: filePath,
-        installMode: 'manual',
-        percent: 100,
-        errorMessage: null,
-        message: `新版本 ${pending.version} 已预下载。macOS 当前安装包未签名，请替换应用完成更新。`
-      });
-      shell.showItemInFolder(filePath);
-    }
-    await pendingUpdateStore.clear();
+    await pendingUpdateStore.clear({ removeArtifact: true, pending });
+    setUpdateState({
+      status: 'available',
+      sourceLabel: pending.sourceLabel || getUpdateState().sourceLabel,
+      sourceUrl: pending.sourceUrl,
+      availableVersion: pending.version,
+      downloadedVersion: null,
+      downloadedFilePath: null,
+      installMode: 'manual',
+      percent: null,
+      errorMessage: null,
+      message: `检测到新版本 ${pending.version}，macOS 请从发布页下载并替换应用`
+    });
     return false;
   }
 
   if (pending.installAttempts >= 2) {
-    await pendingUpdateStore.clear();
+    await pendingUpdateStore.clear({ removeArtifact: true, pending });
     setUpdateState({
       status: 'error',
       errorMessage: '自动安装连续失败，已停止重试',
@@ -1150,16 +1155,28 @@ async function resumePendingUpdateAtStartup(): Promise<boolean> {
   startupUpdateInProgress = true;
   try {
     setUpdateState({
-      status: 'checking',
+      status: 'idle',
       availableVersion: pending.version,
       errorMessage: null,
       message: `正在校验已预下载的新版本 ${pending.version}...`
     });
     const checked = await checkForUpdates(false);
     if (checked.status !== 'available') return false;
+    if (checked.availableVersion && compareVersions(checked.availableVersion, pending.version) > 0) {
+      await pendingUpdateStore.clear({ removeArtifact: true, pending });
+    }
     const downloaded = await downloadUpdate('startup');
     if (downloaded.status !== 'downloaded') return false;
-    await pendingUpdateStore.recordInstallAttempt(pending);
+    const downloadedVersion = downloaded.downloadedVersion ?? downloaded.availableVersion ?? pending.version;
+    await pendingUpdateStore.recordInstallAttempt({
+      version: downloadedVersion,
+      downloadedAt: Date.now(),
+      filePath: downloaded.downloadedFilePath,
+      sourceLabel: downloaded.sourceLabel,
+      sourceUrl: downloaded.sourceUrl,
+      installAttempts: compareVersions(downloadedVersion, pending.version) === 0 ? pending.installAttempts : 0,
+      lastInstallAttemptAt: compareVersions(downloadedVersion, pending.version) === 0 ? pending.lastInstallAttemptAt : null
+    });
     installDownloadedUpdate(true);
     return true;
   } catch (error) {
@@ -1249,7 +1266,7 @@ async function handleRemoteAdminCommand(command: RemoteAdminCommand): Promise<Re
       };
     }
     case 'check_update': {
-      const state = await checkForUpdates(false);
+      const state = await checkAndStageUpdate(false);
       return {
         ok: state.status !== 'error',
         message: state.message
@@ -1290,9 +1307,19 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
   }
 
   const current = getUpdateState();
-  if (current.status === 'downloaded') {
+  if (current.status === 'checking' || current.status === 'downloading') {
     return current;
   }
+  const staged = current.status === 'downloaded' && current.downloadedVersion
+    ? {
+        version: current.downloadedVersion,
+        filePath: current.downloadedFilePath,
+        source: current.source,
+        sourceLabel: current.sourceLabel,
+        sourceUrl: current.sourceUrl,
+        installMode: current.installMode
+      }
+    : null;
 
   if (updateCheckQueue.isBusy && !updateCheckQueue.isRunningCurrentGeneration) {
     const source = resolveConfiguredUpdateSource();
@@ -1354,8 +1381,41 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
           return getUpdateState();
         }
         const latest = getUpdateState();
+        const checkedVersion = result?.updateInfo.version ?? latest.availableVersion ?? null;
+        if (staged && checkedVersion && compareVersions(checkedVersion, staged.version) <= 0) {
+          downloadedUpdateFilePath = staged.filePath;
+          return setUpdateState({
+            status: 'downloaded',
+            source: candidate.id,
+            sourceLabel: candidate.label,
+            sourceUrl: candidate.url,
+            attemptedSources: [...attemptedSources],
+            availableVersion: staged.version,
+            downloadedVersion: staged.version,
+            downloadedFilePath: staged.filePath,
+            installMode: staged.installMode,
+            percent: 100,
+            errorMessage: null,
+            lastCheckedAt: Date.now(),
+            message: `v${staged.version} 已准备好，未发现比它更新的版本`
+          });
+        }
+        if (staged && checkedVersion && compareVersions(checkedVersion, staged.version) > 0) {
+          await pendingUpdateStore.clear({ removeArtifact: true });
+          downloadedUpdateFilePath = null;
+          return setUpdateState({
+            status: 'available',
+            availableVersion: checkedVersion,
+            downloadedVersion: null,
+            downloadedFilePath: null,
+            percent: null,
+            errorMessage: null,
+            lastCheckedAt: Date.now(),
+            message: `${candidate.label} 发现更新版本 ${checkedVersion}`
+          });
+        }
         if (latest.status === 'checking') {
-          const version = result?.updateInfo.version ?? latest.availableVersion ?? null;
+          const version = checkedVersion;
           setUpdateState({
             status: 'not_available',
             availableVersion: version,
@@ -1370,9 +1430,6 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
           return getUpdateState();
         }
         lastError = error;
-        if (config.updateSource !== 'auto') {
-          break;
-        }
       }
     }
 
@@ -1380,6 +1437,24 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
       return getUpdateState();
     }
     const errorMessage = formatUpdateError(lastError);
+    if (staged) {
+      downloadedUpdateFilePath = staged.filePath;
+      return setUpdateState({
+        status: 'downloaded',
+        source: staged.source,
+        sourceLabel: staged.sourceLabel,
+        sourceUrl: staged.sourceUrl,
+        attemptedSources,
+        availableVersion: staged.version,
+        downloadedVersion: staged.version,
+        downloadedFilePath: staged.filePath,
+        installMode: staged.installMode,
+        percent: 100,
+        errorMessage,
+        lastCheckedAt: Date.now(),
+        message: `v${staged.version} 已准备好；暂时无法确认是否还有更新版本`
+      });
+    }
     return setUpdateState({
       status: 'error',
       percent: null,
@@ -1389,6 +1464,14 @@ async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
       message: attemptedSources.length > 1 ? `${errorMessage}；已尝试 ${attemptedSources.join('、')}` : errorMessage
     });
   });
+}
+
+async function checkAndStageUpdate(manual: boolean): Promise<UpdateSnapshot> {
+  const checked = await checkForUpdates(manual);
+  if (checked.status !== 'available' || usesManualMacInstall()) {
+    return checked;
+  }
+  return downloadUpdate(manual ? 'manual' : 'background');
 }
 
 type UpdateFeed = Parameters<typeof autoUpdater.setFeedURL>[0];
@@ -1411,6 +1494,20 @@ function refreshUpdateSourceState(config: AppConfig): void {
   updateCheckQueue.invalidate();
   activeUpdaterGeneration = null;
   const source = resolveConfiguredUpdateSource(config);
+  const current = getUpdateState();
+  if (current.status === 'downloaded') {
+    setUpdateState({
+      source: source.id,
+      sourceLabel: source.label,
+      sourceUrl: source.url,
+      attemptedSources: [],
+      errorMessage: null,
+      message: current.downloadedVersion
+        ? `v${current.downloadedVersion} 已准备好，更新线路将在下次检查时自动选择`
+        : '更新已准备好，更新线路将在下次检查时自动选择'
+    });
+    return;
+  }
   downloadedUpdateFilePath = null;
   setUpdateState({
     status: isUpdaterSupported() ? 'idle' : 'unsupported',
@@ -1428,24 +1525,16 @@ function refreshUpdateSourceState(config: AppConfig): void {
 }
 
 function resolveConfiguredUpdateSource(config = currentUpdateConfig()): UpdateSourceInfo {
-  if (config.updateSource === 'auto') {
-    return {
-      id: 'auto',
-      label: '自动选择（内部服务器优先）',
-      url: null
-    };
-  }
-
-  const candidates = sourceCandidatesFor(config, false);
-  return candidates[0] ?? { id: config.updateSource, label: updateSourceLabel(config.updateSource), url: null };
+  void config;
+  return {
+    id: 'auto',
+    label: '自动选择（内部服务器优先）',
+    url: null
+  };
 }
 
 function resolveUpdateCandidates(config: AppConfig): UpdateCandidate[] {
-  if (config.updateSource === 'auto') {
-    return sourceCandidatesFor(config, true);
-  }
-
-  return sourceCandidatesFor(config, false).filter((candidate) => candidate.id === config.updateSource);
+  return sourceCandidatesFor(config, true);
 }
 
 function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): UpdateCandidate[] {
@@ -1455,7 +1544,7 @@ function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): Upda
     .filter(Boolean);
   const candidates: UpdateCandidate[] = [];
 
-  if (config.updateSource === 'lan' || includeFallbacks) {
+  if (includeFallbacks) {
     for (const [index, updateUrl] of internalUpdateUrls.entries()) {
       candidates.push(genericUpdateCandidate(
         'lan',
@@ -1467,19 +1556,19 @@ function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): Upda
     }
   }
 
-  if ((config.updateSource === 'aliyun' || includeFallbacks) && aliyunUrl) {
+  if (includeFallbacks && aliyunUrl) {
     candidates.push(genericUpdateCandidate('aliyun', '阿里云 OSS/CDN 镜像', aliyunUrl));
   }
 
-  if (config.updateSource === 'gh_proxy' || includeFallbacks) {
+  if (includeFallbacks) {
     candidates.push(genericUpdateCandidate('gh_proxy', 'GitHub 加速源 gh-proxy.com', GH_PROXY_RELEASE_BASE_URL));
   }
 
-  if (config.updateSource === 'ghproxy_net' || includeFallbacks) {
+  if (includeFallbacks) {
     candidates.push(genericUpdateCandidate('ghproxy_net', 'GitHub 加速源 ghproxy.net', GHPROXY_NET_RELEASE_BASE_URL));
   }
 
-  if (config.updateSource === 'github' || includeFallbacks) {
+  if (includeFallbacks) {
     candidates.push(genericUpdateCandidate('github', 'GitHub Releases', GITHUB_RELEASE_BASE_URL));
   }
 
@@ -1497,19 +1586,6 @@ function genericUpdateCandidate(id: UpdateSource, label: string, url: string): U
       url: normalized
     } as UpdateFeed
   };
-}
-
-function updateSourceLabel(source: UpdateSource): string {
-  const labels: Record<UpdateSource, string> = {
-    auto: '自动选择',
-    github: 'GitHub Releases',
-    gh_proxy: 'GitHub 加速源 gh-proxy.com',
-    ghproxy_net: 'GitHub 加速源 ghproxy.net',
-    aliyun: '阿里云 OSS/CDN 镜像',
-    lan: '直播间内部更新服务器'
-  };
-
-  return labels[source];
 }
 
 function normalizeUpdateBaseUrl(url: string): string {
@@ -1554,15 +1630,11 @@ async function downloadUpdate(mode: 'manual' | 'background' | 'startup' = 'manua
       setUpdateState({
         downloadedFilePath: downloadedUpdateFilePath,
         installMode: usesManualMacInstall() ? 'manual' : 'auto',
-        message: mode === 'background'
-          ? usesManualMacInstall()
-            ? (version ? `新版本 ${version} 已在后台下载，下次启动时会打开安装包` : '更新已在后台下载，下次启动时会打开安装包')
-            : (version ? `新版本 ${version} 已在后台下载，下次启动时自动安装` : '更新已在后台下载，下次启动时自动安装')
-          : usesManualMacInstall()
-            ? (version ? `新版本 ${version} 已下载，请打开安装包完成替换` : '更新已下载，请打开安装包完成替换')
-            : (version ? `新版本 ${version} 已下载，重启后安装` : '更新已下载，重启后安装')
+        message: usesManualMacInstall()
+          ? (version ? `检测到新版本 ${version}，请从发布页下载 macOS 安装包` : '检测到新版，请从发布页下载 macOS 安装包')
+          : (version ? `新版本 ${version} 已在后台准备好，退出或下次启动时静默安装` : '更新已在后台准备好，退出或下次启动时静默安装')
       });
-      if (mode === 'background' && currentUpdateConfig().autoUpdateEnabled && version && (!usesManualMacInstall() || downloadedUpdateFilePath)) {
+      if (mode !== 'startup' && version && !usesManualMacInstall()) {
         const state = getUpdateState();
         const pending: PendingUpdate = {
           version,
@@ -1578,7 +1650,7 @@ async function downloadUpdate(mode: 'manual' | 'background' | 'startup' = 'manua
         } catch (error) {
           console.error(`[updater] failed to persist pending update: ${error instanceof Error ? error.message : String(error)}`);
           setUpdateState({
-            message: '更新已下载，但无法登记下次启动自动安装；可立即手动安装'
+            message: '更新已下载，但无法登记下次启动静默安装；请重新检查更新'
           });
         }
       }
@@ -1639,7 +1711,7 @@ function pickDownloadedUpdateFile(paths: string[] | string | null | undefined): 
 function formatUpdateError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   if (/code signature|did not pass validation|ShipIt|签名/i.test(raw)) {
-    return 'macOS 自动替换需要签名安装包。当前版本已改为下载后手动打开安装包，请重新下载新版。';
+    return 'macOS 自动替换需要签名安装包，请从发布页下载新版并替换应用。';
   }
 
   if (/github|api\.github|release|latest\.yml/i.test(raw)) {
@@ -2642,11 +2714,11 @@ function updateTrayLabel(): string {
     case 'checking':
       return '正在检查更新...';
     case 'available':
-      return state.availableVersion ? `下载更新 ${state.availableVersion}` : '下载更新';
+      return state.availableVersion ? `检查并准备更新 ${state.availableVersion}` : '检查并准备更新';
     case 'downloading':
       return state.percent === null ? '正在下载更新...' : `正在下载更新 ${Math.round(state.percent)}%`;
     case 'downloaded':
-      return state.installMode === 'manual' ? '打开已下载的安装包' : '重启并安装更新';
+      return state.installMode === 'manual' ? '检查是否有更新版本' : '检查更新（已准备安装）';
     case 'error':
       return '检查更新失败，重试';
     case 'unsupported':
@@ -2663,18 +2735,7 @@ function updateTrayEnabled(): boolean {
 
 async function handleTrayUpdateClick(): Promise<void> {
   showSettingsWindow();
-  const state = getUpdateState();
-  if (state.status === 'downloaded') {
-    installDownloadedUpdate();
-    return;
-  }
-
-  if (state.status === 'available') {
-    await downloadUpdate();
-    return;
-  }
-
-  await checkForUpdates(true);
+  await checkAndStageUpdate(true);
 }
 
 function isHistoryAction(action: AlertAction): action is AlertHistoryAction {

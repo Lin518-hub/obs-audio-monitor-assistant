@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import { dirname, join } from 'node:path';
 
 export interface PendingUpdate {
@@ -61,18 +62,12 @@ export class PendingUpdateStore {
     return next;
   }
 
-  async clear(): Promise<void> {
+  async clear(options: { removeArtifact?: boolean; pending?: PendingUpdate | null } = {}): Promise<void> {
+    const pending = options.pending ?? (options.removeArtifact ? await this.load() : null);
     await rm(this.path, { force: true });
-  }
-}
-
-export async function fileExists(path: string | null): Promise<boolean> {
-  if (!path) return false;
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
+    if (options.removeArtifact && pending?.filePath && isUpdateArtifact(pending.filePath)) {
+      await rm(pending.filePath, { force: true }).catch(() => undefined);
+    }
   }
 }
 
@@ -85,6 +80,10 @@ export function compareVersions(left: string, right: string): number {
     if (difference !== 0) return difference > 0 ? 1 : -1;
   }
   return 0;
+}
+
+function isUpdateArtifact(path: string): boolean {
+  return ['.exe', '.msi', '.zip', '.dmg', '.pkg'].includes(extname(path).toLowerCase());
 }
 
 function versionParts(value: string): number[] {
