@@ -916,12 +916,12 @@ export const RemoteAccessSection: React.FC<{
   }, [snapshot.remoteAccessPairUrl]);
 
   const status = snapshot.remoteAccessConnected
-    ? { label: `远程服务已连接${activeRoute ? ` · ${activeRoute}` : ''}`, tone: 'ok' }
+    ? { label: `集中监控已连接${activeRoute ? ` · ${activeRoute}` : ''}`, tone: 'ok' }
     : snapshot.remoteAccessConnectionState === 'connecting'
       ? { label: usingBuiltInService ? '正在自动检测局域网与公网线路' : '正在连接自定义远程服务', tone: 'pending' }
       : snapshot.remoteAccessErrorMessage
         ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
-        : { label: '远程访问未启用', tone: 'idle' };
+        : { label: '集中监控服务未连接', tone: 'idle' };
 
   const copyPairUrl = async () => {
     if (!snapshot.remoteAccessPairUrl) return;
@@ -932,10 +932,23 @@ export const RemoteAccessSection: React.FC<{
 
   return (
     <Section id="settings-remote" icon={QrCode} title="手机远程访问" description="扫码申请、移动监看和访问审批">
+      <div className="settings-field">
+        <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
+        <input
+          id="livestream-room-name"
+          className="input"
+          value={draft.livestreamRoomName}
+          maxLength={60}
+          onChange={(event) => onChange('livestreamRoomName', event.target.value)}
+          placeholder="例如：品牌 A 一号直播间"
+          aria-required="true"
+        />
+        <span className="settings-field-help">用于服务器聚合、移动监看和外部报警通知；同一直播间的电脑请填写相同名称。</span>
+      </div>
       <ToggleRow
         id="remote-access-enabled"
         title="启用手机扫码访问"
-        description="电脑主动连接远程服务；手机必须经过管理员审批后才能查看监控状态"
+        description="只控制手机申请与查看权限；关闭后电脑仍以低开销方式向内部监控中心上报状态"
         checked={draft.remoteAccessEnabled}
         onChange={(value) => onChange('remoteAccessEnabled', value)}
       />
@@ -963,17 +976,21 @@ export const RemoteAccessSection: React.FC<{
         <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
       </div>
       <div className="remote-device-id"><span>本机 UUID</span><code>{draft.remoteDeviceUuid}</code></div>
-      <div className="remote-access-grid">
-        <div className="remote-qr-card">
-          {qrDataUrl ? <img src={qrDataUrl} alt="手机远程访问二维码" /> : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
+      {draft.remoteAccessEnabled ? (
+        <div className="remote-access-grid">
+          <div className="remote-qr-card">
+            {qrDataUrl ? <img src={qrDataUrl} alt="手机远程访问二维码" /> : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
+          </div>
+          <div className="remote-access-copy">
+            <strong>首次扫码需要审批</strong>
+            <p>手机提交访问申请后，管理员在统一后台批准，该浏览器才会进入当前直播间的监控面板。</p>
+            <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
+            <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
+          </div>
         </div>
-        <div className="remote-access-copy">
-          <strong>首次扫码需要审批</strong>
-          <p>手机输入直播间名称并提交申请，管理员在统一后台批准后，该浏览器才会进入监控面板。</p>
-          <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
-          <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
-        </div>
-      </div>
+      ) : (
+        <div className="settings-hint">手机访问当前已关闭。集中监控、版本上报和企业微信报警不受影响。</div>
+      )}
       <div className="settings-hint warn">手机端仅提供只读监看，不允许远程切换 ATEM。公网使用时只批准可信设备，并及时撤销不再使用的授权。</div>
     </Section>
   );

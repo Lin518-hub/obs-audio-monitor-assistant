@@ -126,8 +126,22 @@ export function selectNewOBSProjectorWindow(windows: WindowsTopLevelWindow[]): W
 
 export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const title = window.title.toLocaleLowerCase('zh-CN');
-  if (/multiview|多画面/.test(title)) return false;
-  return /(?:projector|投影).*(?:program|节目)|(?:program|节目).*(?:projector|投影)|program\s+output|节目输出/.test(title);
+  if (/multiview|多画面|scene|场景|source|来源|preview|预览|settings?|设置|properties|属性|filters?|滤镜/.test(title)) {
+    return false;
+  }
+
+  const projector = /projector|投影/.test(title);
+  const programOutput = /program|节目|pgm|output|输出/.test(title);
+  if (projector && programOutput) return true;
+
+  // OBS translations and vendor builds do not always append “Program” to the
+  // title. These names still uniquely describe an OBS projector after the
+  // non-program variants above have been excluded.
+  if (/(?:windowed|fullscreen)\s+projector|窗口化投影|全屏投影/.test(title)) return true;
+
+  // Some localized builds expose the right-click “Projector - Output” window
+  // as an output-view title without the word “projector”.
+  return /(?:obs\s*)?(?:program|节目|pgm)\s*(?:output|输出)|(?:obs\s*)?(?:output|输出)(?:\s*画面|\s*view)?$/.test(title);
 }
 
 function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {

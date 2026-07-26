@@ -107,6 +107,51 @@ root.render(
   </RendererErrorBoundary>
 );
 
+function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unknown> }) {
+  const [roomName, setRoomName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const normalized = roomName.trim().replace(/[\u0000-\u001f]/g, '').slice(0, 60);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!normalized || saving) return;
+    setSaving(true);
+    try {
+      await onSave(normalized);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <main className="room-name-setup">
+      <form className="room-name-card" onSubmit={(event) => void submit(event)}>
+        <div className="room-name-icon"><Mic2 size={32} /></div>
+        <div className="room-name-copy">
+          <span>直播工作站识别</span>
+          <h1>这台电脑属于哪个直播间？</h1>
+          <p>名称用于汇总音频、机位和报警状态。同一直播间的多台电脑请填写完全相同的名称。</p>
+        </div>
+        <label className="room-name-field">
+          <span>直播间名称</span>
+          <input
+            autoFocus
+            value={roomName}
+            maxLength={60}
+            onChange={(event) => setRoomName(event.target.value)}
+            placeholder="例如：品牌 A 一号直播间"
+            autoComplete="organization"
+          />
+        </label>
+        <button type="submit" className="btn-primary" disabled={!normalized || saving}>
+          {saving ? '正在保存…' : '确认并继续'} <ArrowRight size={17} />
+        </button>
+        <small>以后可以在“设置 → 连接与设备 → 手机远程”中修改。</small>
+      </form>
+    </main>
+  );
+}
+
 // =============================================================================
 // SettingsApp — 3 栏主界面(左导航 / 中信息 / 右详情)
 // =============================================================================
@@ -218,6 +263,10 @@ function SettingsApp() {
 
   if (!snapshot || !draft) {
     return <div className="boot-screen">正在启动 OBS 音频检测助手…</div>;
+  }
+
+  if (!draft.livestreamRoomName.trim()) {
+    return <RoomNameSetup onSave={(roomName) => flushSave({ livestreamRoomName: roomName })} />;
   }
 
   // 首次安装或版本更新：显示引导向导，不清空已有配置。

@@ -372,8 +372,14 @@ export interface AppConfig {
     atem: boolean;
     obsStats: boolean;
   };
+  /**
+   * Keeps the lightweight desktop heartbeat connected to the internal
+   * monitoring service. Mobile pairing remains controlled separately.
+   */
+  centralMonitoringEnabled: boolean;
   remoteAccessEnabled: boolean;
   remoteServerUrl: string;
+  livestreamRoomName: string;
   remoteDeviceUuid: string;
   remoteDeviceSecret: string;
   developerModeEnabled: boolean;
@@ -476,6 +482,22 @@ export interface AppSnapshot {
   remoteAccessLastSyncAt: number | null;
 }
 
+export const REMOTE_ADMIN_COMMANDS = [
+  'show_app',
+  'reconnect_obs',
+  'reconnect_atem',
+  'check_update',
+  'pause_monitoring',
+  'resume_monitoring'
+] as const;
+
+export type RemoteAdminCommand = typeof REMOTE_ADMIN_COMMANDS[number];
+
+export interface RemoteAdminCommandResult {
+  ok: boolean;
+  message: string;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   obsHost: '127.0.0.1',
   obsPort: 4455,
@@ -506,8 +528,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     atem: false,
     obsStats: false
   },
+  centralMonitoringEnabled: true,
   remoteAccessEnabled: false,
   remoteServerUrl: 'https://obs.huaweilive.top:8088',
+  livestreamRoomName: '',
   remoteDeviceUuid: '',
   remoteDeviceSecret: '',
   developerModeEnabled: false,

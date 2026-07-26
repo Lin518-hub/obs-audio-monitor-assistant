@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#eaf6ee">
+  <title>直播间监控中心</title>
+  <link rel="stylesheet" href="/assets/app.css?v=3.9.0">
+</head>
+<body class="monitor-page">
+  <section id="monitor-login" class="auth-shell">
+    <article class="auth-card admin-login-card">
+      <div class="brand-mark">监</div>
+      <span class="eyebrow">OBS 音频检测助手</span>
+      <h1>直播间监控中心</h1>
+      <p>统一查看各直播间电脑、音频、机位与直播状态。使用管理后台密码登录。</p>
+      <label>管理员密码<input id="monitor-password" type="password" autocomplete="current-password" placeholder="输入管理员密码"></label>
+      <button id="monitor-login-button" class="primary touch-button">进入监控中心</button>
+      <p id="monitor-login-error" class="form-error"></p>
+    </article>
+  </section>
+
+  <div id="monitor-dashboard" class="monitor-shell hidden">
+    <header class="monitor-topbar">
+      <div class="monitor-brand">
+        <div class="brand-mark">声</div>
+        <div><strong>直播间监控中心</strong><span>实时汇总音频与机位状态</span></div>
+      </div>
+      <div class="monitor-top-actions">
+        <span id="monitor-updated-at" class="monitor-updated-at">正在同步</span>
+        <button id="refresh-monitor" class="secondary touch-button">刷新</button>
+        <a class="secondary touch-button monitor-admin-link" href="/admin">管理后台</a>
+      </div>
+    </header>
+
+    <main class="monitor-content">
+      <section class="monitor-heading">
+        <div><span class="eyebrow">集中监控</span><h1>当前直播状态</h1><p>异常优先显示；电脑端、更新缓存和通知服务统一汇总。</p></div>
+        <div class="monitor-heading-status">
+          <span id="monitor-notify-chip" class="state-pill offline">企业微信未配置</span>
+          <span id="monitor-service-chip" class="state-pill offline">服务连接中</span>
+        </div>
+      </section>
+
+      <section id="monitor-summary" class="monitor-summary" aria-label="监控摘要"></section>
+      <section class="monitor-toolbar" aria-label="设备筛选">
+        <label class="monitor-search">
+          <span>搜索</span>
+          <input id="monitor-search-input" type="search" autocomplete="off" placeholder="直播间、电脑、音源或机位">
+        </label>
+        <div id="monitor-filter" class="monitor-segments" role="group" aria-label="状态筛选">
+          <button type="button" class="active" data-filter="all">全部</button>
+          <button type="button" data-filter="alert">异常</button>
+          <button type="button" data-filter="live">直播中</button>
+          <button type="button" data-filter="offline">离线</button>
+          <button type="button" data-filter="update">待更新</button>
+        </div>
+      </section>
+      <section id="monitor-rooms" class="monitor-rooms" aria-live="polite"></section>
+      <section class="monitor-activity">
+        <header><div><span class="eyebrow">操作审计</span><h2>最近后台操作</h2></div><span>仅保留最近 30 天</span></header>
+        <div id="monitor-command-log" class="monitor-command-log"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="monitor-drawer-backdrop" class="monitor-drawer-backdrop hidden"></div>
+  <aside id="monitor-device-drawer" class="monitor-device-drawer hidden" aria-labelledby="monitor-device-title">
+    <header>
+      <div><span class="eyebrow">电脑详情</span><h2 id="monitor-device-title">设备</h2><p id="monitor-device-subtitle"></p></div>
+      <button id="monitor-device-close" type="button" class="monitor-icon-button" aria-label="关闭设备详情">×</button>
+    </header>
+    <div id="monitor-device-detail" class="monitor-device-detail"></div>
+    <footer id="monitor-device-actions" class="monitor-device-actions"></footer>
+  </aside>
+
+  <div id="monitor-confirm" class="monitor-confirm-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-confirm-title">
+    <article class="monitor-confirm-card">
+      <span class="eyebrow">请确认</span>
+      <h2 id="monitor-confirm-title">暂停检测</h2>
+      <p id="monitor-confirm-copy">暂停后电脑仍保持在线，但不会触发音频报警。</p>
+      <div><button id="monitor-confirm-cancel" type="button" class="secondary touch-button">取消</button><button id="monitor-confirm-accept" type="button" class="primary touch-button">确认暂停</button></div>
+    </article>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/assets/monitor.js?v=3.9.0" defer></script>
+</body>
+</html>

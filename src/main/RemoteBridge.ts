@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { hostname } from 'node:os';
+import { hostname, release } from 'node:os';
 import { ProxyAgent } from 'proxy-agent';
 import WebSocket from 'ws';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
@@ -10,7 +10,10 @@ import {
   type AppConfig,
   type AppSnapshot,
   type AudioMeterFrame,
-  type RemoteAccessSnapshot
+  type RemoteAccessSnapshot,
+  type RemoteAdminCommand,
+  type RemoteAdminCommandResult,
+  type UpdateSnapshot
 } from '../shared/types.js';
 
 export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types.js';
@@ -18,6 +21,8 @@ export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types
 interface RemoteBridgeEvents {
   stateChanged: [RemoteAccessSnapshot];
 }
+
+type RemoteAdminCommandHandler = (command: RemoteAdminCommand) => Promise<RemoteAdminCommandResult>;
 
 const SEND_INTERVAL_MS = 400;
 const METER_SEND_INTERVAL_MS = 80;
@@ -36,17 +41,30 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private latencyPingSentAt: number | null = null;
   private latestMeterFrame: AudioMeterFrame | null = null;
   private latestSnapshot: AppSnapshot | null = null;
+  private latestUpdateSnapshot: UpdateSnapshot | null = null;
+  private commandHandler: RemoteAdminCommandHandler | null = null;
   private enabled = false;
+  private mobileAccessEnabled = false;
   private configuredServerUrl = '';
   private serverCandidates: string[] = [];
   private serverUrl = '';
+  private roomName = '';
   private uuid = '';
   private secret = '';
   private generation = 0;
+  private readonly appVersion: string;
+  private readonly platform = process.platform;
+  private readonly architecture = process.arch;
+  private readonly osRelease = release();
   private state: RemoteAccessSnapshot = {
     connectionState: 'disabled', connected: false, activeServerUrl: null, pairUrl: null, errorMessage: null, lastConnectedAt: null,
     routeType: null, latencyMs: null, onlineMobileClients: 0, lastSyncAt: null
   };
+
+  constructor(appVersion = 'unknown') {
+    super();
+    this.appVersion = appVersion;
+  }
 
   static createDeviceIdentity(): { uuid: string; secret: string } {
     return { uuid: randomUUID(), secret: randomBytes(32).toString('hex') };
@@ -56,13 +74,26 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     return { ...this.state };
   }
 
+  setCommandHandler(handler: RemoteAdminCommandHandler): void {
+    this.commandHandler = handler;
+  }
+
   async configure(config: AppConfig): Promise<void> {
     const normalizedUrl = normalizeServerUrl(config.remoteServerUrl);
-    const changed = this.enabled !== config.remoteAccessEnabled || this.configuredServerUrl !== normalizedUrl || this.uuid !== config.remoteDeviceUuid || this.secret !== config.remoteDeviceSecret;
-    this.enabled = config.remoteAccessEnabled;
+    const roomName = config.livestreamRoomName.trim();
+    const enabled = config.centralMonitoringEnabled || config.remoteAccessEnabled;
+    const changed = this.enabled !== enabled
+      || this.mobileAccessEnabled !== config.remoteAccessEnabled
+      || this.configuredServerUrl !== normalizedUrl
+      || this.roomName !== roomName
+      || this.uuid !== config.remoteDeviceUuid
+      || this.secret !== config.remoteDeviceSecret;
+    this.enabled = enabled;
+    this.mobileAccessEnabled = config.remoteAccessEnabled;
     this.configuredServerUrl = normalizedUrl;
     this.serverCandidates = remoteServerCandidates(normalizedUrl);
     this.serverUrl = this.serverCandidates[0] ?? '';
+    this.roomName = roomName;
     this.uuid = config.remoteDeviceUuid;
     this.secret = config.remoteDeviceSecret;
     if (!changed) return;
@@ -96,6 +127,11 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     }, METER_SEND_INTERVAL_MS);
   }
 
+  updateUpdateState(snapshot: UpdateSnapshot): void {
+    this.latestUpdateSnapshot = snapshot;
+    if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
+  }
+
   async stop(): Promise<void> {
     this.enabled = false;
     this.generation += 1;
@@ -105,6 +141,10 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   private async connect(generation: number): Promise<void> {
     if (!this.enabled || generation !== this.generation) return;
+    if (!this.roomName) {
+      this.setState({ connectionState: 'error', connected: false, errorMessage: '请先填写直播间名称' });
+      return;
+    }
     if (this.serverCandidates.length === 0 || !this.uuid || this.secret.length < 32) {
       this.setState({ connectionState: 'error', connected: false, errorMessage: '远程访问配置无效' });
       return;
@@ -159,7 +199,17 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     const response = await session.defaultSession.fetch(`${serverUrl}/api/devices/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uuid: this.uuid, secret: this.secret, label: hostname() }),
+      body: JSON.stringify({
+        uuid: this.uuid,
+        secret: this.secret,
+        label: hostname(),
+        roomName: this.roomName,
+        mobileAccessEnabled: this.mobileAccessEnabled,
+        appVersion: this.appVersion,
+        platform: this.platform,
+        arch: this.architecture,
+        osRelease: this.osRelease
+      }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)])
     });
     const body = await response.json() as { device?: { pairUrl?: string }; error?: string };
@@ -202,6 +252,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
           this.setState({ latencyMs: Math.max(0, Date.now() - Number(message.sentAt)) });
         } else if (message.type === 'state-ack') {
           this.setState({ lastSyncAt: Number.isFinite(message.receivedAt) ? Number(message.receivedAt) : Date.now() });
+        } else if (message.type === 'admin-command' && message.id && isRemoteAdminCommand(message.command)) {
+          void this.executeAdminCommand(message.id, message.command);
         } else if (message.type === 'command' && message.id) {
           this.send({ type: 'command-result', id: message.id, ok: false, message: '手机远程当前仅支持监看' });
         }
@@ -225,7 +277,38 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   private sendState(): void {
     if (!this.latestSnapshot) return;
-    this.send({ type: 'state', state: remoteTelemetry(this.latestSnapshot) });
+    this.send({
+      type: 'state',
+      state: remoteTelemetry(
+        this.latestSnapshot,
+        this.latestUpdateSnapshot,
+        {
+          version: this.appVersion,
+          platform: this.platform,
+          arch: this.architecture,
+          osRelease: this.osRelease,
+          mobileAccessEnabled: this.mobileAccessEnabled
+        }
+      )
+    });
+  }
+
+  private async executeAdminCommand(id: string, command: RemoteAdminCommand): Promise<void> {
+    if (!this.commandHandler) {
+      this.send({ type: 'admin-command-result', id, ok: false, message: '电脑端暂未就绪' });
+      return;
+    }
+    try {
+      const result = await this.commandHandler(command);
+      this.send({ type: 'admin-command-result', id, ...result });
+    } catch (error) {
+      this.send({
+        type: 'admin-command-result',
+        id,
+        ok: false,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private send(payload: unknown): void {
@@ -444,7 +527,11 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
   };
 }
 
-function remoteTelemetry(snapshot: AppSnapshot) {
+function remoteTelemetry(
+  snapshot: AppSnapshot,
+  update: UpdateSnapshot | null,
+  identity: { version: string; platform: string; arch: string; osRelease: string; mobileAccessEnabled: boolean }
+) {
   return {
     timestamp: Date.now(),
     desktopOnline: true,
@@ -465,7 +552,25 @@ function remoteTelemetry(snapshot: AppSnapshot) {
     },
     obs: {
       connected: snapshot.connected, streaming: snapshot.streaming, recording: snapshot.recording,
+      simulatedLive: snapshot.simulatedLive, virtualCameraActive: snapshot.virtualCameraActive,
+      liveActive: snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive,
       fps: snapshot.obsStats.activeFps, cpu: snapshot.obsStats.cpuUsage, bitrateKbps: snapshot.obsStats.streamBitrateKbps
+    },
+    app: {
+      version: identity.version,
+      platform: identity.platform,
+      arch: identity.arch,
+      osRelease: identity.osRelease,
+      mobileAccessEnabled: identity.mobileAccessEnabled,
+      paused: snapshot.config.paused,
+      autoUpdateEnabled: snapshot.config.autoUpdateEnabled,
+      updateStatus: update?.status ?? 'idle',
+      updateCurrentVersion: update?.currentVersion ?? identity.version,
+      updateAvailableVersion: update?.availableVersion ?? null,
+      updateDownloadedVersion: update?.downloadedVersion ?? null,
+      updateSourceLabel: update?.sourceLabel ?? null,
+      updateLastCheckedAt: update?.lastCheckedAt ?? null,
+      updateMessage: update?.message ?? null
     },
     service: {
       routeType: snapshot.remoteAccessRouteType,
@@ -474,4 +579,15 @@ function remoteTelemetry(snapshot: AppSnapshot) {
       lastSyncAt: snapshot.remoteAccessLastSyncAt
     }
   };
+}
+
+function isRemoteAdminCommand(value: unknown): value is RemoteAdminCommand {
+  return [
+    'show_app',
+    'reconnect_obs',
+    'reconnect_atem',
+    'check_update',
+    'pause_monitoring',
+    'resume_monitoring'
+  ].includes(String(value));
 }

@@ -8,6 +8,7 @@ import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createUpdateCache, parseUpdateReleaseBases } from './update-cache.mjs';
+import { createWeComNotifier } from './wecom-notifier.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = resolve(here, '../public');
@@ -22,6 +23,9 @@ const adminPassword = String(process.env.ADMIN_PASSWORD || '');
 const updateSyncEnabled = !/^(0|false|off)$/i.test(String(process.env.UPDATE_SYNC_ENABLED || 'true'));
 const updateSyncIntervalMs = Math.max(60_000, Number(process.env.UPDATE_SYNC_INTERVAL_MS || 2 * 60 * 1000));
 const updateSyncToken = String(process.env.UPDATE_SYNC_TOKEN || '');
+const updateGithubToken = String(process.env.UPDATE_GITHUB_TOKEN || '');
+const weComWebhookUrl = String(process.env.WECOM_WEBHOOK_URL || '');
+const weComNotifyEnabled = !/^(0|false|off)$/i.test(String(process.env.WECOM_NOTIFY_ENABLED || 'true'));
 if (adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters');
 
 await mkdir(dataDir, { recursive: true });
@@ -31,14 +35,37 @@ const updateCache = createUpdateCache({
   updateDir,
   enabled: updateSyncEnabled,
   intervalMs: updateSyncIntervalMs,
-  releaseBases: parseUpdateReleaseBases(process.env.UPDATE_RELEASE_BASE_URLS)
+  releaseBases: parseUpdateReleaseBases(process.env.UPDATE_RELEASE_BASE_URLS),
+  githubToken: updateGithubToken
 });
 await updateCache.initialize();
+const weComNotifier = createWeComNotifier({
+  webhookUrl: weComWebhookUrl,
+  enabled: weComNotifyEnabled
+});
 
-const emptyData = () => ({ devices: [], requests: [], approvals: [] });
+const REMOTE_ADMIN_COMMANDS = new Set([
+  'show_app',
+  'reconnect_obs',
+  'reconnect_atem',
+  'check_update',
+  'pause_monitoring',
+  'resume_monitoring'
+]);
+const REMOTE_ADMIN_COMMAND_LABELS = {
+  show_app: '打开检测助手',
+  reconnect_obs: '重连 OBS',
+  reconnect_atem: '重连 ATEM',
+  check_update: '检查更新',
+  pause_monitoring: '暂停检测',
+  resume_monitoring: '恢复检测'
+};
+const COMMAND_TIMEOUT_MS = 20_000;
+const emptyData = () => ({ devices: [], requests: [], approvals: [], commands: [] });
 let data = await loadData();
 const desktopSockets = new Map();
 const mobileSockets = new Map();
+const pendingAdminCommands = new Map();
 const adminSessions = new Map();
 const loginAttempts = new Map();
 const requestLimits = new Map();
@@ -50,7 +77,8 @@ async function loadData() {
     return {
       devices: Array.isArray(parsed.devices) ? parsed.devices : [],
       requests: Array.isArray(parsed.requests) ? parsed.requests : [],
-      approvals: Array.isArray(parsed.approvals) ? parsed.approvals : []
+      approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
+      commands: Array.isArray(parsed.commands) ? parsed.commands : []
     };
   } catch {
     return emptyData();
@@ -136,6 +164,9 @@ function pruneStoredData() {
   data.approvals = data.approvals
     .filter((approval) => !approval.revokedAt || approval.revokedAt > current - 30 * 24 * 60 * 60 * 1000)
     .slice(-2000);
+  data.commands = data.commands
+    .filter((command) => (command.requestedAt || 0) > current - 30 * 24 * 60 * 60 * 1000)
+    .slice(-500);
 }
 
 function allowRequest(req, scope, max, windowMs) {
@@ -209,6 +240,11 @@ function publicDevice(device) {
     roomName: device.roomName || '',
     online: desktopSockets.has(device.uuid),
     onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
+    mobileAccessEnabled: device.mobileAccessEnabled !== false,
+    appVersion: cleanText(device.appVersion, 32) || null,
+    platform: cleanText(device.platform, 20) || null,
+    arch: cleanText(device.arch, 20) || null,
+    osRelease: cleanText(device.osRelease, 80) || null,
     lastSeenAt: device.lastSeenAt || null,
     createdAt: device.createdAt,
     pairUrl: `${publicBaseUrl}/pair/${encodeURIComponent(device.pairToken)}`
@@ -244,6 +280,220 @@ function publicApproval(approval) {
   };
 }
 
+function monitorDevice(device) {
+  const online = desktopSockets.has(device.uuid);
+  const state = device.lastState ? normalizeDesktopState(device.lastState) : null;
+  const audio = state?.audio && typeof state.audio === 'object' ? state.audio : {};
+  const atem = state?.atem && typeof state.atem === 'object' ? state.atem : {};
+  const obs = state?.obs && typeof state.obs === 'object' ? state.obs : {};
+  const service = state?.service && typeof state.service === 'object' ? state.service : {};
+  const appState = state?.app && typeof state.app === 'object' ? state.app : {};
+  const latestVersion = cleanText(updateCache.getStatus().version, 32) || null;
+  const installedVersion = cleanText(appState.version, 32) || cleanText(device.appVersion, 32) || null;
+  const updateStatus = cleanText(appState.updateStatus, 32) || 'unknown';
+  const updateAvailableVersion = cleanText(appState.updateAvailableVersion, 32) || null;
+  const updateDownloadedVersion = cleanText(appState.updateDownloadedVersion, 32) || null;
+  const updateAvailable = Boolean(
+    updateAvailableVersion
+    || updateDownloadedVersion
+    || (installedVersion && latestVersion && compareVersions(installedVersion, latestVersion) < 0)
+  );
+  const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
+  const audioTone = !online
+    ? 'offline'
+    : audio.phase === 'alert' || audio.tone === 'danger'
+      ? 'danger'
+      : audio.tone === 'warning'
+        ? 'warning'
+        : live && audio.ready !== true
+          ? 'warning'
+          : audio.ready === true
+            ? 'safe'
+            : 'idle';
+  const elapsedSeconds = wholeNumber(atem.elapsedSeconds);
+  const limitSeconds = wholeNumber(atem.limitSeconds);
+  const cameraTone = !online || atem.connected !== true
+    ? 'idle'
+    : atem.overLimit === true
+      ? 'danger'
+      : limitSeconds > 0 && elapsedSeconds >= limitSeconds * 0.9
+        ? 'warning'
+        : 'safe';
+
+  return {
+    uuid: device.uuid,
+    label: device.label,
+    roomName: device.roomName || '未命名直播间',
+    online,
+    onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
+    lastSeenAt: device.lastSeenAt || null,
+    stateUpdatedAt: finiteNumber(state?.timestamp),
+    overallTone: strongestTone(audioTone, cameraTone, online ? 'safe' : 'offline'),
+    audio: {
+      tone: audioTone,
+      ready: audio.ready === true,
+      phase: cleanText(audio.phase, 20) || 'idle',
+      inputName: cleanText(audio.inputName, 100) || '未选择音源',
+      levelDb: finiteNumber(audio.levelDb),
+      thresholdDb: finiteNumber(audio.thresholdDb),
+      silentForSeconds: wholeNumber(audio.silentForSeconds),
+      silenceDurationSeconds: wholeNumber(audio.silenceDurationSeconds),
+      display: cleanText(audio.display, 80) || '等待音频数据',
+      hint: cleanText(audio.hint, 160),
+      lastMeterReceivedAt: finiteNumber(audio.lastMeterReceivedAt)
+    },
+    atem: {
+      tone: cameraTone,
+      connected: atem.connected === true,
+      programInput: wholeNumber(atem.programInput),
+      previewInput: wholeNumber(atem.previewInput),
+      programName: cleanText(atem.inputLabels?.[atem.programInput], 100) || '',
+      previewName: cleanText(atem.inputLabels?.[atem.previewInput], 100) || '',
+      elapsedSeconds,
+      limitSeconds,
+      overLimit: atem.overLimit === true
+    },
+    obs: {
+      connected: obs.connected === true,
+      streaming: obs.streaming === true,
+      recording: obs.recording === true,
+      simulatedLive: obs.simulatedLive === true,
+      virtualCameraActive: obs.virtualCameraActive === true,
+      liveActive: live,
+      fps: finiteNumber(obs.fps),
+      cpu: finiteNumber(obs.cpu),
+      bitrateKbps: finiteNumber(obs.bitrateKbps)
+    },
+    app: {
+      version: installedVersion,
+      platform: cleanText(appState.platform, 20) || cleanText(device.platform, 20) || null,
+      arch: cleanText(appState.arch, 20) || cleanText(device.arch, 20) || null,
+      osRelease: cleanText(appState.osRelease, 80) || cleanText(device.osRelease, 80) || null,
+      paused: appState.paused === true,
+      autoUpdateEnabled: appState.autoUpdateEnabled !== false,
+      mobileAccessEnabled: appState.mobileAccessEnabled !== false && device.mobileAccessEnabled !== false,
+      updateStatus,
+      updateAvailable,
+      updateAvailableVersion,
+      updateDownloadedVersion,
+      updateSourceLabel: cleanText(appState.updateSourceLabel, 100) || null,
+      updateLastCheckedAt: finiteNumber(appState.updateLastCheckedAt),
+      updateMessage: cleanText(appState.updateMessage, 180) || null
+    },
+    service: {
+      routeType: cleanText(service.routeType, 20) || null,
+      latencyMs: finiteNumber(service.latencyMs),
+      lastSyncAt: finiteNumber(service.lastSyncAt)
+    }
+  };
+}
+
+function monitorOverview() {
+  const grouped = new Map();
+  for (const device of data.devices) {
+    const item = monitorDevice(device);
+    const room = grouped.get(item.roomName) || { name: item.roomName, devices: [] };
+    room.devices.push(item);
+    grouped.set(item.roomName, room);
+  }
+
+  const rooms = Array.from(grouped.values()).map((room) => {
+    room.devices.sort((left, right) => Number(right.online) - Number(left.online) || String(left.label).localeCompare(String(right.label), 'zh-CN'));
+    const tone = room.devices.reduce((current, device) => strongestTone(current, device.overallTone), 'offline');
+    return {
+      name: room.name,
+      tone,
+      totalDevices: room.devices.length,
+      onlineDevices: room.devices.filter((device) => device.online).length,
+      activeLiveDevices: room.devices.filter((device) => device.obs.liveActive).length,
+      alertCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'danger') + Number(device.atem.tone === 'danger'), 0),
+      warningCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'warning') + Number(device.atem.tone === 'warning'), 0),
+      onlineMobileClients: room.devices.reduce((count, device) => count + device.onlineMobileClients, 0),
+      updateAvailableDevices: room.devices.filter((device) => device.app.updateAvailable).length,
+      devices: room.devices
+    };
+  }).sort((left, right) => toneRank(right.tone) - toneRank(left.tone) || left.name.localeCompare(right.name, 'zh-CN'));
+
+  return {
+    generatedAt: now(),
+    summary: {
+      totalRooms: rooms.length,
+      onlineRooms: rooms.filter((room) => room.onlineDevices > 0).length,
+      totalDevices: data.devices.length,
+      onlineDevices: desktopSockets.size,
+      activeLiveDevices: rooms.reduce((count, room) => count + room.activeLiveDevices, 0),
+      alertCount: rooms.reduce((count, room) => count + room.alertCount, 0),
+      warningCount: rooms.reduce((count, room) => count + room.warningCount, 0),
+      updateAvailableDevices: rooms.reduce((count, room) => count + room.updateAvailableDevices, 0),
+      onlineMobileClients: Array.from(mobileSockets.values()).reduce((count, sockets) => count + sockets.size, 0)
+    },
+    notifications: weComNotifier.getStatus(),
+    updates: publicUpdateCacheStatus(),
+    commands: {
+      available: Object.entries(REMOTE_ADMIN_COMMAND_LABELS).map(([id, label]) => ({ id, label })),
+      recent: data.commands.slice(-50).reverse().map(publicCommand)
+    },
+    rooms
+  };
+}
+
+function publicCommand(command) {
+  const device = data.devices.find((item) => item.uuid === command.deviceUuid);
+  return {
+    id: command.id,
+    deviceUuid: command.deviceUuid,
+    deviceLabel: device?.label || command.deviceUuid,
+    roomName: device?.roomName || '未命名直播间',
+    command: command.command,
+    label: REMOTE_ADMIN_COMMAND_LABELS[command.command] || command.command,
+    status: command.status,
+    requestedAt: command.requestedAt,
+    completedAt: command.completedAt || null,
+    message: cleanText(command.message, 200) || ''
+  };
+}
+
+function publicUpdateCacheStatus() {
+  const status = updateCache.getStatus();
+  return {
+    status: status.status,
+    version: status.version,
+    source: status.source,
+    lastAttemptAt: status.lastAttemptAt,
+    lastSuccessAt: status.lastSuccessAt,
+    error: status.error
+  };
+}
+
+function compareVersions(left, right) {
+  const normalize = (value) => String(value || '').replace(/^v/i, '').split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const a = normalize(left);
+  const b = normalize(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) < (b[index] || 0) ? -1 : 1;
+  }
+  return 0;
+}
+
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function wholeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+}
+
+function toneRank(tone) {
+  return { offline: 0, idle: 1, safe: 2, warning: 3, danger: 4 }[tone] || 0;
+}
+
+function strongestTone(...tones) {
+  return tones.reduce((strongest, tone) => toneRank(tone) > toneRank(strongest) ? tone : strongest, 'offline');
+}
+
 function broadcastMobile(deviceUuid, payload) {
   const encoded = JSON.stringify(payload);
   for (const socket of mobileSockets.get(deviceUuid) || []) {
@@ -255,6 +505,61 @@ function notifyDesktopPresence(deviceUuid) {
   const desktop = desktopSockets.get(deviceUuid);
   if (desktop?.readyState === WebSocket.OPEN) {
     desktop.send(JSON.stringify({ type: 'presence', onlineMobileClients: mobileSockets.get(deviceUuid)?.size || 0 }));
+  }
+}
+
+function closeMobileAccessForDevice(deviceUuid, code, reason) {
+  for (const socket of mobileSockets.get(deviceUuid) || []) {
+    socket.close(code, reason);
+  }
+}
+
+function dispatchAdminCommand(deviceUuid, command) {
+  const socket = desktopSockets.get(deviceUuid);
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return Promise.resolve({ status: 'failed', message: '目标电脑当前离线' });
+  }
+  const record = {
+    id: token(12),
+    deviceUuid,
+    command,
+    status: 'pending',
+    requestedAt: now(),
+    completedAt: null,
+    message: ''
+  };
+  data.commands.push(record);
+  void saveData();
+  return new Promise((resolveCommand) => {
+    const timer = setTimeout(() => {
+      pendingAdminCommands.delete(record.id);
+      record.status = 'timeout';
+      record.completedAt = now();
+      record.message = '电脑端响应超时';
+      void saveData();
+      resolveCommand({ status: record.status, message: record.message, record: publicCommand(record) });
+    }, COMMAND_TIMEOUT_MS);
+    pendingAdminCommands.set(record.id, {
+      deviceUuid,
+      resolve(result) {
+        clearTimeout(timer);
+        pendingAdminCommands.delete(record.id);
+        record.status = result.ok ? 'success' : 'failed';
+        record.completedAt = now();
+        record.message = cleanText(result.message, 200) || (result.ok ? '操作完成' : '操作失败');
+        void saveData();
+        resolveCommand({ status: record.status, message: record.message, record: publicCommand(record) });
+      }
+    });
+    socket.send(JSON.stringify({ type: 'admin-command', id: record.id, command }));
+  });
+}
+
+function failPendingCommandsForDevice(deviceUuid, message) {
+  for (const [id, pending] of pendingAdminCommands) {
+    if (pending.deviceUuid !== deviceUuid) continue;
+    pending.resolve({ ok: false, message });
+    pendingAdminCommands.delete(id);
   }
 }
 
@@ -318,13 +623,37 @@ async function handleApi(req, res, url) {
     if (!uuid || secret.length < 32) return json(res, 400, { error: 'invalid_device_credentials' });
     let device = data.devices.find((item) => item.uuid === uuid);
     if (device && !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed' });
+    const mobileAccessEnabled = typeof body.mobileAccessEnabled === 'boolean'
+      ? body.mobileAccessEnabled
+      : device?.mobileAccessEnabled !== false;
     if (!device) {
-      device = { uuid, secretHash: sha256(secret), pairToken: token(24), label: cleanText(body.label, 80) || `电脑 ${uuid.slice(0, 8)}`, roomName: '', createdAt: now(), lastSeenAt: now(), lastState: null };
+      device = {
+        uuid,
+        secretHash: sha256(secret),
+        pairToken: token(24),
+        label: cleanText(body.label, 80) || `电脑 ${uuid.slice(0, 8)}`,
+        roomName: cleanText(body.roomName, 60),
+        mobileAccessEnabled,
+        appVersion: cleanText(body.appVersion, 32),
+        platform: cleanText(body.platform, 20),
+        arch: cleanText(body.arch, 20),
+        osRelease: cleanText(body.osRelease, 80),
+        createdAt: now(),
+        lastSeenAt: now(),
+        lastState: null
+      };
       data.devices.push(device);
     } else {
       device.label = cleanText(body.label, 80) || device.label;
+      device.roomName = cleanText(body.roomName, 60) || device.roomName;
+      device.mobileAccessEnabled = mobileAccessEnabled;
+      device.appVersion = cleanText(body.appVersion, 32) || device.appVersion || '';
+      device.platform = cleanText(body.platform, 20) || device.platform || '';
+      device.arch = cleanText(body.arch, 20) || device.arch || '';
+      device.osRelease = cleanText(body.osRelease, 80) || device.osRelease || '';
       device.lastSeenAt = now();
     }
+    if (!mobileAccessEnabled) closeMobileAccessForDevice(device.uuid, 4003, 'mobile_access_disabled');
     await saveData();
     return json(res, 200, { ok: true, device: publicDevice(device) });
   }
@@ -332,6 +661,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/pair/info') {
     const device = deviceByPairToken(url.searchParams.get('token') || '');
     if (!device) return json(res, 404, { error: 'pair_link_invalid' });
+    if (device.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
     return json(res, 200, { device: publicDevice(device) });
   }
 
@@ -339,8 +669,9 @@ async function handleApi(req, res, url) {
     if (!allowRequest(req, 'pair', 12, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests' });
     const body = await readJson(req);
     const device = deviceByPairToken(body.pairToken || '');
+    if (device?.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
     const clientId = cleanUuid(body.clientId);
-    const roomName = cleanText(body.roomName, 60);
+    const roomName = cleanText(device?.roomName, 60) || cleanText(body.roomName, 60);
     if (!device || !clientId || roomName.length < 2) return json(res, 400, { error: 'invalid_request' });
     const recent = data.requests.find((item) => item.deviceUuid === device.uuid && item.clientId === clientId && item.status === 'pending');
     if (recent) return json(res, 200, { request: publicRequest(recent) });
@@ -365,6 +696,7 @@ async function handleApi(req, res, url) {
     if (!approval) return json(res, 403, { error: 'access_denied' });
     const device = data.devices.find((item) => item.uuid === approval.deviceUuid);
     if (!device) return json(res, 404, { error: 'device_not_found' });
+    if (device.mobileAccessEnabled === false) return json(res, 403, { error: 'mobile_access_disabled' });
     approval.lastUsedAt = now();
     void saveData();
     return json(res, 200, {
@@ -401,7 +733,8 @@ async function handleApi(req, res, url) {
       return json(res, 200, {
         devices: data.devices.map(publicDevice),
         requests: data.requests.filter((item) => item.status === 'pending').map(publicRequest),
-        approvals: data.approvals.filter((item) => !item.revokedAt).map(publicApproval)
+        approvals: data.approvals.filter((item) => !item.revokedAt).map(publicApproval),
+        notifications: weComNotifier.getStatus()
       });
     }
     const decision = url.pathname.match(/^\/api\/admin\/requests\/([^/]+)\/(approve|reject)$/);
@@ -423,7 +756,7 @@ async function handleApi(req, res, url) {
         }
         data.approvals.push({ id: token(12), deviceUuid: request.deviceUuid, clientId: request.clientId, clientName: request.clientName, roomName: request.roomName, tokenHash: sha256(accessToken), createdAt: now(), lastUsedAt: null, revokedAt: null });
         const device = data.devices.find((item) => item.uuid === request.deviceUuid);
-        if (device) device.roomName = request.roomName;
+        if (device && !device.roomName) device.roomName = request.roomName;
       }
       await saveData();
       return json(res, 200, { request: publicRequest(request) });
@@ -486,6 +819,28 @@ async function handleApi(req, res, url) {
     }
   }
 
+  if (url.pathname.startsWith('/api/monitor/')) {
+    if (!adminSession(req)) return json(res, 401, { error: 'admin_auth_required' });
+    if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
+      return json(res, 200, monitorOverview());
+    }
+    const commandMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/commands$/);
+    if (req.method === 'POST' && commandMatch) {
+      if (!allowRequest(req, 'monitor-command', 30, 60_000)) return json(res, 429, { error: 'too_many_requests' });
+      const deviceUuid = cleanUuid(commandMatch[1]);
+      const device = data.devices.find((item) => item.uuid === deviceUuid);
+      if (!device) return json(res, 404, { error: 'device_not_found' });
+      const body = await readJson(req, 16 * 1024);
+      const command = cleanText(body.command, 40);
+      if (!REMOTE_ADMIN_COMMANDS.has(command)) return json(res, 400, { error: 'unsupported_command' });
+      if (command === 'pause_monitoring' && body.confirmed !== true) {
+        return json(res, 409, { error: 'confirmation_required' });
+      }
+      const result = await dispatchAdminCommand(deviceUuid, command);
+      return json(res, result.status === 'success' ? 200 : result.status === 'timeout' ? 504 : 409, result);
+    }
+  }
+
   return json(res, 404, { error: 'not_found' });
 }
 
@@ -496,11 +851,15 @@ const requestListener = async (req, res) => {
       ok: true,
       desktops: desktopSockets.size,
       mobiles: Array.from(mobileSockets.values()).reduce((sum, sockets) => sum + sockets.size, 0),
-      updates: updateCache.getStatus()
+      updates: updateCache.getStatus(),
+      notifications: weComNotifier.getStatus()
     });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname === '/') return redirect(res, '/admin');
+    if (url.pathname === '/admin/') return redirect(res, '/admin');
+    if (url.pathname === '/monitor/') return redirect(res, '/monitor');
     if (url.pathname === '/admin') return serveFile(req, res, join(publicDir, 'admin.html'));
+    if (url.pathname === '/monitor') return serveFile(req, res, join(publicDir, 'monitor.html'));
     if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(req, res, join(publicDir, 'mobile.html'));
     if (url.pathname.startsWith('/assets/')) {
       const file = resolve(publicDir, `.${url.pathname}`);
@@ -579,8 +938,19 @@ wss.on('connection', (socket, req, url) => {
         const message = JSON.parse(raw.toString());
         if (message.type === 'state' && message.state && typeof message.state === 'object') {
           device.lastState = normalizeDesktopState(message.state);
+          const appState = device.lastState.app && typeof device.lastState.app === 'object' ? device.lastState.app : {};
+          device.appVersion = cleanText(appState.version, 32) || device.appVersion || '';
+          device.platform = cleanText(appState.platform, 20) || device.platform || '';
+          device.arch = cleanText(appState.arch, 20) || device.arch || '';
+          device.osRelease = cleanText(appState.osRelease, 80) || device.osRelease || '';
+          if (typeof appState.mobileAccessEnabled === 'boolean') {
+            device.mobileAccessEnabled = appState.mobileAccessEnabled;
+          }
           device.lastSeenAt = now();
-          broadcastMobile(uuid, { type: 'state', state: device.lastState });
+          weComNotifier.observeDevice(device, device.lastState);
+          if (device.mobileAccessEnabled !== false) {
+            broadcastMobile(uuid, { type: 'state', state: device.lastState });
+          }
           socket.send(JSON.stringify({ type: 'state-ack', receivedAt: now() }));
         } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
           socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
@@ -597,11 +967,21 @@ wss.on('connection', (socket, req, url) => {
               levelDb
             }
           });
+        } else if (message.type === 'admin-command-result') {
+          const id = cleanText(message.id, 80);
+          const pending = pendingAdminCommands.get(id);
+          if (pending?.deviceUuid === uuid) {
+            pending.resolve({
+              ok: message.ok === true,
+              message: cleanText(message.message, 200) || (message.ok === true ? '操作完成' : '操作失败')
+            });
+          }
         }
       } catch { /* ignore malformed desktop message */ }
     });
     socket.on('close', () => {
       if (desktopSockets.get(uuid) === socket) desktopSockets.delete(uuid);
+      failPendingCommandsForDevice(uuid, '电脑连接已断开');
       broadcastMobile(uuid, { type: 'device-status', online: false });
     });
     broadcastMobile(uuid, { type: 'device-status', online: true });
@@ -612,6 +992,7 @@ wss.on('connection', (socket, req, url) => {
   if (!approval) return socket.close(4003, 'access_denied');
   const device = data.devices.find((item) => item.uuid === approval.deviceUuid);
   if (!device) return socket.close(4004, 'device_not_found');
+  if (device.mobileAccessEnabled === false) return socket.close(4003, 'mobile_access_disabled');
   const sockets = mobileSockets.get(device.uuid) || new Set();
   socket.approvalId = approval.id;
   sockets.add(socket);
@@ -670,6 +1051,7 @@ async function shutdown(signal) {
   console.log(`Received ${signal}, shutting down remote service`);
   clearInterval(heartbeat);
   updateCache.stop();
+  await weComNotifier.stop();
   for (const socket of wss.clients) socket.terminate();
 
   await Promise.race([

@@ -15,7 +15,7 @@ import { compareVersions, fileExists, PendingUpdateStore, type PendingUpdate } f
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { isPreflightAppId } from '../shared/preflight.js';
-import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type RemoteAdminCommand, type RemoteAdminCommandResult, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 // GUI/background launches can outlive the terminal that originally owned
 // stdout/stderr. Diagnostic writes must not crash Electron after that pipe closes.
@@ -156,7 +156,8 @@ async function initializeApp(): Promise<void> {
   monitor = new OBSMonitor(config, getDisplays());
 
   atemMonitor = new ATEMMonitor();
-  remoteBridge = new RemoteBridge();
+  remoteBridge = new RemoteBridge(app.getVersion());
+  remoteBridge.setCommandHandler(handleRemoteAdminCommand);
   preflightCheckService = new PreflightCheckService();
   pendingUpdateStore = new PendingUpdateStore(app.getPath('userData'));
   latestSnapshot = injectATEMState(monitor.getSnapshot());
@@ -187,6 +188,7 @@ async function initializeApp(): Promise<void> {
   }
   createTray();
   initializeUpdater();
+  remoteBridge.updateUpdateState(getUpdateState());
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
   }
@@ -375,7 +377,7 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'atemHotkeyGlobal')) {
       syncATEMHotkeys();
     }
-    if (Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'remoteServerUrl')) {
+    if (Object.hasOwn(patch, 'centralMonitoringEnabled') || Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'remoteServerUrl') || Object.hasOwn(patch, 'livestreamRoomName')) {
       void remoteBridge.configure(nextConfig);
     }
     if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl') || Object.hasOwn(patch, 'remoteServerUrl')) {
@@ -1214,11 +1216,63 @@ function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
     ...patch,
     currentVersion: app.getVersion()
   };
+  remoteBridge?.updateUpdateState(updateState);
   broadcastUpdateState();
   if (latestSnapshot) {
     updateTray(latestSnapshot);
   }
   return updateState;
+}
+
+async function handleRemoteAdminCommand(command: RemoteAdminCommand): Promise<RemoteAdminCommandResult> {
+  switch (command) {
+    case 'show_app':
+      showSettingsWindow();
+      return { ok: true, message: '已在电脑端打开检测助手' };
+    case 'reconnect_obs': {
+      const snapshot = injectATEMState(await monitor.reconnect());
+      publishRemoteCommandSnapshot(snapshot);
+      return {
+        ok: snapshot.connected,
+        message: snapshot.connected ? 'OBS 已重新连接' : snapshot.errorMessage || 'OBS 仍未连接'
+      };
+    }
+    case 'reconnect_atem': {
+      const config = (latestSnapshot ?? monitor.getSnapshot()).config;
+      if (!config.atemEnabled) return { ok: false, message: '电脑端尚未启用 ATEM' };
+      await atemMonitor.connect();
+      const snapshot = injectATEMState(monitor.getSnapshot());
+      publishRemoteCommandSnapshot(snapshot);
+      return {
+        ok: snapshot.atemConnected,
+        message: snapshot.atemConnected ? 'ATEM 已重新连接' : snapshot.atemConnectionState === 'connecting' ? 'ATEM 正在连接' : 'ATEM 仍未连接'
+      };
+    }
+    case 'check_update': {
+      const state = await checkForUpdates(false);
+      return {
+        ok: state.status !== 'error',
+        message: state.message
+      };
+    }
+    case 'pause_monitoring':
+    case 'resume_monitoring': {
+      const paused = command === 'pause_monitoring';
+      const nextConfig = await configStore.update({ paused });
+      const snapshot = injectATEMState(await monitor.updateConfig(nextConfig));
+      publishRemoteCommandSnapshot(snapshot);
+      return { ok: true, message: paused ? '检测已暂停' : '检测已恢复' };
+    }
+  }
+}
+
+function publishRemoteCommandSnapshot(snapshot: AppSnapshot): void {
+  latestSnapshot = snapshot;
+  broadcastSnapshot(snapshot);
+  remoteBridge.updateSnapshot(snapshot);
+  updateTray(snapshot);
+  syncFloatingWindow(snapshot);
+  syncPreAlertSurfaces(snapshot);
 }
 
 async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {

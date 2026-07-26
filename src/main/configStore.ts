@@ -150,8 +150,10 @@ export class ConfigStore {
       floatingWindowLayoutVersion: clamp(Math.round(numberValue(merged.floatingWindowLayoutVersion, DEFAULT_CONFIG.floatingWindowLayoutVersion)), 1, DEFAULT_CONFIG.floatingWindowLayoutVersion),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       floatingWindowModules,
+      centralMonitoringEnabled: booleanValue(merged.centralMonitoringEnabled, DEFAULT_CONFIG.centralMonitoringEnabled),
       remoteAccessEnabled: booleanValue(merged.remoteAccessEnabled, DEFAULT_CONFIG.remoteAccessEnabled),
       remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
+      livestreamRoomName: cleanRoomName(merged.livestreamRoomName),
       remoteDeviceUuid,
       remoteDeviceSecret,
       developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),
@@ -250,6 +252,13 @@ function stringArrayValue(value: unknown): string[] {
       .map((item) => stringValue(item, '').trim())
       .filter(Boolean)
   ));
+}
+
+function cleanRoomName(value: unknown): string {
+  return stringValue(value, '')
+    .trim()
+    .replace(/[\u0000-\u001f]/g, '')
+    .slice(0, 60);
 }
 
 function alertDisplayModeValue(value: unknown): AlertDisplayMode {

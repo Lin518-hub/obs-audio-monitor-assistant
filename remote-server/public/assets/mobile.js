@@ -59,7 +59,12 @@ async function start() {
     device = info.device;
     $('device-subtitle').textContent = device.roomName || device.label;
     setOnline(Boolean(device.online));
-    if (!$('room-name').value) $('room-name').value = device.roomName || '';
+    if (device.roomName) {
+      $('room-name').value = device.roomName;
+      $('room-name').readOnly = true;
+    } else if (!$('room-name').value) {
+      $('room-name').value = '';
+    }
     accessToken = localStorage[`obsRemoteAccess:${device.uuid}`] || null;
     if (accessToken) {
       try { await openDashboard(); return; } catch { localStorage.removeItem(`obsRemoteAccess:${device.uuid}`); accessToken = null; }
@@ -158,7 +163,7 @@ function pipThresholdAssetDb(value) {
   return Math.max(PIP_THRESHOLD_MIN_DB, Math.min(PIP_THRESHOLD_MAX_DB, Math.round(threshold / PIP_THRESHOLD_STEP_DB) * PIP_THRESHOLD_STEP_DB));
 }
 function pipVideoSource(thresholdDb) {
-  return `/assets/pip-audio-threshold-${Math.abs(thresholdDb)}.mp4?v=3.8.0`;
+  return `/assets/pip-audio-threshold-${Math.abs(thresholdDb)}.mp4?v=3.9.0`;
 }
 function pipVisualMode(audio = {}) {
   const view = audioPresentation(audio);

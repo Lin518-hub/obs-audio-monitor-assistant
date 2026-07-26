@@ -163,6 +163,165 @@ test('requires approval before a mobile browser receives access', async () => {
   desktop.socket.close();
 });
 
+test('protects and aggregates the live room monitor', async () => {
+  const denied = await request('/api/monitor/overview');
+  assert.equal(denied.response.status, 401);
+
+  const devices = [
+    { uuid: '44444444-4444-4444-8444-444444444444', secret: '4'.repeat(64), label: '主控电脑' },
+    { uuid: '55555555-5555-4555-8555-555555555555', secret: '5'.repeat(64), label: '备用电脑' }
+  ];
+  for (const device of devices) {
+    const registered = await request('/api/devices/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...device, roomName: '品牌一号直播间' })
+    });
+    assert.equal(registered.response.status, 200);
+  }
+
+  const wsBase = base.replace('http:', 'ws:');
+  const primary = trackedSocket(`${wsBase}/ws/desktop?uuid=${devices[0].uuid}&secret=${devices[0].secret}`);
+  const backup = trackedSocket(`${wsBase}/ws/desktop?uuid=${devices[1].uuid}&secret=${devices[1].secret}`);
+  await Promise.all([primary.open(), backup.open()]);
+  const timestamp = Date.now();
+  primary.socket.send(JSON.stringify({
+    type: 'state',
+    state: {
+      timestamp,
+      audio: {
+        ready: true, phase: 'alert', tone: 'danger', inputName: '主播麦克风', levelDb: -80,
+        thresholdDb: -55, silentForSeconds: 121, silenceDurationSeconds: 120, display: '检查麦克风',
+        hint: '连续静音', lastMeterReceivedAt: timestamp
+      },
+      atem: { connected: true, programInput: 1, previewInput: 2, inputLabels: { 1: '主播近景', 2: '商品特写' }, elapsedSeconds: 60, limitSeconds: 720, overLimit: false },
+      obs: { connected: true, streaming: true, recording: false, fps: 60, cpu: 8.5, bitrateKbps: 6000 },
+      service: { routeType: 'lan', latencyMs: 7, lastSyncAt: timestamp }
+    }
+  }));
+  backup.socket.send(JSON.stringify({
+    type: 'state',
+    state: {
+      timestamp,
+      audio: {
+        ready: true, phase: 'speaking', tone: 'safe', inputName: '备用麦克风', levelDb: -22,
+        thresholdDb: -55, silentForSeconds: 0, silenceDurationSeconds: 120, display: '正在讲话',
+        hint: '音频正常', lastMeterReceivedAt: timestamp
+      },
+      atem: { connected: true, programInput: 3, previewInput: 4, inputLabels: { 3: '全景', 4: '手部特写' }, elapsedSeconds: 650, limitSeconds: 720, overLimit: false },
+      obs: { connected: true, streaming: true, recording: true, fps: 59.94, cpu: 11, bitrateKbps: 5800 },
+      service: { routeType: 'public', latencyMs: 42, lastSyncAt: timestamp }
+    }
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const login = await request('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'remote-admin-test-password' })
+  });
+  const cookie = login.response.headers.get('set-cookie').split(';')[0];
+  const monitor = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  assert.equal(monitor.response.status, 200);
+  const room = monitor.body.rooms.find((item) => item.name === '品牌一号直播间');
+  assert.ok(room);
+  assert.equal(room.totalDevices, 2);
+  assert.equal(room.onlineDevices, 2);
+  assert.equal(room.activeLiveDevices, 2);
+  assert.equal(room.alertCount, 1);
+  assert.equal(room.warningCount, 1);
+  assert.equal(room.devices[0].audio.inputName.length > 0, true);
+  assert.equal(monitor.body.summary.onlineDevices >= 2, true);
+
+  primary.clear();
+  const commandRequest = request(`/api/monitor/devices/${devices[0].uuid}/commands`, {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: 'show_app' })
+  });
+  const command = await primary.next();
+  assert.equal(command.type, 'admin-command');
+  assert.equal(command.command, 'show_app');
+  primary.socket.send(JSON.stringify({ type: 'admin-command-result', id: command.id, ok: true, message: '已打开' }));
+  const commandResponse = await commandRequest;
+  assert.equal(commandResponse.response.status, 200);
+  assert.equal(commandResponse.body.status, 'success');
+  assert.equal(commandResponse.body.message, '已打开');
+
+  const pauseWithoutConfirmation = await request(`/api/monitor/devices/${devices[0].uuid}/commands`, {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: 'pause_monitoring' })
+  });
+  assert.equal(pauseWithoutConfirmation.response.status, 409);
+  assert.equal(pauseWithoutConfirmation.body.error, 'confirmation_required');
+
+  const refreshedMonitor = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  assert.equal(refreshedMonitor.body.commands.recent[0].command, 'show_app');
+  assert.equal(refreshedMonitor.body.commands.recent[0].status, 'success');
+
+  const page = await fetch(`${base}/monitor`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /直播间监控中心/);
+  primary.socket.close();
+  backup.socket.close();
+});
+
+test('keeps central monitoring available while mobile access is disabled', async () => {
+  const uuid = '66666666-6666-4666-8666-666666666666';
+  const secret = '6'.repeat(64);
+  const registered = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid,
+      secret,
+      label: '只上报电脑',
+      roomName: '后台监控直播间',
+      mobileAccessEnabled: false,
+      appVersion: '3.8.2',
+      platform: 'win32',
+      arch: 'x64'
+    })
+  });
+  assert.equal(registered.response.status, 200);
+  assert.equal(registered.body.device.mobileAccessEnabled, false);
+  const pairToken = registered.body.device.pairUrl.split('/').at(-1);
+  const pairInfo = await request(`/api/pair/info?token=${encodeURIComponent(pairToken)}`);
+  assert.equal(pairInfo.response.status, 403);
+  assert.equal(pairInfo.body.error, 'mobile_access_disabled');
+
+  const wsBase = base.replace('http:', 'ws:');
+  const desktop = trackedSocket(`${wsBase}/ws/desktop?uuid=${uuid}&secret=${secret}`);
+  await desktop.open();
+  desktop.socket.send(JSON.stringify({
+    type: 'state',
+    state: {
+      timestamp: Date.now(),
+      app: { version: '3.8.2', platform: 'win32', arch: 'x64', paused: false, autoUpdateEnabled: true },
+      audio: { ready: false, levelDb: null, lastMeterReceivedAt: null },
+      atem: { connected: false },
+      obs: { connected: false },
+      service: { routeType: 'public', latencyMs: 38 }
+    }
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  const login = await request('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'remote-admin-test-password' })
+  });
+  const cookie = login.response.headers.get('set-cookie').split(';')[0];
+  const monitor = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  const device = monitor.body.rooms.flatMap((room) => room.devices).find((item) => item.uuid === uuid);
+  assert.ok(device);
+  assert.equal(device.online, true);
+  assert.equal(device.app.version, '3.8.2');
+  assert.equal(device.app.mobileAccessEnabled, false);
+  desktop.socket.close();
+});
+
 test('serves the native picture-in-picture video with byte ranges', async () => {
   const response = await fetch(`${base}/assets/pip-audio-threshold-55.mp4`, {
     headers: { Range: 'bytes=0-99' }

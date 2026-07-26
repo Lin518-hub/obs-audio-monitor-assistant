@@ -34,6 +34,7 @@ export function createUpdateCache({
   metadataTimeoutMs = 25_000,
   packageTimeoutMs = 15 * 60 * 1000,
   fetchImpl = globalThis.fetch,
+  githubToken = '',
   logger = console
 }) {
   if (!updateDir) throw new Error('updateDir is required');
@@ -98,7 +99,7 @@ export function createUpdateCache({
 
       const metadata = [];
       for (const name of METADATA_FILES) {
-        const fetched = await fetchBufferWithFallback(name, bases, fetchImpl, metadataTimeoutMs, MAX_METADATA_BYTES);
+        const fetched = await fetchBufferWithFallback(name, bases, fetchImpl, metadataTimeoutMs, MAX_METADATA_BYTES, githubToken);
         const parsed = parseMetadata(name, fetched.buffer);
         metadata.push({ name, ...fetched, parsed });
       }
@@ -119,7 +120,7 @@ export function createUpdateCache({
           && previousFile?.sha512 === asset.sha512;
         const valid = await localAssetIsReady(target, asset, trustedPreviousSync);
         if (!valid) {
-          const downloaded = await downloadAssetWithFallback(asset, target, bases, fetchImpl, packageTimeoutMs);
+          const downloaded = await downloadAssetWithFallback(asset, target, bases, fetchImpl, packageTimeoutMs, githubToken);
           usedSources.add(downloaded.source);
         }
         const info = await stat(target);
@@ -243,14 +244,14 @@ async function atomicWrite(target, buffer) {
   }
 }
 
-async function fetchBufferWithFallback(name, bases, fetchImpl, timeoutMs, maxBytes) {
+async function fetchBufferWithFallback(name, bases, fetchImpl, timeoutMs, maxBytes, githubToken) {
   const errors = [];
   for (const base of bases) {
     const url = buildAssetUrl(base, name);
     try {
       const response = await fetchImpl(url, {
         redirect: 'follow',
-        headers: { 'User-Agent': 'OBS-Audio-Monitor-Assistant-Update-Cache/1.0' },
+        headers: updateRequestHeaders(base, githubToken),
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -343,7 +344,7 @@ async function sha512File(file) {
   }
 }
 
-async function downloadAssetWithFallback(asset, target, bases, fetchImpl, timeoutMs) {
+async function downloadAssetWithFallback(asset, target, bases, fetchImpl, timeoutMs, githubToken) {
   const errors = [];
   for (const base of bases) {
     const url = buildAssetUrl(base, asset.name);
@@ -351,7 +352,7 @@ async function downloadAssetWithFallback(asset, target, bases, fetchImpl, timeou
     try {
       const response = await fetchImpl(url, {
         redirect: 'follow',
-        headers: { 'User-Agent': 'OBS-Audio-Monitor-Assistant-Update-Cache/1.0' },
+        headers: updateRequestHeaders(base, githubToken),
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -395,4 +396,20 @@ function sourceLabel(base) {
   } catch {
     return base;
   }
+}
+
+export function updateRequestHeaders(base, githubToken = '') {
+  const headers = {
+    'User-Agent': 'OBS-Audio-Monitor-Assistant-Update-Cache/1.0'
+  };
+  try {
+    const url = new URL(base);
+    if (githubToken && (url.hostname === 'github.com' || url.hostname === 'api.github.com')) {
+      headers.Authorization = `Bearer ${githubToken}`;
+      headers.Accept = 'application/octet-stream';
+    }
+  } catch {
+    // Invalid bases are filtered before download.
+  }
+  return headers;
 }

@@ -74,9 +74,13 @@ describe('preflight window placement', () => {
     const base = { handle: '1', pid: 10, bounds: { x: 0, y: 0, width: 800, height: 450 }, windowState: 'normal' as const };
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（节目）' })).toBe(true);
     expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Program)' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '投影 - 输出' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '全屏投影（PGM）' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: 'OBS 输出画面' })).toBe(true);
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（多画面）' })).toBe(false);
     expect(isOBSProjectorWindow({ ...base, title: 'Windowed Projector (Scene) - Camera 1' })).toBe(false);
     expect(isOBSProjectorWindow({ ...base, title: '窗口化投影（来源）- 摄像头' })).toBe(false);
+    expect(isOBSProjectorWindow({ ...base, title: 'OBS 输出设置' })).toBe(false);
   });
 
   it('falls back to a newly opened video-sized OBS window when its localized projector title is unknown', () => {

@@ -5,10 +5,19 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createUpdateCache } from '../src/update-cache.mjs';
+import { createUpdateCache, updateRequestHeaders } from '../src/update-cache.mjs';
 
 const silentLogger = { info() {}, error() {} };
 const hash = (buffer) => createHash('sha512').update(buffer).digest('base64');
+
+test('keeps private GitHub credentials on the direct server-side source only', () => {
+  const github = updateRequestHeaders('https://github.com/example/private/releases/download/latest/', 'secret-token');
+  const proxy = updateRequestHeaders('https://ghproxy.net/https://github.com/example/private/releases/download/latest/', 'secret-token');
+  assert.equal(github.Authorization, 'Bearer secret-token');
+  assert.equal(github.Accept, 'application/octet-stream');
+  assert.equal(proxy.Authorization, undefined);
+  assert.equal(proxy.Accept, undefined);
+});
 
 function metadata(version, name, content) {
   return Buffer.from([

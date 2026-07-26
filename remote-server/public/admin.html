@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#eaf6ee">
   <title>远程访问管理</title>
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/app.css?v=3.9.0">
 </head>
 <body class="admin-page">
   <section id="admin-login" class="auth-shell">
@@ -23,7 +23,13 @@
   <div id="admin-dashboard" class="admin-shell hidden">
     <aside class="admin-sidebar">
       <div class="admin-brand"><div class="brand-mark">声</div><div><strong>远程访问服务</strong><span>管理控制台</span></div></div>
-      <nav><button data-admin-tab="requests" class="active">访问审批 <b id="pending-count">0</b></button><button data-admin-tab="devices">电脑设备</button><button data-admin-tab="approvals">访问白名单</button><button data-admin-tab="updates">软件更新</button></nav>
+      <nav>
+        <button data-admin-tab="requests" class="active">访问审批 <b id="pending-count">0</b></button>
+        <button data-admin-tab="devices">电脑设备</button>
+        <button data-admin-tab="approvals">访问白名单</button>
+        <button data-admin-tab="updates">软件更新</button>
+        <a class="admin-monitor-link" href="/monitor">实时监控 <span>打开</span></a>
+      </nav>
       <footer><i></i> 服务运行中</footer>
     </aside>
     <main class="admin-content">
@@ -40,6 +46,6 @@
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/assets/admin.js" defer></script>
+  <script src="/assets/admin.js?v=3.9.0" defer></script>
 </body>
 </html>
