@@ -85,6 +85,20 @@ describe('ConfigStore', () => {
     expect(reloaded.silenceDurationSeconds).toBe(300);
   });
 
+  it('persists and normalizes the livestream room name revision', async () => {
+    const store = new ConfigStore();
+    await store.save({
+      ...DEFAULT_CONFIG,
+      livestreamRoomName: ' 一号直播间 ',
+      livestreamRoomNameRevision: 7.8
+    });
+
+    const reloaded = await new ConfigStore().load();
+
+    expect(reloaded.livestreamRoomName).toBe('一号直播间');
+    expect(reloaded.livestreamRoomNameRevision).toBe(8);
+  });
+
   it('persists developer mode until it is explicitly disabled', async () => {
     const store = new ConfigStore();
     await store.save({

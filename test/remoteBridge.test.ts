@@ -6,7 +6,8 @@ import {
   publicPairUrl,
   remoteAudioTelemetry,
   remoteRouteType,
-  remoteServerCandidates
+  remoteServerCandidates,
+  resolveServerRoomName
 } from '../src/main/RemoteBridge.js';
 import type { AppSnapshot } from '../src/shared/types.js';
 
@@ -41,6 +42,26 @@ describe('remote server selection', () => {
     expect(publicPairUrl('https://remote.example.com/pair/example-token')).toBe(
       'https://remote.example.com/pair/example-token'
     );
+  });
+});
+
+describe('livestream room name synchronization', () => {
+  it('accepts a newer server name and persists the server revision', () => {
+    expect(resolveServerRoomName('旧名称', 2, ' 新名称 ', 3)).toEqual({
+      roomName: '新名称',
+      revision: 3
+    });
+  });
+
+  it('keeps a newer local edit when an older server response arrives', () => {
+    expect(resolveServerRoomName('本地新名称', 4, '服务器旧名称', 3)).toBeNull();
+  });
+
+  it('lets the server resolve an equal-revision conflict', () => {
+    expect(resolveServerRoomName('本地名称', 5, '后台名称', 5)).toEqual({
+      roomName: '后台名称',
+      revision: 5
+    });
   });
 });
 

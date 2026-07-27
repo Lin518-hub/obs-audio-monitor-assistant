@@ -59,7 +59,8 @@ const REMOTE_ADMIN_COMMAND_LABELS = {
   reconnect_atem: '重连 ATEM',
   check_update: '检查更新',
   pause_monitoring: '暂停检测',
-  resume_monitoring: '恢复检测'
+  resume_monitoring: '恢复检测',
+  rename_device: '修改直播间名称'
 };
 const COMMAND_TIMEOUT_MS = 20_000;
 const emptyData = () => ({ schemaVersion: MONITORING_IDENTITY_REVISION, devices: [], requests: [], approvals: [], commands: [] });
@@ -254,6 +255,8 @@ function publicDevice(device) {
     uuid: device.uuid,
     label: device.label,
     roomName: device.roomName || '',
+    roomNameRevision: wholeNumber(device.roomNameRevision),
+    roomNameUpdatedAt: device.roomNameUpdatedAt || null,
     online: desktopSockets.has(device.uuid),
     onlineMobileClients: 0,
     mobileAccessEnabled: false,
@@ -353,6 +356,8 @@ function monitorDevice(device) {
     uuid: device.uuid,
     label: device.label,
     roomName: device.roomName || '未命名直播间',
+    roomNameRevision: wholeNumber(device.roomNameRevision),
+    roomNameUpdatedAt: device.roomNameUpdatedAt || null,
     online,
     onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
     lastSeenAt: device.lastSeenAt || null,
@@ -663,6 +668,7 @@ async function handleApi(req, res, url) {
       return json(res, 426, { error: 'client_upgrade_required' });
     }
     const roomName = cleanText(body.roomName, 60);
+    const roomNameRevision = wholeNumber(body.roomNameRevision);
     if (roomName.length < 2) return json(res, 400, { error: 'room_name_required' });
     let device = data.devices.find((item) => item.uuid === uuid);
     if (device && !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed' });
@@ -673,6 +679,8 @@ async function handleApi(req, res, url) {
         pairToken: token(24),
         label: cleanText(body.label, 80) || `电脑 ${uuid.slice(0, 8)}`,
         roomName,
+        roomNameRevision: Math.max(1, roomNameRevision),
+        roomNameUpdatedAt: now(),
         mobileAccessEnabled: false,
         monitoringIdentityRevision: MONITORING_IDENTITY_REVISION,
         appVersion: appVersion(body.appVersion) || '',
@@ -686,7 +694,14 @@ async function handleApi(req, res, url) {
       data.devices.push(device);
     } else {
       device.label = cleanText(body.label, 80) || device.label;
-      device.roomName = roomName;
+      const storedRoomNameRevision = wholeNumber(device.roomNameRevision);
+      if (roomNameRevision > storedRoomNameRevision) {
+        device.roomName = roomName;
+        device.roomNameRevision = roomNameRevision;
+        device.roomNameUpdatedAt = now();
+      } else {
+        device.roomNameRevision = storedRoomNameRevision;
+      }
       device.mobileAccessEnabled = false;
       device.monitoringIdentityRevision = MONITORING_IDENTITY_REVISION;
       device.appVersion = appVersion(body.appVersion, device.appVersion) || '';
@@ -696,8 +711,9 @@ async function handleApi(req, res, url) {
       device.lastSeenAt = now();
     }
 
+    const canonicalRoomName = cleanText(device.roomName, 60);
     const duplicateUuids = new Set(data.devices
-      .filter((item) => item.uuid !== device.uuid && cleanText(item.roomName, 60).toLocaleLowerCase('zh-CN') === roomName.toLocaleLowerCase('zh-CN'))
+      .filter((item) => item.uuid !== device.uuid && cleanText(item.roomName, 60).toLocaleLowerCase('zh-CN') === canonicalRoomName.toLocaleLowerCase('zh-CN'))
       .map((item) => item.uuid));
     for (const duplicateUuid of duplicateUuids) {
       desktopSockets.get(duplicateUuid)?.close(4000, 'room_reassigned');
@@ -848,6 +864,55 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
       return json(res, 200, monitorOverview());
     }
+    const renameMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/name$/);
+    if (req.method === 'PATCH' && renameMatch) {
+      if (!allowRequest(req, 'monitor-rename-device', 30, 60_000)) {
+        return json(res, 429, { error: 'too_many_requests', message: '名称修改过于频繁，请稍后再试' });
+      }
+      const deviceUuid = cleanUuid(renameMatch[1]);
+      const device = data.devices.find((item) => item.uuid === deviceUuid);
+      if (!device) return json(res, 404, { error: 'device_not_found', message: '未找到该直播间电脑' });
+      const body = await readJson(req, 16 * 1024);
+      const roomName = cleanText(body.roomName, 60);
+      if (roomName.length < 2) {
+        return json(res, 400, { error: 'room_name_required', message: '直播间名称至少需要 2 个字符' });
+      }
+      const duplicate = data.devices.find((item) => (
+        item.uuid !== device.uuid
+        && cleanText(item.roomName, 60).toLocaleLowerCase('zh-CN') === roomName.toLocaleLowerCase('zh-CN')
+      ));
+      if (duplicate) {
+        return json(res, 409, { error: 'room_name_in_use', message: '这个直播间名称已被另一台电脑使用' });
+      }
+
+      const previousRoomName = cleanText(device.roomName, 60) || '未命名直播间';
+      if (previousRoomName !== roomName) {
+        device.roomName = roomName;
+        device.roomNameRevision = Math.max(1, wholeNumber(device.roomNameRevision) + 1);
+        device.roomNameUpdatedAt = now();
+        data.commands.push({
+          id: token(12),
+          deviceUuid,
+          command: 'rename_device',
+          status: 'success',
+          requestedAt: now(),
+          completedAt: now(),
+          message: `${previousRoomName} → ${roomName}`
+        });
+        await saveData();
+      }
+
+      const socket = desktopSockets.get(deviceUuid);
+      const synced = socket?.readyState === WebSocket.OPEN;
+      if (synced) {
+        socket.send(JSON.stringify({
+          type: 'device-config',
+          roomName: device.roomName,
+          roomNameRevision: wholeNumber(device.roomNameRevision)
+        }));
+      }
+      return json(res, 200, { ok: true, device: monitorDevice(device), synced });
+    }
     const weComTestMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/wecom-test$/);
     if (req.method === 'POST' && weComTestMatch) {
       if (!allowRequest(req, 'monitor-wecom-test', 12, 10 * 60_000)) {
@@ -969,6 +1034,8 @@ wss.on('connection', (socket, req, url) => {
     void saveData();
     socket.send(JSON.stringify({
       type: 'registered',
+      roomName: device.roomName,
+      roomNameRevision: wholeNumber(device.roomNameRevision),
       onlineMobileClients: 0
     }));
     socket.on('message', (raw) => {

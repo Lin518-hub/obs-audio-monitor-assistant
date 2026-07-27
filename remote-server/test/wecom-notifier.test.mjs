@@ -8,8 +8,10 @@ function desktopState({
   audioPhase = 'speaking',
   audioTone = 'safe',
   audioReady = true,
+  audioSilentForSeconds = 120,
   cameraOverLimit = false,
   cameraConnected = true,
+  cameraElapsedSeconds = cameraOverLimit ? 600 : 12,
   streaming = true
 } = {}) {
   return {
@@ -18,14 +20,14 @@ function desktopState({
       tone: audioTone,
       ready: audioReady,
       inputName: '麦克风/Aux',
-      silentForSeconds: audioPhase === 'alert' ? 120 : 0
+      silentForSeconds: audioPhase === 'alert' ? audioSilentForSeconds : 0
     },
     atem: {
       connected: cameraConnected,
       overLimit: cameraOverLimit,
       programInput: 2,
       inputLabels: { 2: '主播近景' },
-      elapsedSeconds: cameraOverLimit ? 600 : 12
+      elapsedSeconds: cameraElapsedSeconds
     },
     obs: { connected: true, streaming, recording: false }
   };
@@ -61,14 +63,18 @@ test('sends one alert and one recovery without repeating a steady state', async 
   notifier.observeDevice(device, desktopState({ audioPhase: 'alert', audioTone: 'danger' }));
   await notifier.flushNow();
   assert.equal(calls.length, 1);
-  assert.match(calls[0].markdown.content, /品牌一号直播间/);
-  assert.match(calls[0].markdown.content, /音频异常/);
+  assert.equal(calls[0].msgtype, 'text');
+  assert.equal(calls[0].text.mentioned_list, undefined);
+  assert.equal(calls[0].text.content.split('\n')[0], '【品牌一号直播间】音频异常');
+  assert.match(calls[0].text.content, /品牌一号直播间/);
+  assert.match(calls[0].text.content, /音频异常/);
 
   currentTime += 20_000;
   notifier.observeDevice(device, desktopState());
   await notifier.flushNow();
   assert.equal(calls.length, 2);
-  assert.match(calls[1].markdown.content, /音频已恢复/);
+  assert.equal(calls[1].text.mentioned_list, undefined);
+  assert.match(calls[1].text.content, /音频已恢复/);
 });
 
 test('aggregates simultaneous room alerts into a single message', async () => {
@@ -76,7 +82,8 @@ test('aggregates simultaneous room alerts into a single message', async () => {
   const notifier = createWeComNotifier({
     webhookUrl: WEBHOOK,
     fetchImpl: successfulFetch(calls),
-    batchDelayMs: 60_000
+    batchDelayMs: 60_000,
+    minimumCameraAlertDurationMs: 0
   });
 
   notifier.observeDevice(
@@ -90,10 +97,12 @@ test('aggregates simultaneous room alerts into a single message', async () => {
   await notifier.flushNow();
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0].markdown.content, /音频异常/);
-  assert.match(calls[0].markdown.content, /机位停留超时/);
-  assert.match(calls[0].markdown.content, /音频电脑/);
-  assert.match(calls[0].markdown.content, /导播电脑/);
+  assert.equal(calls[0].msgtype, 'text');
+  assert.equal(calls[0].text.content.split('\n')[0], '【联合直播间】音频异常等 2 条');
+  assert.match(calls[0].text.content, /音频异常/);
+  assert.match(calls[0].text.content, /机位停留超时/);
+  assert.match(calls[0].text.content, /音频电脑/);
+  assert.match(calls[0].text.content, /导播电脑/);
 });
 
 test('clears an active alert silently when the live session stops', async () => {
@@ -112,7 +121,7 @@ test('clears an active alert silently when the live session stops', async () => 
   await notifier.flushNow();
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0].markdown.content, /音频异常/);
+  assert.match(calls[0].text.content, /音频异常/);
 });
 
 test('sends an immediate current-status test message', async () => {
@@ -136,8 +145,57 @@ test('sends an immediate current-status test message', async () => {
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].msgtype, 'text');
-  assert.deepEqual(calls[0].text.mentioned_list, ['@all']);
-  assert.match(calls[0].text.content, /当前状态发送成功/);
-  assert.match(calls[0].text.content, /正在讲话 · -23.4 dB/);
+  assert.equal(calls[0].text.mentioned_list, undefined);
+  assert.equal(calls[0].text.content.split('\n')[0], '【测试直播间】监控状态测试');
+  assert.match(calls[0].text.content, /状态测试/);
+  assert.match(calls[0].text.content, /音频状态：正在讲话/);
+  assert.match(calls[0].text.content, /音频电平：-23.4 dB/);
   assert.match(calls[0].text.content, /v3.9.1/);
+});
+
+test('waits for ten minutes of continuous camera overstay before notifying', async () => {
+  const calls = [];
+  let currentTime = 10_000_000;
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000,
+    clock: () => currentTime
+  });
+  const device = { uuid: 'device-delay', label: '直播电脑', roomName: '延迟测试直播间' };
+
+  notifier.observeDevice(device, desktopState({
+    cameraOverLimit: true,
+    cameraElapsedSeconds: 599
+  }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 0);
+
+  currentTime += 1000;
+  notifier.observeDevice(device, desktopState({
+    cameraOverLimit: true,
+    cameraElapsedSeconds: 600
+  }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text.content, /机位停留超时/);
+});
+
+test('does not send camera recovery when an overstay clears before ten minutes', async () => {
+  const calls = [];
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000
+  });
+  const device = { uuid: 'device-short', label: '直播电脑', roomName: '短暂异常直播间' };
+
+  notifier.observeDevice(device, desktopState({
+    cameraOverLimit: true,
+    cameraElapsedSeconds: 300
+  }));
+  notifier.observeDevice(device, desktopState());
+  await notifier.flushNow();
+
+  assert.equal(calls.length, 0);
 });

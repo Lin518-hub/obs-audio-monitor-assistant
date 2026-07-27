@@ -380,6 +380,7 @@ export interface AppConfig {
   remoteAccessEnabled: boolean;
   remoteServerUrl: string;
   livestreamRoomName: string;
+  livestreamRoomNameRevision: number;
   monitoringIdentityRevision: number;
   remoteDeviceUuid: string;
   remoteDeviceSecret: string;
@@ -533,6 +534,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteAccessEnabled: false,
   remoteServerUrl: 'https://obs.huaweilive.top:8088',
   livestreamRoomName: '',
+  livestreamRoomNameRevision: 0,
   monitoringIdentityRevision: 1,
   remoteDeviceUuid: '',
   remoteDeviceSecret: '',

@@ -1,5 +1,6 @@
 const DEFAULT_BATCH_DELAY_MS = 1200;
-const MAX_MARKDOWN_BYTES = 3800;
+const MAX_TEXT_BYTES = 1800;
+const DEFAULT_MINIMUM_CAMERA_ALERT_DURATION_MS = 10 * 60 * 1000;
 const RETRY_DELAYS_MS = [1000, 3000, 10_000];
 
 export function isValidWeComWebhook(value) {
@@ -24,6 +25,8 @@ class WeComNotifier {
     enabled = true,
     fetchImpl = globalThis.fetch,
     batchDelayMs = DEFAULT_BATCH_DELAY_MS,
+    minimumAudioAlertDurationMs = 0,
+    minimumCameraAlertDurationMs = DEFAULT_MINIMUM_CAMERA_ALERT_DURATION_MS,
     logger = console,
     clock = () => Date.now()
   } = {}) {
@@ -31,6 +34,8 @@ class WeComNotifier {
     this.enabled = Boolean(enabled) && isValidWeComWebhook(this.webhookUrl) && typeof fetchImpl === 'function';
     this.fetchImpl = fetchImpl;
     this.batchDelayMs = Math.max(0, Number(batchDelayMs) || 0);
+    this.minimumAudioAlertDurationMs = Math.max(0, Number(minimumAudioAlertDurationMs) || 0);
+    this.minimumCameraAlertDurationMs = Math.max(0, Number(minimumCameraAlertDurationMs) || 0);
     this.logger = logger;
     this.clock = clock;
     this.deviceStates = new Map();
@@ -58,6 +63,7 @@ class WeComNotifier {
 
     const current = notificationState(state);
     const previous = this.deviceStates.get(uuid);
+    const observedAt = this.clock();
     const identity = {
       uuid,
       label: cleanText(device?.label, 80) || `电脑 ${uuid.slice(0, 8)}`,
@@ -67,46 +73,92 @@ class WeComNotifier {
       this.deviceStates.set(uuid, {
         ...current,
         audioAlertStartedAt: null,
-        cameraAlertStartedAt: null
+        cameraAlertStartedAt: null,
+        audioNotificationSent: false,
+        cameraNotificationSent: false
       });
       return;
     }
 
     if (!previous) {
+      const audioAlertStartedAt = current.audioAlert
+        ? observedAt - current.audioAlertDurationMs
+        : null;
+      const cameraAlertStartedAt = current.cameraAlert
+        ? observedAt - current.cameraAlertDurationMs
+        : null;
+      const audioNotificationSent = current.audioAlert
+        && current.audioAlertDurationMs >= this.minimumAudioAlertDurationMs;
+      const cameraNotificationSent = current.cameraAlert
+        && current.cameraAlertDurationMs >= this.minimumCameraAlertDurationMs;
       this.deviceStates.set(uuid, {
         ...current,
-        audioAlertStartedAt: current.audioAlert ? this.clock() : null,
-        cameraAlertStartedAt: current.cameraAlert ? this.clock() : null
+        audioAlertStartedAt,
+        cameraAlertStartedAt,
+        audioNotificationSent,
+        cameraNotificationSent
       });
-      if (current.audioAlert) this.enqueue(audioAlertEvent(identity, state, this.clock()));
-      if (current.cameraAlert) this.enqueue(cameraAlertEvent(identity, state, this.clock()));
+      if (audioNotificationSent) this.enqueue(audioAlertEvent(identity, state, observedAt));
+      if (cameraNotificationSent) this.enqueue(cameraAlertEvent(identity, state, observedAt));
       return;
     }
 
+    const audioAlertActive = current.audioAlert || (!current.audioHealthy && previous.audioAlert);
+    let audioAlertStartedAt = previous.audioAlertStartedAt;
+    let audioNotificationSent = previous.audioNotificationSent === true;
     if (!previous.audioAlert && current.audioAlert) {
-      this.enqueue(audioAlertEvent(identity, state, this.clock()));
+      audioAlertStartedAt = observedAt - current.audioAlertDurationMs;
+      audioNotificationSent = false;
+    }
+    if (current.audioAlert && !audioNotificationSent) {
+      const duration = Math.max(
+        current.audioAlertDurationMs,
+        observedAt - (audioAlertStartedAt || observedAt)
+      );
+      if (duration >= this.minimumAudioAlertDurationMs) {
+        this.enqueue(audioAlertEvent(identity, state, observedAt));
+        audioNotificationSent = true;
+      }
     } else if (previous.audioAlert && current.audioHealthy) {
-      this.enqueue(audioRecoveryEvent(identity, state, previous.audioAlertStartedAt || this.clock(), this.clock()));
+      if (audioNotificationSent) {
+        this.enqueue(audioRecoveryEvent(identity, state, audioAlertStartedAt || observedAt, observedAt));
+      }
+      audioAlertStartedAt = null;
+      audioNotificationSent = false;
     }
 
+    const cameraAlertActive = current.cameraAlert || (!current.cameraHealthy && previous.cameraAlert);
+    let cameraAlertStartedAt = previous.cameraAlertStartedAt;
+    let cameraNotificationSent = previous.cameraNotificationSent === true;
     if (!previous.cameraAlert && current.cameraAlert) {
-      this.enqueue(cameraAlertEvent(identity, state, this.clock()));
+      cameraAlertStartedAt = observedAt - current.cameraAlertDurationMs;
+      cameraNotificationSent = false;
+    }
+    if (current.cameraAlert && !cameraNotificationSent) {
+      const duration = Math.max(
+        current.cameraAlertDurationMs,
+        observedAt - (cameraAlertStartedAt || observedAt)
+      );
+      if (duration >= this.minimumCameraAlertDurationMs) {
+        this.enqueue(cameraAlertEvent(identity, state, observedAt));
+        cameraNotificationSent = true;
+      }
     } else if (previous.cameraAlert && current.cameraHealthy) {
-      this.enqueue(cameraRecoveryEvent(identity, state, previous.cameraAlertStartedAt || this.clock(), this.clock()));
+      if (cameraNotificationSent) {
+        this.enqueue(cameraRecoveryEvent(identity, state, cameraAlertStartedAt || observedAt, observedAt));
+      }
+      cameraAlertStartedAt = null;
+      cameraNotificationSent = false;
     }
 
     this.deviceStates.set(uuid, {
       ...current,
-      audioAlertStartedAt: current.audioAlert
-        ? previous.audioAlertStartedAt || this.clock()
-        : current.audioHealthy
-          ? null
-          : previous.audioAlertStartedAt,
-      cameraAlertStartedAt: current.cameraAlert
-        ? previous.cameraAlertStartedAt || this.clock()
-        : current.cameraHealthy
-          ? null
-          : previous.cameraAlertStartedAt
+      audioAlert: audioAlertActive,
+      cameraAlert: cameraAlertActive,
+      audioAlertStartedAt,
+      cameraAlertStartedAt,
+      audioNotificationSent,
+      cameraNotificationSent
     });
   }
 
@@ -139,7 +191,7 @@ class WeComNotifier {
     this.flushTimer = null;
     if (!this.enabled || this.queue.length === 0) return;
     const events = this.queue.splice(0);
-    const payloads = markdownPayloads(events);
+    const payloads = textPayloads(events);
     const operation = this.sendQueue.catch(() => undefined).then(async () => {
       for (const payload of payloads) await this.sendWithRetry(payload);
     });
@@ -195,8 +247,12 @@ function notificationState(state) {
     audioHealthy,
     cameraAlert,
     cameraHealthy,
+    audioAlertDurationMs: wholeSeconds(audio.silentForSeconds) * 1000,
+    cameraAlertDurationMs: wholeSeconds(atem.elapsedSeconds) * 1000,
     audioAlertStartedAt: null,
-    cameraAlertStartedAt: null
+    cameraAlertStartedAt: null,
+    audioNotificationSent: false,
+    cameraNotificationSent: false
   };
 }
 
@@ -259,51 +315,70 @@ function currentStatusPayload(device, state, occurredAt) {
   const programInput = Number(atem.programInput);
   const programName = cleanText(atem.inputLabels?.[programInput], 100)
     || (Number.isFinite(programInput) && programInput > 0 ? `机位 ${programInput}` : '未读取机位');
+  const roomName = cleanText(device?.roomName, 60) || '未命名直播间';
   const lines = [
-    'OBS 直播监控测试',
-    `${cleanText(device?.roomName, 60) || '未命名直播间'} · 当前状态发送成功`,
-    `直播：${live ? '进行中' : '未开播'} · OBS：${obs.connected === true ? '已连接' : '未连接'}`,
-    `音频：${cleanText(audio.display, 80) || '等待音频数据'}${Number.isFinite(level) ? ` · ${level.toFixed(1)} dB` : ''}`,
-    `机位：${atem.connected === true ? programName : 'ATEM 未连接'}`,
-    `软件：${cleanText(app.version, 32) ? `v${cleanText(app.version, 32)}` : '版本未知'} · ${formatTime(occurredAt)}`
+    `【${roomName}】监控状态测试`,
+    '━━━━━━━━━━━━',
+    `直播状态：${live ? '进行中' : '未开播'}`,
+    `OBS 连接：${obs.connected === true ? '正常' : '未连接'}`,
+    `音频状态：${cleanText(audio.display, 80) || '等待音频数据'}`,
+    `音频电平：${Number.isFinite(level) ? `${level.toFixed(1)} dB` : '暂无数据'}`,
+    `当前机位：${atem.connected === true ? programName : 'ATEM 未连接'}`,
+    `软件版本：${cleanText(app.version, 32) ? `v${cleanText(app.version, 32)}` : '版本未知'}`,
+    `检测时间：${formatTime(occurredAt)}`
   ];
   return {
     msgtype: 'text',
     text: {
-      content: lines.join('\n'),
-      mentioned_list: ['@all']
+      content: lines.join('\n')
     }
   };
 }
 
-function markdownPayloads(events) {
-  const alerting = events.some((event) => event.kind.endsWith('_alert'));
-  const heading = `<font color="${alerting ? 'warning' : 'info'}">OBS 直播监控通知</font>`;
+function textPayloads(events) {
   const chunks = [];
-  let lines = [heading];
-  let bytes = Buffer.byteLength(heading, 'utf8');
+  let chunkEvents = [];
+  let chunkBytes = 0;
 
   for (const event of events) {
-    const line = [
-      `> **${escapeMarkdown(event.identity.roomName)}** · ${escapeMarkdown(event.title)}`,
-      `> ${escapeMarkdown(event.detail)}`,
-      `> 设备：${escapeMarkdown(event.identity.label)} · ${formatTime(event.occurredAt)}`
-    ].join('\n');
-    const nextBytes = Buffer.byteLength(`\n\n${line}`, 'utf8');
-    if (lines.length > 1 && bytes + nextBytes > MAX_MARKDOWN_BYTES) {
-      chunks.push(lines.join('\n\n'));
-      lines = [heading];
-      bytes = Buffer.byteLength(heading, 'utf8');
+    const eventText = formatEventText(event, chunkEvents.length + 1);
+    const nextBytes = Buffer.byteLength(`${chunkEvents.length ? '\n\n' : ''}${eventText}`, 'utf8');
+    if (chunkEvents.length > 0 && chunkBytes + nextBytes > MAX_TEXT_BYTES) {
+      chunks.push(chunkEvents);
+      chunkEvents = [];
+      chunkBytes = 0;
     }
-    lines.push(line);
-    bytes += nextBytes;
+    chunkEvents.push(event);
+    chunkBytes += Buffer.byteLength(`${chunkEvents.length > 1 ? '\n\n' : ''}${formatEventText(event, chunkEvents.length)}`, 'utf8');
   }
-  if (lines.length > 1) chunks.push(lines.join('\n\n'));
-  return chunks.map((content) => ({ msgtype: 'markdown', markdown: { content } }));
+  if (chunkEvents.length > 0) chunks.push(chunkEvents);
+
+  return chunks.map((chunk) => {
+    const firstEvent = chunk[0];
+    const roomName = cleanText(firstEvent.identity.roomName, 60) || '未命名直播间';
+    const heading = `【${roomName}】${cleanText(firstEvent.title, 80)}${chunk.length > 1 ? `等 ${chunk.length} 条` : ''}`;
+    const content = [
+      heading,
+      '━━━━━━━━━━━━',
+      ...chunk.map((event, index) => formatEventText(event, index + 1))
+    ].join('\n\n');
+    return {
+      msgtype: 'text',
+      text: {
+        content
+      }
+    };
+  });
 }
 
-function escapeMarkdown(value) {
-  return cleanText(value, 180).replace(/[<>]/g, (character) => character === '<' ? '＜' : '＞');
+function formatEventText(event, index) {
+  return [
+    `【${index}】${cleanText(event.title, 80)}`,
+    `直播间：${cleanText(event.identity.roomName, 60)}`,
+    `详细信息：${cleanText(event.detail, 180)}`,
+    `检测电脑：${cleanText(event.identity.label, 80)}`,
+    `发生时间：${formatTime(event.occurredAt)}`
+  ].join('\n');
 }
 
 function cleanText(value, max) {

@@ -108,8 +108,8 @@ function render() {
   renderCommandLog(commands?.recent || []);
   if (selectedDeviceUuid) {
     const selected = findDevice(selectedDeviceUuid);
-    if (selected) renderDrawer(selected);
-    else closeDrawer();
+    if (!selected) closeDrawer();
+    else if (document.activeElement?.id !== 'monitor-room-name-input') renderDrawer(selected);
   }
 }
 
@@ -291,6 +291,7 @@ function renderDrawer(device) {
   $('monitor-device-subtitle').textContent = `${device.label} · ${device.online ? '电脑在线' : `离线 ${relativeTime(device.lastSeenAt)}`}`;
   const detail = $('monitor-device-detail');
   detail.replaceChildren(
+    roomNameSection(device),
     detailSection('运行状态', [
       ['OBS', obsDisplay(device.obs)],
       ['音频', `${device.audio.display} · ${device.audio.levelDb == null ? '-- dB' : `${device.audio.levelDb.toFixed(1)} dB`}`],
@@ -343,6 +344,43 @@ function renderDrawer(device) {
   actions.append(weComButton);
 }
 
+function roomNameSection(device) {
+  const section = document.createElement('section');
+  section.className = 'monitor-name-editor';
+  const heading = document.createElement('h3');
+  heading.textContent = '直播间名称';
+  const copy = document.createElement('p');
+  copy.textContent = device.online
+    ? '修改后会立即同步到这台检测电脑。'
+    : '电脑当前离线，名称会在下次连接时自动同步。';
+  const form = document.createElement('form');
+  const input = document.createElement('input');
+  input.id = 'monitor-room-name-input';
+  input.name = 'roomName';
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.minLength = 2;
+  input.maxLength = 60;
+  input.value = device.roomName;
+  input.setAttribute('aria-label', '直播间名称');
+  const button = document.createElement('button');
+  button.type = 'submit';
+  button.textContent = '更新名称';
+  const syncButtonState = () => {
+    const nextName = input.value.trim();
+    button.disabled = nextName.length < 2 || nextName === device.roomName;
+  };
+  input.addEventListener('input', syncButtonState);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void renameDevice(device.uuid, input.value, button);
+  });
+  syncButtonState();
+  form.append(input, button);
+  section.append(heading, copy, form);
+  return section;
+}
+
 function detailSection(title, rows) {
   const section = document.createElement('section');
   const heading = document.createElement('h3');
@@ -357,6 +395,26 @@ function detailSection(title, rows) {
   }
   section.append(heading, list);
   return section;
+}
+
+async function renameDevice(deviceUuid, roomName, button) {
+  const nextName = String(roomName || '').trim();
+  if (nextName.length < 2) return;
+  button.disabled = true;
+  button.textContent = '同步中';
+  try {
+    const result = await api(`/api/monitor/devices/${encodeURIComponent(deviceUuid)}/name`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomName: nextName })
+    });
+    toast(result.synced ? '名称已更新并同步到电脑' : '名称已更新，电脑下次连接时同步');
+    await refresh();
+  } catch (error) {
+    toast(error.payload?.message || error.message || '名称更新失败');
+    const current = findDevice(deviceUuid);
+    if (current) renderDrawer(current);
+  }
 }
 
 async function runCommand(deviceUuid, command, confirmed) {

@@ -166,6 +166,7 @@ export class ConfigStore {
       remoteAccessEnabled: false,
       remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
       livestreamRoomName: cleanRoomName(merged.livestreamRoomName),
+      livestreamRoomNameRevision: clamp(Math.round(numberValue(merged.livestreamRoomNameRevision, DEFAULT_CONFIG.livestreamRoomNameRevision)), 0, Number.MAX_SAFE_INTEGER),
       monitoringIdentityRevision: DEFAULT_CONFIG.monitoringIdentityRevision,
       remoteDeviceUuid,
       remoteDeviceSecret,

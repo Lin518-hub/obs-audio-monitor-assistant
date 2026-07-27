@@ -76,6 +76,7 @@ let atemSwitchHistory: ATEMSwitchHistoryEntry[] = [];
 let atemCurrentSession: ATEMLiveSession | null = null;
 let atemRecentSessions: ATEMLiveSession[] = [];
 let atemSessionQueue: Promise<void> = Promise.resolve();
+let remoteRoomNameSyncQueue: Promise<void> = Promise.resolve();
 let atemSessionTransitionPending = false;
 let pendingATEMSessionStop: { endedAt: number; state: ReturnType<ATEMMonitor['getSnapshot']> } | null = null;
 let monitor: OBSMonitor;
@@ -166,6 +167,28 @@ async function initializeApp(): Promise<void> {
     if (!latestSnapshot) return;
     latestSnapshot = injectATEMState(latestSnapshot);
     broadcastSnapshot(latestSnapshot);
+  });
+  remoteBridge.on('roomNameChanged', ({ roomName, revision }) => {
+    remoteRoomNameSyncQueue = remoteRoomNameSyncQueue.catch(() => undefined).then(async () => {
+      const current = (latestSnapshot ?? monitor.getSnapshot()).config;
+      if (
+        revision < current.livestreamRoomNameRevision
+        || (revision === current.livestreamRoomNameRevision && roomName === current.livestreamRoomName)
+      ) {
+        return;
+      }
+      const nextConfig = await configStore.update({
+        livestreamRoomName: roomName,
+        livestreamRoomNameRevision: revision
+      });
+      const snapshot = await monitor.updateConfig(nextConfig);
+      latestSnapshot = injectATEMState(snapshot);
+      remoteBridge.updateSnapshot(latestSnapshot);
+      broadcastSnapshot(latestSnapshot);
+      updateTray(latestSnapshot);
+    }).catch((error) => {
+      console.error(`[remote] failed to persist livestream room name: ${error instanceof Error ? error.message : String(error)}`);
+    });
   });
   remoteBridge.updateSnapshot(latestSnapshot);
   void remoteBridge.configure(config);
@@ -329,15 +352,23 @@ function registerIpc(): void {
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
     const previousSnapshot = latestSnapshot ?? monitor.getSnapshot();
     const previous = previousSnapshot.config;
-    const protectedPatch = {
-      ...patch,
-      ...(Object.hasOwn(patch, 'floatingWindowMode') && patch.floatingWindowMode !== previous.floatingWindowMode
-        ? { floatingWindowBounds: null }
-        : {}),
-      remoteDeviceUuid: previous.remoteDeviceUuid,
-      remoteDeviceSecret: previous.remoteDeviceSecret
-    };
-    const nextConfig = await configStore.update(protectedPatch);
+    const nextConfig = await configStore.update((current) => {
+      const requestedRoomName = Object.hasOwn(patch, 'livestreamRoomName')
+        ? String(patch.livestreamRoomName ?? '').trim()
+        : current.livestreamRoomName;
+      const roomNameChanged = requestedRoomName !== current.livestreamRoomName;
+      return {
+        ...patch,
+        ...(Object.hasOwn(patch, 'floatingWindowMode') && patch.floatingWindowMode !== current.floatingWindowMode
+          ? { floatingWindowBounds: null }
+          : {}),
+        livestreamRoomNameRevision: roomNameChanged
+          ? current.livestreamRoomNameRevision + 1
+          : current.livestreamRoomNameRevision,
+        remoteDeviceUuid: current.remoteDeviceUuid,
+        remoteDeviceSecret: current.remoteDeviceSecret
+      };
+    });
     if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
       await applyAutoLaunch(nextConfig.autoLaunch);
     }

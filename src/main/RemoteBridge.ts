@@ -20,6 +20,7 @@ export { LAN_REMOTE_SERVER_URL, PUBLIC_REMOTE_SERVER_URL } from '../shared/types
 
 interface RemoteBridgeEvents {
   stateChanged: [RemoteAccessSnapshot];
+  roomNameChanged: [{ roomName: string; revision: number }];
 }
 
 type RemoteAdminCommandHandler = (command: RemoteAdminCommand) => Promise<RemoteAdminCommandResult>;
@@ -49,6 +50,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private serverCandidates: string[] = [];
   private serverUrl = '';
   private roomName = '';
+  private roomNameRevision = 0;
   private uuid = '';
   private secret = '';
   private generation = 0;
@@ -81,10 +83,12 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   async configure(config: AppConfig): Promise<void> {
     const normalizedUrl = normalizeServerUrl(config.remoteServerUrl);
     const roomName = config.livestreamRoomName.trim();
+    const roomNameRevision = normalizedRevision(config.livestreamRoomNameRevision);
     const enabled = true;
     const changed = this.enabled !== enabled
       || this.configuredServerUrl !== normalizedUrl
       || this.roomName !== roomName
+      || this.roomNameRevision !== roomNameRevision
       || this.uuid !== config.remoteDeviceUuid
       || this.secret !== config.remoteDeviceSecret;
     this.enabled = enabled;
@@ -93,6 +97,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.serverCandidates = remoteServerCandidates(normalizedUrl);
     this.serverUrl = this.serverCandidates[0] ?? '';
     this.roomName = roomName;
+    this.roomNameRevision = roomNameRevision;
     this.uuid = config.remoteDeviceUuid;
     this.secret = config.remoteDeviceSecret;
     if (!changed) return;
@@ -181,6 +186,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       controllers.forEach((controller) => controller.abort());
       if (!this.enabled || generation !== this.generation) return;
       this.serverUrl = registered.serverUrl;
+      this.applyServerRoomName(registered.roomName, registered.roomNameRevision);
       this.setState({ activeServerUrl: registered.serverUrl, pairUrl: null, routeType: remoteRouteType(registered.serverUrl) });
       await this.openSocket(generation);
       return;
@@ -194,7 +200,11 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.scheduleReconnect(generation);
   }
 
-  private async registerWithServer(serverUrl: string, delayMs: number, signal: AbortSignal): Promise<{ serverUrl: string }> {
+  private async registerWithServer(
+    serverUrl: string,
+    delayMs: number,
+    signal: AbortSignal
+  ): Promise<{ serverUrl: string; roomName: string; roomNameRevision: number }> {
     if (delayMs > 0) await abortableDelay(delayMs, signal);
     const timeout = serverUrl === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS;
     const { session } = await import('electron');
@@ -212,6 +222,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         secret: this.secret,
         label: hostname(),
         roomName: this.roomName,
+        roomNameRevision: this.roomNameRevision,
         mobileAccessEnabled: false,
         monitoringIdentityRevision: 1,
         appVersion: this.appVersion,
@@ -221,9 +232,16 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)])
     });
-    const body = await response.json() as { device?: { uuid?: string }; error?: string };
+    const body = await response.json() as {
+      device?: { uuid?: string; roomName?: string; roomNameRevision?: number };
+      error?: string;
+    };
     if (!response.ok || !body.device?.uuid) throw new Error(body.error || `服务器返回 ${response.status}`);
-    return { serverUrl };
+    return {
+      serverUrl,
+      roomName: body.device.roomName ?? this.roomName,
+      roomNameRevision: normalizedRevision(body.device.roomNameRevision)
+    };
   }
 
   private async openSocket(generation: number): Promise<void> {
@@ -251,9 +269,23 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     socket.on('message', (raw) => {
       if (socket !== this.socket || generation !== this.generation) return;
       try {
-        const message = JSON.parse(raw.toString()) as { type?: string; pairUrl?: string; id?: string; command?: string; payload?: Record<string, unknown>; sentAt?: number; receivedAt?: number; onlineMobileClients?: number };
+        const message = JSON.parse(raw.toString()) as {
+          type?: string;
+          pairUrl?: string;
+          id?: string;
+          command?: string;
+          payload?: Record<string, unknown>;
+          sentAt?: number;
+          receivedAt?: number;
+          onlineMobileClients?: number;
+          roomName?: string;
+          roomNameRevision?: number;
+        };
         if (message.type === 'registered') {
+          this.applyServerRoomName(message.roomName, message.roomNameRevision);
           this.setState({ pairUrl: null, onlineMobileClients: 0 });
+        } else if (message.type === 'device-config') {
+          this.applyServerRoomName(message.roomName, message.roomNameRevision);
         } else if (message.type === 'presence') {
           this.setState({ onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0) });
         } else if (message.type === 'latency-pong' && Number.isFinite(message.sentAt)) {
@@ -300,6 +332,19 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         }
       )
     });
+  }
+
+  private applyServerRoomName(roomName: unknown, revision: unknown): void {
+    const resolved = resolveServerRoomName(
+      this.roomName,
+      this.roomNameRevision,
+      roomName,
+      revision
+    );
+    if (!resolved) return;
+    this.roomName = resolved.roomName;
+    this.roomNameRevision = resolved.revision;
+    this.emit('roomNameChanged', resolved);
   }
 
   private async executeAdminCommand(id: string, command: RemoteAdminCommand): Promise<void> {
@@ -382,6 +427,24 @@ export function remoteRouteType(serverUrl: string): RemoteAccessSnapshot['routeT
   if (serverUrl === LAN_REMOTE_SERVER_URL) return 'lan';
   if (serverUrl === PUBLIC_REMOTE_SERVER_URL) return 'public';
   return serverUrl ? 'custom' : null;
+}
+
+export function resolveServerRoomName(
+  currentName: string,
+  currentRevision: number,
+  serverName: unknown,
+  serverRevision: unknown
+): { roomName: string; revision: number } | null {
+  const roomName = String(serverName ?? '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, 60);
+  const revision = normalizedRevision(serverRevision);
+  if (roomName.length < 2 || revision < normalizedRevision(currentRevision)) return null;
+  if (roomName === currentName.trim() && revision === normalizedRevision(currentRevision)) return null;
+  return { roomName, revision };
+}
+
+function normalizedRevision(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function normalizeServerUrl(value: string): string {

@@ -79,6 +79,7 @@ test('removes legacy mobile pairing and keeps one monitoring identity per room',
       secret: '1'.repeat(64),
       label: 'Test Desktop',
       roomName: '测试直播间',
+      roomNameRevision: 0,
       monitoringIdentityRevision: 1,
       appVersion: '3.9.1'
     })
@@ -113,6 +114,7 @@ test('removes legacy mobile pairing and keeps one monitoring identity per room',
       secret: '2'.repeat(64),
       label: 'Replacement Desktop',
       roomName: '测试直播间',
+      roomNameRevision: 0,
       monitoringIdentityRevision: 1,
       appVersion: '3.9.1'
     })
@@ -138,6 +140,7 @@ test('protects and aggregates the live room monitor', async () => {
       body: JSON.stringify({
         ...device,
         roomName: index === 0 ? '品牌一号直播间' : '品牌二号直播间',
+        roomNameRevision: 0,
         monitoringIdentityRevision: 1,
         appVersion: '3.9.1'
       })
@@ -216,6 +219,44 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(commandResponse.body.status, 'success');
   assert.equal(commandResponse.body.message, '已打开');
 
+  primary.clear();
+  const renameRequest = request(`/api/monitor/devices/${devices[0].uuid}/name`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomName: '品牌旗舰直播间' })
+  });
+  const renamedConfig = await primary.next();
+  const renameResponse = await renameRequest;
+  assert.equal(renameResponse.response.status, 200);
+  assert.equal(renameResponse.body.synced, true);
+  assert.equal(renameResponse.body.device.roomName, '品牌旗舰直播间');
+  assert.equal(renamedConfig.type, 'device-config');
+  assert.equal(renamedConfig.roomName, '品牌旗舰直播间');
+  assert.equal(renamedConfig.roomNameRevision, 2);
+
+  const staleRegistration = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...devices[0],
+      roomName: '品牌一号直播间',
+      roomNameRevision: 0,
+      monitoringIdentityRevision: 1,
+      appVersion: '3.9.3'
+    })
+  });
+  assert.equal(staleRegistration.response.status, 200);
+  assert.equal(staleRegistration.body.device.roomName, '品牌旗舰直播间');
+  assert.equal(staleRegistration.body.device.roomNameRevision, 2);
+
+  const duplicateRename = await request(`/api/monitor/devices/${devices[0].uuid}/name`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomName: '品牌二号直播间' })
+  });
+  assert.equal(duplicateRename.response.status, 409);
+  assert.equal(duplicateRename.body.error, 'room_name_in_use');
+
   const pauseWithoutConfirmation = await request(`/api/monitor/devices/${devices[0].uuid}/commands`, {
     method: 'POST',
     headers: { Cookie: cookie, 'Content-Type': 'application/json' },
@@ -225,8 +266,9 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(pauseWithoutConfirmation.body.error, 'confirmation_required');
 
   const refreshedMonitor = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
-  assert.equal(refreshedMonitor.body.commands.recent[0].command, 'show_app');
+  assert.equal(refreshedMonitor.body.commands.recent[0].command, 'rename_device');
   assert.equal(refreshedMonitor.body.commands.recent[0].status, 'success');
+  assert.equal(refreshedMonitor.body.commands.recent.some((item) => item.command === 'show_app' && item.status === 'success'), true);
 
   const page = await fetch(`${base}/monitor`);
   assert.equal(page.status, 200);
@@ -246,6 +288,7 @@ test('keeps central monitoring always on and recognizes the reported app version
       secret,
       label: '只上报电脑',
       roomName: '后台监控直播间',
+      roomNameRevision: 0,
       mobileAccessEnabled: false,
       monitoringIdentityRevision: 1,
       appVersion: 'unknown',
