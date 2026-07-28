@@ -4,6 +4,7 @@ import { hostname, release } from 'node:os';
 import { ProxyAgent } from 'proxy-agent';
 import WebSocket from 'ws';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
+import { AUDIO_ALERT_SECONDS, CAMERA_ALERT_SECONDS, reminderVisualState } from '../shared/reminderTiming.js';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
@@ -544,13 +545,8 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
       : snapshot.audioSpeaking || snapshot.silentForSeconds < 3
         ? 'speaking'
         : 'silent';
-  const audioTone = ready
-    ? audioAlertVisible
-      ? 'danger'
-      : snapshot.silentForSeconds >= snapshot.config.silenceDurationSeconds * 0.75
-        ? 'warning'
-        : 'safe'
-    : '';
+  const visual = reminderVisualState(snapshot.silentForSeconds, AUDIO_ALERT_SECONDS);
+  const audioTone = ready ? audioAlertVisible ? 'danger' : visual.tone : '';
 
   let display = '--';
   let hint = '等待电脑上传音频状态';
@@ -582,7 +578,7 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
     display = snapshot.audioSpeaking || snapshot.silentForSeconds < 3 ? '正在讲话' : `${snapshot.silentForSeconds}s`;
     hint = snapshot.audioSpeaking || snapshot.silentForSeconds < 3
       ? '音频正常'
-      : `${Math.max(0, snapshot.config.silenceDurationSeconds - snapshot.silentForSeconds)}s 后报警`;
+      : `${Math.max(0, AUDIO_ALERT_SECONDS - snapshot.silentForSeconds)}s 后报警`;
   }
 
   return {
@@ -592,8 +588,10 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
     inputName: snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName,
     levelDb: hasFreshMeter ? snapshot.lastLevelDb : null,
     thresholdDb: snapshot.config.silenceThresholdDb,
-    silenceDurationSeconds: snapshot.config.silenceDurationSeconds,
+    silenceDurationSeconds: AUDIO_ALERT_SECONDS,
     silentForSeconds: ready ? snapshot.silentForSeconds : 0,
+    warningProgress: ready ? visual.warningProgress : 0,
+    dangerProgress: ready ? visual.dangerProgress : 0,
     display,
     hint,
     lastMeterReceivedAt: lastMeterAt,
@@ -618,8 +616,15 @@ function remoteTelemetry(
         return [inputId, { color: custom?.color || defaultATEMInputColor(inputId), group: custom?.group || '未分组' }];
       })),
       elapsedSeconds: snapshot.atemProgramInputElapsedSeconds,
-      limitSeconds: snapshot.config.atemCameraTimeLimitSeconds,
+      limitSeconds: CAMERA_ALERT_SECONDS,
       overLimit: snapshot.atemProgramInputOverLimit,
+      exempt: snapshot.atemProgramInputExempt,
+      warningProgress: snapshot.atemProgramInputExempt
+        ? 0
+        : reminderVisualState(snapshot.atemProgramInputElapsedSeconds, CAMERA_ALERT_SECONDS).warningProgress,
+      dangerProgress: snapshot.atemProgramInputExempt
+        ? 0
+        : reminderVisualState(snapshot.atemProgramInputElapsedSeconds, CAMERA_ALERT_SECONDS).dangerProgress,
       recentSwitches: snapshot.atemSwitchHistory.slice(0, 20),
       currentSession: snapshot.atemCurrentSession,
       recentSessions: snapshot.atemRecentSessions

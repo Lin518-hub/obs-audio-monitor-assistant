@@ -314,16 +314,14 @@ const RulesStep: React.FC<{
       配置报警规则
     </div>
     <p className="onboarding-step-desc">
-      设置静音检测的持续时长和音量阈值。口播密集可缩短时长，访谈或活动直播可适当延长。
+      音频连续静音 2 分钟后统一报警。你只需要根据现场环境调整静音阈值。
     </p>
 
     <div className="onboarding-field">
-      <label>连续静音报警时长（秒）</label>
+      <label>连续静音报警时长</label>
       <div className="onboarding-number-field">
-        <button type="button" onClick={() => onUpdateDraft('silenceDurationSeconds', Math.max(10, draft.silenceDurationSeconds - 10))}>−</button>
-        <span className="nf-value">{draft.silenceDurationSeconds}</span>
-        <span className="nf-unit">秒</span>
-        <button type="button" onClick={() => onUpdateDraft('silenceDurationSeconds', Math.min(600, draft.silenceDurationSeconds + 10))}>+</button>
+        <span className="nf-value">120</span>
+        <span className="nf-unit">秒 · 已统一</span>
       </div>
     </div>
 

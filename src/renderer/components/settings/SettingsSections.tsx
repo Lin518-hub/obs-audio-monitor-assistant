@@ -35,7 +35,7 @@ import { snapshotTargetName } from '../../utils/status';
 import { playAlertTone } from '../../utils/alertSound';
 import { NumberField, SegmentedControl, ToggleRow } from './widgets';
 import { SourcePicker } from './SourcePicker';
-import { MorandiColorPicker, StyledSelect } from '../StyledSelect';
+import { MorandiColorPicker, StyledMultiSelect, StyledSelect } from '../StyledSelect';
 
 interface SectionProps {
   icon: React.ComponentType<{ size?: number }>;
@@ -552,17 +552,10 @@ export const ATEMRulesSection: React.FC<{
     />
     {draft.atemCameraTimeAlertEnabled && (
       <div className="settings-progressive-block">
-        <div className="settings-field">
-          <label className="settings-field-label" htmlFor="atem-camera-limit">单机位标红时长</label>
-          <NumberField
-            value={draft.atemCameraTimeLimitSeconds}
-            min={10}
-            max={3600}
-            step={10}
-            suffix="秒"
-            onChange={(value) => onChange('atemCameraTimeLimitSeconds', value)}
-          />
-          <span className="settings-field-hint">默认 10 分钟；达到时间后小浮窗继续计时，并将机位模块标红。</span>
+        <div className="settings-field settings-fixed-rule">
+          <label className="settings-field-label">统一机位提醒时间</label>
+          <strong>10 分钟标红 · 12 分钟电脑强提醒</strong>
+          <span className="settings-field-hint">监控中心和企业微信按 10 分钟提醒；电脑端正式弹窗仅在开启强提醒后于 12 分钟出现。</span>
         </div>
         <ToggleRow
           id="atem-camera-fullscreen-alert"
@@ -572,33 +565,35 @@ export const ATEMRulesSection: React.FC<{
           onChange={(value) => onChange('atemCameraFullscreenAlertEnabled', value)}
         />
         <div className="settings-field">
-          <label className="settings-field-label">出镜主机位</label>
-          <StyledSelect
-            value={draft.atemPrimaryInputId ?? 0}
-            ariaLabel="选择出镜主机位"
+          <label className="settings-field-label">出镜机位（可多选）</label>
+          <StyledMultiSelect
+            values={draft.atemPrimaryInputIds}
+            ariaLabel="选择不参与计时的出镜机位"
             options={[
-              { value: 0, label: '不设置主机位', description: '所有机位都参与停留计时与超时标红' },
-              ...(draft.atemPrimaryInputId && !snapshot.atemInputIds.includes(draft.atemPrimaryInputId)
-                ? [{
-                    value: draft.atemPrimaryInputId,
-                    label: draft.atemInputCustomizations[String(draft.atemPrimaryInputId)]?.name || `机位 ${draft.atemPrimaryInputId}`,
-                    description: `已保存的 PGM ${draft.atemPrimaryInputId} · ATEM 连接后校验`,
-                    swatch: draft.atemInputCustomizations[String(draft.atemPrimaryInputId)]?.color || defaultATEMInputColor(draft.atemPrimaryInputId)
-                  }]
-                : []),
+              ...draft.atemPrimaryInputIds
+                .filter((inputId) => !snapshot.atemInputIds.includes(inputId))
+                .map((inputId) => ({
+                  value: inputId,
+                  label: draft.atemInputCustomizations[String(inputId)]?.name || `机位 ${inputId}`,
+                  description: `已保存的 PGM ${inputId} · ATEM 连接后校验`,
+                  swatch: draft.atemInputCustomizations[String(inputId)]?.color || defaultATEMInputColor(inputId)
+                })),
               ...snapshot.atemInputIds.map((inputId) => {
                 const customization = draft.atemInputCustomizations[String(inputId)];
                 return {
                   value: inputId,
                   label: customization?.name || snapshot.atemInputLabels[inputId] || `机位 ${inputId}`,
-                  description: `PGM ${inputId} · 此机位连续出镜时不计时`,
+                  description: `PGM ${inputId} · 选中后不计时、不变色、不提醒`,
                   swatch: customization?.color || defaultATEMInputColor(inputId)
                 };
               })
             ]}
-            onChange={(value) => onChange('atemPrimaryInputId', value === 0 ? null : value)}
+            onChange={(values) => {
+              onChange('atemPrimaryInputIds', values);
+              onChange('atemPrimaryInputId', values[0] ?? null);
+            }}
           />
-          <span className="settings-field-hint">主播长期出镜的固定机位可设为主机位，该机位不参与停留计时、标红或正式报警。</span>
+          <span className="settings-field-hint">主播、嘉宾等长期出镜机位可以同时选择；切到这些机位后不累计停留时间，也不会触发任何提醒。</span>
         </div>
         <ToggleRow
           id="atem-floating-module"
@@ -672,9 +667,10 @@ export const RulesSection: React.FC<{
 }> = ({ draft, onChange }) => (
   <Section id="settings-rules" icon={Timer} title="音频静音规则" description="每个音源独立计时，任一路超时都会报警">
     <div className="settings-field-row">
-      <div className="settings-field">
-        <label className="settings-field-label" htmlFor="rule-duration">静音时长</label>
-        <NumberField value={draft.silenceDurationSeconds} min={5} max={3600} step={5} suffix="秒" onChange={(v) => onChange('silenceDurationSeconds', v)} />
+      <div className="settings-field settings-fixed-rule">
+        <label className="settings-field-label">静音报警时长</label>
+        <strong>2 分钟</strong>
+        <span className="settings-field-hint">客户端、监控中心和企业微信使用同一时间。</span>
       </div>
       <div className="settings-field">
         <label className="settings-field-label" htmlFor="rule-threshold">静音阈值</label>
@@ -682,7 +678,7 @@ export const RulesSection: React.FC<{
       </div>
     </div>
     <p className="settings-section-hint">
-      当前选择的每个音源都会单独判断，不取平均值。口播密集可缩短静音时长，访谈或活动直播可适当延长；阈值也可在主界面电平表上拖动调整。
+      当前选择的每个音源都会单独判断，不取平均值。连续静音 2 分钟触发提醒；阈值也可在主界面电平表上拖动调整。
     </p>
   </Section>
 );

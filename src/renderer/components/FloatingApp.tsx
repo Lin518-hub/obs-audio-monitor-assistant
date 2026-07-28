@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
+import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
 import {
@@ -129,7 +130,7 @@ const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string
           <strong>{audioValue}</strong>
           <em>{inputName}</em>
         </div>
-        <div className={`floating-combo-camera ${timerState.tone}`}>
+        <div className={`floating-combo-camera ${timerState.tone}`} style={timerState.style}>
           <span>当前机位</span>
           <strong>{liveActive ? formatFloatingTime(snapshot.atemProgramInputElapsedSeconds) : '00:00'}</strong>
           <em>PGM {snapshot.atemProgramInput || '--'} · {cameraLabel}</em>
@@ -144,7 +145,7 @@ const AudioAtemFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string
         <div className={`floating-combo-prompt ${audioPrompt.tone}`}>
           <strong>{audioPrompt.label}</strong>
         </div>
-        <div className={`floating-combo-prompt ${timerState.tone || 'safe'}`}>
+        <div className={`floating-combo-prompt ${timerState.tone || 'safe'}`} style={timerState.style}>
           <strong>{timerState.hint}</strong>
         </div>
       </footer>
@@ -208,7 +209,7 @@ const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string; me
       )}
 
       {modules.atem && (
-        <article className={`floating-multi-card ${timerState.tone}`}>
+        <article className={`floating-multi-card ${timerState.tone}`} style={timerState.style}>
           <header><span><Video size={13} /> ATEM 当前机位</span><strong>{timerState.label}</strong></header>
           <div className="floating-multi-primary-value">
             <strong>{liveActive ? formatFloatingTime(snapshot.atemProgramInputElapsedSeconds) : '00:00'}</strong>
@@ -239,27 +240,54 @@ const formatFloatingTime = (seconds: number): string => {
   return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
 };
 
-const atemTimerState = (snapshot: AppSnapshot): { tone: string; label: string; hint: string } => {
+const atemTimerState = (snapshot: AppSnapshot): {
+  tone: string;
+  label: string;
+  hint: string;
+  style?: React.CSSProperties;
+} => {
   if (!snapshot.atemConnected) return { tone: '', label: '未连接', hint: '等待 ATEM 连接' };
   if (!isLiveSession(snapshot)) return { tone: '', label: '等待开播', hint: '等待直播/录制' };
   if (!snapshot.config.atemCameraTimeAlertEnabled) return { tone: '', label: '计时关闭', hint: '机位计时已关闭' };
-  const limit = Math.max(10, snapshot.config.atemCameraTimeLimitSeconds);
+  if (snapshot.atemProgramInputExempt) return { tone: 'safe', label: '出镜机位', hint: '已豁免计时与提醒' };
+  const limit = CAMERA_ALERT_SECONDS;
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
+  const visual = reminderVisualState(elapsed, limit);
+  const style = timerReminderStyle(visual.warningProgress, visual.dangerProgress);
   if (elapsed >= limit) {
-    return { tone: 'critical', label: '机位超时', hint: `已超时 ${formatFloatingTime(elapsed - limit)}` };
+    return { tone: 'critical', label: '机位超时', hint: `已超时 ${formatFloatingTime(elapsed - limit)}`, style };
   }
   const remaining = limit - elapsed;
-  if (elapsed >= limit * 0.75) {
-    return { tone: 'warn', label: '接近上限', hint: `${formatFloatingTime(remaining)} 后提醒` };
+  if (visual.tone === 'danger') {
+    return { tone: 'critical', label: '即将超时', hint: `${formatFloatingTime(remaining)} 后提醒`, style };
   }
-  return { tone: '', label: '计时中', hint: `剩余 ${formatFloatingTime(remaining)}` };
+  if (visual.tone === 'warning') {
+    return { tone: 'warn', label: '停留计时', hint: `${formatFloatingTime(remaining)} 后提醒`, style };
+  }
+  return { tone: '', label: '计时中', hint: `剩余 ${formatFloatingTime(remaining)}`, style };
 };
 
 const isLiveSession = (snapshot: AppSnapshot): boolean =>
-  snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+  snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
 
 const interpolateRgb = (from: [number, number, number], to: [number, number, number], progress: number): string => {
   const amount = Math.max(0, Math.min(1, progress));
   const channels = from.map((value, index) => Math.round(value + (to[index] - value) * amount));
   return `rgb(${channels.join(', ')})`;
+};
+
+const timerReminderStyle = (warningProgress: number, dangerProgress: number): React.CSSProperties => {
+  if (dangerProgress > 0) {
+    return {
+      backgroundColor: `rgba(127, 29, 29, ${0.08 + dangerProgress * 0.22})`,
+      borderColor: `rgba(248, 113, 113, ${0.35 + dangerProgress * 0.55})`
+    };
+  }
+  if (warningProgress > 0) {
+    return {
+      backgroundColor: `rgba(245, 158, 11, ${0.03 + warningProgress * 0.15})`,
+      borderColor: `rgba(245, 158, 11, ${0.18 + warningProgress * 0.48})`
+    };
+  }
+  return {};
 };

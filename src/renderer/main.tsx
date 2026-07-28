@@ -27,6 +27,7 @@ import { ProductivityChart } from './components/widgets/ProductivityChart';
 import { HistoryList } from './components/HistoryList';
 import { GuideDialog } from './components/dialogs/GuideDialog';
 import { ManualDialog } from './components/dialogs/ManualDialog';
+import { ReleaseNotesDialog } from './components/dialogs/ReleaseNotesDialog';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { AlertApp } from './components/AlertApp';
 import { AlertBackdropApp } from './components/AlertBackdropApp';
@@ -39,9 +40,10 @@ import { PreflightCheckPage } from './components/PreflightCheckPage';
 import { useSnapshot } from './hooks/useSnapshot';
 import { useUpdateState } from './hooks/useUpdateState';
 import { useAutoSave } from './hooks/useAutoSave';
-import { formatDb, shouldShowOnboarding } from './utils/status';
+import { formatDb, shouldShowOnboarding, shouldShowReleaseNotes } from './utils/status';
 import { APP_VERSION } from './utils/appVersion';
 import { defaultATEMInputColor } from '../shared/atemPalette';
+import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../shared/reminderTiming';
 
 import type { AppConfig, AppSnapshot, TestConnectionResult, VolumeHistoryPoint } from '../shared/types';
 
@@ -242,8 +244,19 @@ function SettingsApp() {
 
   const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
   const completeOnboarding = useCallback(() => {
-    void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION });
+    void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION });
   }, [flushSave]);
+  const confirmReleaseNotes = useCallback(async (cameraIds: number[]) => {
+    await flushSave({
+      releaseNotesSeenVersion: APP_VERSION,
+      ...(draft?.atemEnabled
+        ? {
+            atemPrimaryInputIds: cameraIds,
+            atemPrimaryInputId: cameraIds[0] ?? null
+          }
+        : {})
+    });
+  }, [draft?.atemEnabled, flushSave]);
   const refreshOnboardingInputs = useCallback(() => {
     void window.obsGuard.refreshInputs();
   }, []);
@@ -431,6 +444,23 @@ function SettingsApp() {
         />
       )}
       {showManual && <ManualDialog onClose={() => setShowManual(false)} />}
+      {shouldShowReleaseNotes(snapshot.config, APP_VERSION) && (
+        <ReleaseNotesDialog
+          version={APP_VERSION}
+          cameraSelectionRequired={draft.atemEnabled}
+          cameraOptions={Array.from({ length: 8 }, (_, index) => {
+            const inputId = index + 1;
+            const customization = draft.atemInputCustomizations[String(inputId)];
+            return {
+              id: inputId,
+              label: customization?.name || snapshot.atemInputLabels[inputId] || `Camera ${inputId}`,
+              color: customization?.color || defaultATEMInputColor(inputId)
+            };
+          })}
+          initialCameraIds={draft.atemPrimaryInputIds}
+          onConfirm={confirmReleaseNotes}
+        />
+      )}
     </main>
   );
 }
@@ -451,13 +481,21 @@ function ATEMConsole({
   const [operation, setOperation] = useState<{ tone: 'pending' | 'ok' | 'bad'; text: string } | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('current');
   const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
-  const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+  const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
   const elapsed = snapshot.atemProgramInputElapsedSeconds;
-  const limit = Math.max(10, draft.atemCameraTimeLimitSeconds);
+  const limit = CAMERA_ALERT_SECONDS;
   const remaining = Math.max(0, limit - elapsed);
   const progress = Math.min(100, (elapsed / limit) * 100);
-  const warning = liveActive && draft.atemCameraTimeAlertEnabled && elapsed >= limit * 0.75;
-  const timerTone = !liveActive ? 'idle' : snapshot.atemProgramInputOverLimit ? 'danger' : warning ? 'warning' : 'safe';
+  const timerVisual = reminderVisualState(elapsed, limit);
+  const timerTone = !liveActive || snapshot.atemProgramInputExempt
+    ? 'idle'
+    : snapshot.atemProgramInputOverLimit || timerVisual.tone === 'danger'
+      ? 'danger'
+      : timerVisual.tone;
+  const timerStyle = {
+    '--atem-warning-progress': String(snapshot.atemProgramInputExempt ? 0 : timerVisual.warningProgress),
+    '--atem-danger-progress': String(snapshot.atemProgramInputExempt ? 0 : timerVisual.dangerProgress)
+  } as React.CSSProperties;
   const query = search.trim().toLowerCase();
   const visibleInputs = snapshot.atemInputIds.filter((inputId) => {
     const label = snapshot.atemInputLabels[inputId] || `Input ${inputId}`;
@@ -548,7 +586,7 @@ function ATEMConsole({
           <span>预览队列 PVW</span>
           <div><strong>{snapshot.atemPreviewInput || '--'}</strong><b>{previewLabel}</b></div>
         </article>
-        <article className={`atem-timer-card ${timerTone}`}>
+        <article className={`atem-timer-card ${timerTone}`} style={timerStyle}>
           <header>
             <span>当前机位计时</span>
             <button type="button" className={`atem-timer-toggle ${draft.atemCameraTimeAlertEnabled ? 'active' : ''}`} onClick={() => onChange('atemCameraTimeAlertEnabled', !draft.atemCameraTimeAlertEnabled)}>
@@ -556,10 +594,16 @@ function ATEMConsole({
             </button>
           </header>
           <strong>{formatATEMTime(elapsed)}</strong>
-          <div className="atem-timer-progress"><i style={{ width: `${progress}%` }} /></div>
+          <div className="atem-timer-progress"><i style={{ width: `${snapshot.atemProgramInputExempt ? 0 : progress}%` }} /></div>
           <footer>
-            <span>{!liveActive ? '等待直播、录制或模拟开播' : snapshot.atemProgramInputOverLimit ? `已超时 ${formatATEMTime(elapsed - limit)}` : `剩余 ${formatATEMTime(remaining)}`}</span>
-            <button type="button" onClick={onOpenSettings}>阈值 {formatATEMTime(limit)}</button>
+            <span>{!liveActive
+              ? '等待直播、录制或模拟开播'
+              : snapshot.atemProgramInputExempt
+                ? '当前为出镜机位，不计时、不提醒'
+                : snapshot.atemProgramInputOverLimit
+                  ? `已超时 ${formatATEMTime(elapsed - limit)}`
+                  : `剩余 ${formatATEMTime(remaining)}`}</span>
+            <button type="button" onClick={onOpenSettings}>{snapshot.atemProgramInputExempt ? '出镜机位' : `提醒 ${formatATEMTime(limit)}`}</button>
           </footer>
         </article>
       </section>

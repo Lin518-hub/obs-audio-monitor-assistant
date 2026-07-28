@@ -1,7 +1,8 @@
 import React from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Mic2, ShieldCheck } from 'lucide-react';
+import { AUDIO_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppSnapshot } from '../../shared/types';
-import { readinessActionText, readinessText, safetyTitle, snapshotLiveStateLabel, snapshotTone, snapshotTargetName } from '../utils/status';
+import { displayedSilenceSeconds, readinessActionText, readinessText, safetyTitle, snapshotLiveStateLabel, snapshotTone, snapshotTargetName } from '../utils/status';
 
 interface StatusBannerProps {
   snapshot: AppSnapshot;
@@ -16,8 +17,13 @@ const iconFor = (tone: ReturnType<typeof snapshotTone>) => {
 
 export const StatusBanner: React.FC<StatusBannerProps> = ({ snapshot }) => {
   const tone = snapshotTone(snapshot);
+  const visual = reminderVisualState(displayedSilenceSeconds(snapshot), AUDIO_ALERT_SECONDS);
+  const reminderStyle = {
+    '--audio-warning-progress': String(visual.warningProgress),
+    '--audio-danger-progress': String(visual.dangerProgress)
+  } as React.CSSProperties;
   return (
-    <section className={`status-banner tone-${tone}`} data-guide="overview">
+    <section className={`status-banner tone-${tone}`} data-guide="overview" style={reminderStyle}>
       <div className="status-banner-icon">{iconFor(tone)}</div>
       <div className="status-banner-body">
         <div className="status-banner-title">

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Activity, Mic2 } from 'lucide-react';
+import { AUDIO_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppConfig, AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
 import { audioStateKind, dbLevelPercent, displayedSilenceSeconds, formatDb, secondsUntilVisibleAlert, snapshotTargetName, thresholdPercent } from '../utils/status';
@@ -24,6 +25,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
   const threshold = thresholdPercent(draft.silenceThresholdDb);
   const state = audioStateKind(snapshot);
   const silent = displayedSilenceSeconds(snapshot);
+  const reminderVisual = reminderVisualState(silent, AUDIO_ALERT_SECONDS);
   const remaining = secondsUntilVisibleAlert(snapshot);
   const targetName = snapshotTargetName(snapshot);
   const meterAgeSeconds = snapshot.lastAudioMeterReceivedAt === null
@@ -67,13 +69,20 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
   };
 
   return (
-    <section className="level-meter" data-guide="meter">
+    <section
+      className={`level-meter reminder-${reminderVisual.tone}`}
+      data-guide="meter"
+      style={{
+        '--audio-warning-progress': String(reminderVisual.warningProgress),
+        '--audio-danger-progress': String(reminderVisual.dangerProgress)
+      } as React.CSSProperties}
+    >
       <header className="level-meter-header">
         <h2>
           实时电平
           <em>{targetName}</em>
         </h2>
-        <div className={`level-meter-state state-${state}`}>
+        <div className={`level-meter-state state-${state} reminder-${reminderVisual.tone}`}>
           <Activity size={14} />
           {state === 'normal' || state === 'confirming' ? '正在讲话' : state === 'silent' ? `${silent}s 静音` : '未在检测'}
         </div>
@@ -84,7 +93,7 @@ export const LevelMeter: React.FC<LevelMeterProps> = ({ snapshot, draft, onChang
           <Mic2 size={14} />
           {targetName}
         </span>
-        <strong className={`level-meter-value level-${state}`}>{formatDb(levelDb)}</strong>
+        <strong className={`level-meter-value level-${state} reminder-${reminderVisual.tone}`}>{formatDb(levelDb)}</strong>
       </div>
 
       <div

@@ -162,6 +162,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       atemProgramInputStartedAt: null,
       atemProgramInputElapsedSeconds: 0,
       atemProgramInputOverLimit: false,
+      atemProgramInputExempt: false,
       atemCameraPreAlertVisible: false,
       atemCameraAlertVisible: false,
       atemSwitchHistory: [],

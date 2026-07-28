@@ -19,6 +19,15 @@ interface StyledSelectProps<T extends string | number> {
   placeholder?: string;
 }
 
+interface StyledMultiSelectProps<T extends string | number> {
+  values: T[];
+  options: StyledSelectOption<T>[];
+  onChange: (values: T[]) => void;
+  ariaLabel: string;
+  className?: string;
+  placeholder?: string;
+}
+
 interface PopoverPosition {
   top: number;
   left: number;
@@ -145,6 +154,113 @@ export function StyledSelect<T extends string | number>({
               </button>
             );
           })}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+export function StyledMultiSelect<T extends string | number>({
+  values,
+  options,
+  onChange,
+  ariaLabel,
+  className = '',
+  placeholder = '不设置出镜机位'
+}: StyledMultiSelectProps<T>) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<PopoverPosition | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const selected = new Set(values);
+  const selectedLabels = options.filter((option) => selected.has(option.value)).map((option) => option.label);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const update = () => triggerRef.current && setPosition(popoverPosition(triggerRef.current, 260));
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', close, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  const toggle = (value: T) => {
+    const next = selected.has(value)
+      ? values.filter((item) => item !== value)
+      : [...values, value];
+    onChange(next);
+  };
+
+  return (
+    <div className={`styled-select ${className}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`styled-select-trigger ${open ? 'open' : ''}`}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="styled-select-value">
+          <b>{selectedLabels.length > 0 ? selectedLabels.join('、') : placeholder}</b>
+        </span>
+        <ChevronDown size={16} />
+      </button>
+      {open && position && createPortal(
+        <div
+          ref={menuRef}
+          className={`styled-select-menu ${position.placeAbove ? 'above' : ''}`}
+          role="listbox"
+          aria-label={ariaLabel}
+          aria-multiselectable="true"
+          style={{
+            top: position.top,
+            left: position.left,
+            width: position.width,
+            maxHeight: position.maxHeight,
+            transform: position.placeAbove ? 'translateY(-100%)' : undefined
+          }}
+        >
+          {options.map((option) => {
+            const active = selected.has(option.value);
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`styled-select-option ${active ? 'active' : ''}`}
+                key={String(option.value)}
+                onClick={() => toggle(option.value)}
+              >
+                {option.swatch && <i className="styled-select-swatch" style={{ background: option.swatch }} />}
+                <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
+                {active && <Check size={16} />}
+              </button>
+            );
+          })}
+          {options.length === 0 && <div className="styled-select-option"><span><b>请先连接 ATEM</b><small>读取机位后可多选</small></span></div>}
         </div>,
         document.body
       )}

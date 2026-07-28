@@ -1,5 +1,7 @@
 const DEFAULT_BATCH_DELAY_MS = 1200;
 const MAX_TEXT_BYTES = 1800;
+const AUDIO_ALERT_SECONDS = 120;
+const CAMERA_ALERT_SECONDS = 10 * 60;
 const DEFAULT_MINIMUM_CAMERA_ALERT_DURATION_MS = 10 * 60 * 1000;
 const RETRY_DELAYS_MS = [1000, 3000, 10_000];
 
@@ -237,9 +239,18 @@ function notificationState(state) {
   const atem = state.atem && typeof state.atem === 'object' ? state.atem : {};
   const obs = state.obs && typeof state.obs === 'object' ? state.obs : {};
   const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
-  const audioAlert = live && audio.ready === true && (audio.phase === 'alert' || audio.tone === 'danger');
+  const audioSilentForSeconds = wholeSeconds(audio.silentForSeconds);
+  const reachedAudioThreshold = audioSilentForSeconds >= AUDIO_ALERT_SECONDS;
+  const audioAlert = live
+    && audio.ready === true
+    && reachedAudioThreshold;
   const audioHealthy = live && audio.ready === true && !audioAlert;
-  const cameraAlert = live && atem.connected === true && atem.overLimit === true;
+  const cameraElapsedSeconds = wholeSeconds(atem.elapsedSeconds);
+  const cameraExempt = atem.exempt === true;
+  const cameraAlert = live
+    && atem.connected === true
+    && !cameraExempt
+    && cameraElapsedSeconds >= CAMERA_ALERT_SECONDS;
   const cameraHealthy = live && atem.connected === true && !cameraAlert;
   return {
     live,
@@ -247,8 +258,8 @@ function notificationState(state) {
     audioHealthy,
     cameraAlert,
     cameraHealthy,
-    audioAlertDurationMs: wholeSeconds(audio.silentForSeconds) * 1000,
-    cameraAlertDurationMs: wholeSeconds(atem.elapsedSeconds) * 1000,
+    audioAlertDurationMs: audioSilentForSeconds * 1000,
+    cameraAlertDurationMs: cameraElapsedSeconds * 1000,
     audioAlertStartedAt: null,
     cameraAlertStartedAt: null,
     audioNotificationSent: false,
@@ -260,10 +271,10 @@ function audioAlertEvent(identity, state, occurredAt) {
   return {
     kind: 'audio_alert',
     tone: 'warning',
-    title: '音频异常',
+    title: '麦克风已静音 2 分钟',
     identity,
     occurredAt,
-    detail: `${cleanText(state.audio?.inputName, 100) || '目标音源'}连续静音 ${wholeSeconds(state.audio?.silentForSeconds)} 秒`
+    detail: `音源：${cleanText(state.audio?.inputName, 100) || '目标音源'}`
   };
 }
 
@@ -271,10 +282,10 @@ function audioRecoveryEvent(identity, state, startedAt, occurredAt) {
   return {
     kind: 'audio_recovery',
     tone: 'info',
-    title: '音频已恢复',
+    title: '麦克风声音已恢复',
     identity,
     occurredAt,
-    detail: `${cleanText(state.audio?.inputName, 100) || '目标音源'}恢复正常，异常约 ${durationText(occurredAt - startedAt)}`
+    detail: `音源：${cleanText(state.audio?.inputName, 100) || '目标音源'} · 静音约 ${durationText(occurredAt - startedAt)}`
   };
 }
 
@@ -284,10 +295,10 @@ function cameraAlertEvent(identity, state, occurredAt) {
   return {
     kind: 'camera_alert',
     tone: 'warning',
-    title: '机位停留超时',
+    title: '机位停留已达 10 分钟',
     identity,
     occurredAt,
-    detail: `${inputName}已连续播出 ${durationText(wholeSeconds(state.atem?.elapsedSeconds) * 1000)}`
+    detail: `机位：${inputName}`
   };
 }
 
@@ -297,10 +308,10 @@ function cameraRecoveryEvent(identity, state, startedAt, occurredAt) {
   return {
     kind: 'camera_recovery',
     tone: 'info',
-    title: '机位已切换',
+    title: '超时机位已切换',
     identity,
     occurredAt,
-    detail: `${inputName}开始播出，上一次超时状态持续约 ${durationText(occurredAt - startedAt)}`
+    detail: `当前：${inputName} · 上次超时约 ${durationText(occurredAt - startedAt)}`
   };
 }
 
@@ -317,15 +328,11 @@ function currentStatusPayload(device, state, occurredAt) {
     || (Number.isFinite(programInput) && programInput > 0 ? `机位 ${programInput}` : '未读取机位');
   const roomName = cleanText(device?.roomName, 60) || '未命名直播间';
   const lines = [
-    `【${roomName}】监控状态测试`,
-    '━━━━━━━━━━━━',
-    `直播状态：${live ? '进行中' : '未开播'}`,
-    `OBS 连接：${obs.connected === true ? '正常' : '未连接'}`,
-    `音频状态：${cleanText(audio.display, 80) || '等待音频数据'}`,
-    `音频电平：${Number.isFinite(level) ? `${level.toFixed(1)} dB` : '暂无数据'}`,
-    `当前机位：${atem.connected === true ? programName : 'ATEM 未连接'}`,
-    `软件版本：${cleanText(app.version, 32) ? `v${cleanText(app.version, 32)}` : '版本未知'}`,
-    `检测时间：${formatTime(occurredAt)}`
+    `【${roomName}】监控测试`,
+    `${live ? '直播中' : '未开播'} · OBS ${obs.connected === true ? '正常' : '未连接'}`,
+    `音频：${cleanText(audio.display, 80) || '等待数据'}${Number.isFinite(level) ? ` · ${level.toFixed(1)} dB` : ''}`,
+    `机位：${atem.connected === true ? programName : 'ATEM 未连接'}`,
+    `客户端：${cleanText(app.version, 32) ? `v${cleanText(app.version, 32)}` : '版本未知'} · ${formatTime(occurredAt)}`
   ];
   return {
     msgtype: 'text',
@@ -354,14 +361,7 @@ function textPayloads(events) {
   if (chunkEvents.length > 0) chunks.push(chunkEvents);
 
   return chunks.map((chunk) => {
-    const firstEvent = chunk[0];
-    const roomName = cleanText(firstEvent.identity.roomName, 60) || '未命名直播间';
-    const heading = `【${roomName}】${cleanText(firstEvent.title, 80)}${chunk.length > 1 ? `等 ${chunk.length} 条` : ''}`;
-    const content = [
-      heading,
-      '━━━━━━━━━━━━',
-      ...chunk.map((event, index) => formatEventText(event, index + 1))
-    ].join('\n\n');
+    const content = chunk.map((event) => formatEventText(event)).join('\n\n');
     return {
       msgtype: 'text',
       text: {
@@ -371,13 +371,11 @@ function textPayloads(events) {
   });
 }
 
-function formatEventText(event, index) {
+function formatEventText(event) {
   return [
-    `【${index}】${cleanText(event.title, 80)}`,
-    `直播间：${cleanText(event.identity.roomName, 60)}`,
-    `详细信息：${cleanText(event.detail, 180)}`,
-    `检测电脑：${cleanText(event.identity.label, 80)}`,
-    `发生时间：${formatTime(event.occurredAt)}`
+    `【${cleanText(event.identity.roomName, 60) || '未命名直播间'}】${cleanText(event.title, 80)}`,
+    cleanText(event.detail, 180),
+    `时间：${formatTime(event.occurredAt)}`
   ].join('\n');
 }
 

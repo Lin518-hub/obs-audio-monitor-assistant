@@ -199,10 +199,15 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(room.alertCount, 1);
   assert.equal(room.warningCount, 0);
   assert.equal(room.devices[0].audio.inputName.length > 0, true);
+  assert.equal(room.devices[0].audio.silenceDurationSeconds, 120);
+  assert.equal(room.devices[0].audio.dangerProgress, 1);
   assert.equal(monitor.body.summary.onlineDevices >= 2, true);
   const backupRoom = monitor.body.rooms.find((item) => item.name === '品牌二号直播间');
   assert.equal(backupRoom.devices[0].audio.ready, true);
   assert.equal(backupRoom.devices[0].audio.display, '正在讲话');
+  assert.equal(backupRoom.devices[0].atem.limitSeconds, 600);
+  assert.equal(backupRoom.devices[0].atem.overLimit, true);
+  assert.equal(backupRoom.devices[0].atem.tone, 'danger');
 
   primary.clear();
   const commandRequest = request(`/api/monitor/devices/${devices[0].uuid}/commands`, {

@@ -196,9 +196,11 @@ export interface ATEMStateSnapshot {
   programInputStartedAt: number | null;
   programInputElapsedSeconds: number;
   programInputOverLimit: boolean;
+  programInputExempt: boolean;
   cameraPreAlertVisible: boolean;
   cameraPreAlertRemainingSeconds: number | null;
   cameraAlertVisible: boolean;
+  cameraFullscreenAlertVisible: boolean;
   errorMessage: string | null;
   reconnectAttempt: number;
   nextReconnectAt: number | null;
@@ -359,6 +361,7 @@ export interface AppConfig {
   paused: boolean;
   hasSeenGuide: boolean;
   guideSeenVersion: string;
+  releaseNotesSeenVersion: string;
   preAlertEnabled: boolean;
   preAlertRatio: number;
   rememberAlertPosition: boolean;
@@ -397,7 +400,9 @@ export interface AppConfig {
   atemCameraTimeAlertEnabled: boolean;
   atemCameraFullscreenAlertEnabled: boolean;
   atemCameraTimeLimitSeconds: number;
+  /** @deprecated Kept for migration from versions before multi-camera exemptions. */
   atemPrimaryInputId: number | null;
+  atemPrimaryInputIds: number[];
   atemInputCustomizations: Record<string, ATEMInputCustomization>;
   preflightApps: PreflightAppConfigs;
   preflightProjector: PreflightProjectorConfig;
@@ -465,6 +470,7 @@ export interface AppSnapshot {
   atemProgramInputStartedAt: number | null;
   atemProgramInputElapsedSeconds: number;
   atemProgramInputOverLimit: boolean;
+  atemProgramInputExempt: boolean;
   atemCameraPreAlertVisible: boolean;
   atemCameraAlertVisible: boolean;
   atemSwitchHistory: ATEMSwitchHistoryEntry[];
@@ -517,6 +523,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   paused: false,
   hasSeenGuide: false,
   guideSeenVersion: '',
+  releaseNotesSeenVersion: '',
   preAlertEnabled: true,
   preAlertRatio: 0.75,
   rememberAlertPosition: true,
@@ -552,6 +559,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemCameraFullscreenAlertEnabled: false,
   atemCameraTimeLimitSeconds: 600,
   atemPrimaryInputId: null,
+  atemPrimaryInputIds: [],
   atemInputCustomizations: {},
   preflightApps: {
     obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },

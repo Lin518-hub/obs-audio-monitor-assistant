@@ -28,6 +28,7 @@ let processListCache: { expiresAt: number; promise: Promise<ProcessEntry[]> } | 
 
 export class PreflightCheckService {
   private readonly windows = new WindowsWindowManager();
+  private knownOBSProjectorHandle: string | null = null;
 
   async check(configs: PreflightAppConfigs, forceRefresh = false): Promise<PreflightCheckResult> {
     const platform = platformLabel();
@@ -210,14 +211,14 @@ export class PreflightCheckService {
     if (process.platform !== 'win32') return null;
     const processList = processes ?? await readProcessList();
     const windows = await this.windowsForApp('obs', configs, processList);
-    return selectOBSProjectorWindow(windows);
+    return this.rememberOBSProjector(selectOBSProjectorWindow(windows, this.knownOBSProjectorHandle));
   }
 
   async inspectOBSWindows(configs: PreflightAppConfigs): Promise<{ projector: WindowsTopLevelWindow | null; handles: Set<string> }> {
     if (process.platform !== 'win32') return { projector: null, handles: new Set() };
     const windows = await this.windowsForApp('obs', configs, await readProcessList());
     return {
-      projector: selectOBSProjectorWindow(windows),
+      projector: this.rememberOBSProjector(selectOBSProjectorWindow(windows, this.knownOBSProjectorHandle)),
       handles: new Set(windows.map((window) => window.handle))
     };
   }
@@ -232,7 +233,7 @@ export class PreflightCheckService {
       pids = findPreflightProcesses('obs', processes, configs.obs.path, resolvedPath).map((process) => process.pid);
     }
     const windows = await this.windows.waitForNewWindows(pids, existingHandles, timeoutMs);
-    return selectNewOBSProjectorWindow(windows);
+    return this.rememberOBSProjector(selectNewOBSProjectorWindow(windows));
   }
 
   async listOBSWindowHandles(configs: PreflightAppConfigs): Promise<Set<string>> {
@@ -241,10 +242,23 @@ export class PreflightCheckService {
     return new Set(windows.map((window) => window.handle));
   }
 
-  async restoreWindow(window: WindowsTopLevelWindow, placement: PreflightWindowPlacement): Promise<void> {
+  async restoreWindow(
+    window: WindowsTopLevelWindow,
+    placement: PreflightWindowPlacement,
+    stable = true
+  ): Promise<void> {
     if (process.platform !== 'win32') return;
     const resolved = resolveWindowPlacement(placement, await this.placementDisplays());
-    await this.windows.moveWindow(window.handle, resolved.bounds, resolved.windowState);
+    if (stable) {
+      await this.windows.moveWindow(window.handle, resolved.bounds, resolved.windowState);
+    } else {
+      await this.windows.moveWindowOnce(window.handle, resolved.bounds, resolved.windowState);
+    }
+  }
+
+  private rememberOBSProjector(window: WindowsTopLevelWindow | null): WindowsTopLevelWindow | null {
+    if (window) this.knownOBSProjectorHandle = window.handle;
+    return window;
   }
 
   private async launchConfiguredApp(

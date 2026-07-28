@@ -184,6 +184,14 @@ function roomView(room) {
   row.type = 'button';
   row.className = `monitor-room-row tone-${room.tone}`;
   const device = room.devices[0];
+  row.style.setProperty('--timer-warning-progress', String(Math.max(
+    Number(device.audio?.warningProgress) || 0,
+    Number(device.atem?.warningProgress) || 0
+  )));
+  row.style.setProperty('--timer-danger-progress', String(Math.max(
+    Number(device.audio?.dangerProgress) || 0,
+    Number(device.atem?.dangerProgress) || 0
+  )));
   row.addEventListener('click', () => openDrawer(device.uuid));
 
   const identity = document.createElement('div');
@@ -217,14 +225,26 @@ function roomView(room) {
   );
 
   const audioValue = device.audio.levelDb == null ? '-- dB' : `${device.audio.levelDb.toFixed(1)} dB`;
-  const audio = metricBlock(device.audio.display, `${device.audio.inputName} · ${audioValue}`, device.audio.tone);
+  const audio = metricBlock(
+    device.audio.display,
+    `${device.audio.inputName} · ${audioValue}`,
+    device.audio.tone,
+    device.audio.warningProgress,
+    device.audio.dangerProgress
+  );
   audio.append(levelBar(device.audio.levelDb, device.audio.thresholdDb));
 
   const cameraName = device.atem.programName || (device.atem.programInput ? `PGM ${device.atem.programInput}` : '未读取机位');
   const camera = metricBlock(
     device.atem.connected ? cameraName : 'ATEM 未连接',
-    device.atem.connected ? `${formatDuration(device.atem.elapsedSeconds)} · PVW ${device.atem.previewName || device.atem.previewInput || '--'}` : '等待导播台',
-    device.atem.tone
+    device.atem.connected
+      ? device.atem.exempt
+        ? `出镜机位 · 不计时 · PVW ${device.atem.previewName || device.atem.previewInput || '--'}`
+        : `${formatDuration(device.atem.elapsedSeconds)} · PVW ${device.atem.previewName || device.atem.previewInput || '--'}`
+      : '等待导播台',
+    device.atem.tone,
+    device.atem.warningProgress,
+    device.atem.dangerProgress
   );
 
   const version = metricBlock(
@@ -239,9 +259,11 @@ function roomView(room) {
   return row;
 }
 
-function metricBlock(value, detail, tone) {
+function metricBlock(value, detail, tone, warningProgress = 0, dangerProgress = 0) {
   const block = document.createElement('div');
   block.className = `monitor-metric tone-${tone || 'idle'}`;
+  block.style.setProperty('--timer-warning-progress', String(Number(warningProgress) || 0));
+  block.style.setProperty('--timer-danger-progress', String(Number(dangerProgress) || 0));
   const valueNode = document.createElement('strong');
   valueNode.textContent = value || '--';
   const detailNode = document.createElement('small');
@@ -295,7 +317,11 @@ function renderDrawer(device) {
     detailSection('运行状态', [
       ['OBS', obsDisplay(device.obs)],
       ['音频', `${device.audio.display} · ${device.audio.levelDb == null ? '-- dB' : `${device.audio.levelDb.toFixed(1)} dB`}`],
-      ['当前机位', device.atem.connected ? `${device.atem.programName || `PGM ${device.atem.programInput}`} · ${formatDuration(device.atem.elapsedSeconds)}` : 'ATEM 未连接'],
+      ['当前机位', device.atem.connected
+        ? device.atem.exempt
+          ? `${device.atem.programName || `PGM ${device.atem.programInput}`} · 出镜机位，不计时`
+          : `${device.atem.programName || `PGM ${device.atem.programInput}`} · ${formatDuration(device.atem.elapsedSeconds)}`
+        : 'ATEM 未连接'],
       ['检测状态', device.app.paused ? '已暂停' : '运行中']
     ]),
     detailSection('电脑与版本', [

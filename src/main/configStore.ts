@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
+import { AUDIO_ALERT_SECONDS, CAMERA_ALERT_SECONDS } from '../shared/reminderTiming.js';
 import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertDisplayMode, type AlertPosition, type AlertReminderMode, type AlertSoundPreset, type AppConfig, type ATEMInputCustomization, type FloatingWindowMode, type PreflightAppConfigs, type PreflightPathSource, type PreflightWindowPlacement, type PreflightWindowPlacements, type WindowBounds } from '../shared/types.js';
 
 interface PersistedConfig extends Omit<AppConfig, 'obsPassword'> {
@@ -28,8 +29,7 @@ export class ConfigStore {
         obsPassword: rememberObsPassword ? await this.decryptPassword(parsed.obsPasswordEncrypted) : ''
       };
 
-      // Move previous built-in defaults to the new ten-minute value.
-      // Other custom durations remain untouched.
+      // Move previous built-in defaults to the shared ten-minute value.
       if ([180, 300, 480, 720].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
       }
@@ -134,6 +134,13 @@ export class ConfigStore {
     const floatingWindowModules = floatingWindowModulesValue(merged.floatingWindowModules);
     const remoteDeviceUuid = uuidValue(merged.remoteDeviceUuid) || randomUUID();
     const remoteDeviceSecret = secretValue(merged.remoteDeviceSecret) || randomBytes(32).toString('hex');
+    const migratedPrimaryInputIds = positiveIntegerArrayValue(merged.atemPrimaryInputIds);
+    const legacyPrimaryInputId = nullablePositiveIntegerValue(merged.atemPrimaryInputId);
+    const atemPrimaryInputIds = migratedPrimaryInputIds.length > 0
+      ? migratedPrimaryInputIds
+      : legacyPrimaryInputId === null
+        ? []
+        : [legacyPrimaryInputId];
 
     return {
       ...merged,
@@ -143,7 +150,7 @@ export class ConfigStore {
       rememberObsPassword: booleanValue(merged.rememberObsPassword, DEFAULT_CONFIG.rememberObsPassword),
       targetInputName: targetInputName || migratedTargets[0] || '',
       targetInputNames: migratedTargets,
-      silenceDurationSeconds: clamp(Math.round(numberValue(merged.silenceDurationSeconds, DEFAULT_CONFIG.silenceDurationSeconds)), 5, 60 * 60),
+      silenceDurationSeconds: AUDIO_ALERT_SECONDS,
       silenceThresholdDb: clamp(numberValue(merged.silenceThresholdDb, DEFAULT_CONFIG.silenceThresholdDb), -90, -5),
       alertDisplayMode: alertDisplayModeValue(merged.alertDisplayMode),
       alertDisplayId: nullableIntegerValue(merged.alertDisplayId),
@@ -153,6 +160,7 @@ export class ConfigStore {
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
+      releaseNotesSeenVersion: stringValue(merged.releaseNotesSeenVersion, DEFAULT_CONFIG.releaseNotesSeenVersion).trim(),
       preAlertEnabled: booleanValue(merged.preAlertEnabled, DEFAULT_CONFIG.preAlertEnabled),
       preAlertRatio: clamp(numberValue(merged.preAlertRatio, DEFAULT_CONFIG.preAlertRatio), 0.1, 0.95),
       rememberAlertPosition: booleanValue(merged.rememberAlertPosition, DEFAULT_CONFIG.rememberAlertPosition),
@@ -181,8 +189,9 @@ export class ConfigStore {
       atemHardCutConfirm: booleanValue(merged.atemHardCutConfirm, DEFAULT_CONFIG.atemHardCutConfirm),
       atemCameraTimeAlertEnabled: booleanValue(merged.atemCameraTimeAlertEnabled, DEFAULT_CONFIG.atemCameraTimeAlertEnabled),
       atemCameraFullscreenAlertEnabled: booleanValue(merged.atemCameraFullscreenAlertEnabled, DEFAULT_CONFIG.atemCameraFullscreenAlertEnabled),
-      atemCameraTimeLimitSeconds: clamp(Math.round(numberValue(merged.atemCameraTimeLimitSeconds, DEFAULT_CONFIG.atemCameraTimeLimitSeconds)), 10, 60 * 60),
-      atemPrimaryInputId: nullablePositiveIntegerValue(merged.atemPrimaryInputId),
+      atemCameraTimeLimitSeconds: CAMERA_ALERT_SECONDS,
+      atemPrimaryInputId: atemPrimaryInputIds[0] ?? null,
+      atemPrimaryInputIds,
       atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
       preflightApps: preflightAppsValue(merged.preflightApps),
       preflightProjector: preflightProjectorValue(merged.preflightProjector),
@@ -265,6 +274,18 @@ function stringArrayValue(value: unknown): string[] {
     value
       .map((item) => stringValue(item, '').trim())
       .filter(Boolean)
+  ));
+}
+
+function positiveIntegerArrayValue(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    value
+      .map((item) => typeof item === 'number' && Number.isFinite(item) ? Math.round(item) : 0)
+      .filter((item) => item > 0)
   ));
 }
 

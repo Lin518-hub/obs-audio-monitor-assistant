@@ -299,6 +299,17 @@ function publicApproval(approval) {
   };
 }
 
+const AUDIO_ALERT_SECONDS = 120;
+const CAMERA_ALERT_SECONDS = 10 * 60;
+
+function reminderProgress(elapsedSeconds, limitSeconds) {
+  const ratio = Math.max(0, Number(elapsedSeconds) || 0) / Math.max(1, limitSeconds);
+  return {
+    warning: ratio <= 0.25 ? 0 : Math.min(1, (ratio - 0.25) / 0.65),
+    danger: ratio <= 0.9 ? 0 : Math.min(1, (ratio - 0.9) / 0.1)
+  };
+}
+
 function monitorDevice(device) {
   const online = desktopSockets.has(device.uuid);
   const state = device.lastState ? normalizeDesktopState(device.lastState) : null;
@@ -331,11 +342,13 @@ function monitorDevice(device) {
     : null;
   const updateAvailable = Boolean(updateAvailableVersion || updateDownloadedVersion);
   const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
+  const audioSilentForSeconds = wholeNumber(audio.silentForSeconds);
+  const audioProgress = reminderProgress(audioSilentForSeconds, AUDIO_ALERT_SECONDS);
   const audioTone = !online
     ? 'offline'
-    : audio.phase === 'alert' || audio.tone === 'danger'
+    : live && audio.ready === true && audioSilentForSeconds >= AUDIO_ALERT_SECONDS
       ? 'danger'
-      : audio.tone === 'warning'
+      : live && audio.ready === true && audioProgress.warning > 0
         ? 'warning'
         : live && audio.ready !== true
           ? 'warning'
@@ -343,12 +356,16 @@ function monitorDevice(device) {
             ? 'safe'
             : 'idle';
   const elapsedSeconds = wholeNumber(atem.elapsedSeconds);
-  const limitSeconds = wholeNumber(atem.limitSeconds);
-  const cameraTone = !online || atem.connected !== true
+  const limitSeconds = CAMERA_ALERT_SECONDS;
+  const cameraExempt = atem.exempt === true;
+  const cameraProgress = reminderProgress(elapsedSeconds, limitSeconds);
+  const cameraTone = !online || !live || atem.connected !== true
     ? 'idle'
-    : atem.overLimit === true
+    : cameraExempt
+      ? 'safe'
+      : elapsedSeconds >= limitSeconds
       ? 'danger'
-      : limitSeconds > 0 && elapsedSeconds >= limitSeconds * 0.9
+      : cameraProgress.warning > 0
         ? 'warning'
         : 'safe';
 
@@ -370,8 +387,10 @@ function monitorDevice(device) {
       inputName: cleanText(audio.inputName, 100) || '未选择音源',
       levelDb: finiteNumber(audio.levelDb),
       thresholdDb: finiteNumber(audio.thresholdDb),
-      silentForSeconds: wholeNumber(audio.silentForSeconds),
-      silenceDurationSeconds: wholeNumber(audio.silenceDurationSeconds),
+      silentForSeconds: audioSilentForSeconds,
+      silenceDurationSeconds: AUDIO_ALERT_SECONDS,
+      warningProgress: audioProgress.warning,
+      dangerProgress: audioProgress.danger,
       display: cleanText(audio.display, 80) || '等待音频数据',
       hint: cleanText(audio.hint, 160),
       lastMeterReceivedAt: finiteNumber(audio.lastMeterReceivedAt)
@@ -385,7 +404,10 @@ function monitorDevice(device) {
       previewName: cleanText(atem.inputLabels?.[atem.previewInput], 100) || '',
       elapsedSeconds,
       limitSeconds,
-      overLimit: atem.overLimit === true
+      overLimit: live && !cameraExempt && elapsedSeconds >= limitSeconds,
+      exempt: cameraExempt,
+      warningProgress: !live || cameraExempt ? 0 : cameraProgress.warning,
+      dangerProgress: !live || cameraExempt ? 0 : cameraProgress.danger
     },
     obs: {
       connected: obs.connected === true,

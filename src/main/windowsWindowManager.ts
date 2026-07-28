@@ -72,6 +72,22 @@ if (-not $ok) { throw '无法移动目标窗口' }
     });
   }
 
+  async moveWindowOnce(handle: string, bounds: PreflightRect, windowState: PreflightWindowState): Promise<void> {
+    if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
+    await runPowerShell(`
+$payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
+$ok = [OBSGuardWindowApi]::MoveWindow([long]$payload.handle, [int]$payload.x, [int]$payload.y, [int]$payload.width, [int]$payload.height, [bool]$payload.maximized)
+if (-not $ok) { throw '无法移动目标窗口' }
+`, {
+      handle,
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      maximized: windowState === 'maximized'
+    });
+  }
+
   async resolveOBSStartupDialog(pids: number[]): Promise<OBSStartupDialogAction> {
     if (process.platform !== 'win32' || pids.length === 0) return null;
     const output = await runPowerShell(`
@@ -102,13 +118,33 @@ Start-Process -FilePath ([string]$payload.target) -Verb RunAs
 }
 
 export function selectMainWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
+  const projector = selectOBSProjectorWindow(windows);
   return [...windows]
-    .filter((window) => !isAnyOBSProjectorWindow(window))
+    .filter((window) => window.handle !== projector?.handle && !isAnyOBSProjectorWindow(window))
     .sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
 }
 
-export function selectOBSProjectorWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
-  return windows.find(isOBSProjectorWindow) ?? null;
+export function selectOBSProjectorWindow(
+  windows: WindowsTopLevelWindow[],
+  preferredHandle?: string | null
+): WindowsTopLevelWindow | null {
+  const exact = windows.find(isOBSProjectorWindow);
+  if (exact) return exact;
+
+  if (preferredHandle) {
+    const preferred = windows.find((window) => window.handle === preferredHandle);
+    if (preferred && isLikelyOBSProjectorWindow(preferred)) return preferred;
+  }
+
+  const candidates = windows.filter((window) => (
+    isLikelyOBSProjectorWindow(window)
+    && !isLikelyOBSMainWindow(window)
+  ));
+  if (candidates.length === 1) return candidates[0];
+
+  return candidates
+    .filter((window) => projectorTitleHint(window.title))
+    .sort(compareProjectorCandidates)[0] ?? null;
 }
 
 export function selectNewOBSProjectorWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
@@ -116,12 +152,8 @@ export function selectNewOBSProjectorWindow(windows: WindowsTopLevelWindow[]): W
   if (exact) return exact;
 
   return [...windows]
-    .filter((window) => {
-      const title = window.title.toLocaleLowerCase('zh-CN');
-      if (/multiview|多画面|scene|场景|source|来源|missing\s+files|缺少文件|缺失文件|safe\s+mode|安全模式/.test(title)) return false;
-      return window.bounds.width >= 320 && window.bounds.height >= 180;
-    })
-    .sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
+    .filter(isLikelyOBSProjectorWindow)
+    .sort(compareProjectorCandidates)[0] ?? null;
 }
 
 export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
@@ -146,6 +178,34 @@ export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
 
 function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   return /projector|投影/.test(window.title.toLocaleLowerCase('zh-CN'));
+}
+
+function isLikelyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
+  const title = window.title.toLocaleLowerCase('zh-CN');
+  if (/multiview|多画面|scene|场景|source|来源|missing\s+files|缺少文件|缺失文件|safe\s+mode|安全模式|settings?|设置|properties|属性|filters?|滤镜/.test(title)) {
+    return false;
+  }
+  const { width, height } = window.bounds;
+  if (width < 320 || height < 180) return false;
+  const aspectRatio = width / height;
+  return aspectRatio >= 1.15 && aspectRatio <= 2.6;
+}
+
+function isLikelyOBSMainWindow(window: WindowsTopLevelWindow): boolean {
+  const title = window.title.toLocaleLowerCase('zh-CN');
+  return /\bobs(?:\s+studio)?\s+\d|profile\s*:|scene\s+collection|配置文件\s*:|场景集合/.test(title);
+}
+
+function projectorTitleHint(titleValue: string): boolean {
+  const title = titleValue.toLocaleLowerCase('zh-CN');
+  return /projector|投影|program|节目|pgm|output|输出|画面/.test(title);
+}
+
+function compareProjectorCandidates(left: WindowsTopLevelWindow, right: WindowsTopLevelWindow): number {
+  const leftRatioDistance = Math.abs(left.bounds.width / left.bounds.height - 16 / 9);
+  const rightRatioDistance = Math.abs(right.bounds.width / right.bounds.height - 16 / 9);
+  if (leftRatioDistance !== rightRatioDistance) return leftRatioDistance - rightRatioDistance;
+  return right.bounds.width * right.bounds.height - left.bounds.width * left.bounds.height;
 }
 
 async function runPowerShell(script: string, payload: unknown, timeout = 20_000): Promise<string> {

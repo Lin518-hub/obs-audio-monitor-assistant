@@ -73,7 +73,7 @@ describe('ConfigStore', () => {
     expect(saved.obsPort).toBe(65_535);
   });
 
-  it('persists the configured silence duration across reloads', async () => {
+  it('keeps the shared audio alert duration fixed at two minutes', async () => {
     const store = new ConfigStore();
     await store.save({
       ...DEFAULT_CONFIG,
@@ -82,7 +82,7 @@ describe('ConfigStore', () => {
 
     const reloaded = await new ConfigStore().load();
 
-    expect(reloaded.silenceDurationSeconds).toBe(300);
+    expect(reloaded.silenceDurationSeconds).toBe(120);
   });
 
   it('persists and normalizes the livestream room name revision', async () => {
@@ -194,7 +194,7 @@ describe('ConfigStore', () => {
     expect(migrated.preflightProjector).toEqual(DEFAULT_CONFIG.preflightProjector);
     expect(migrated.preflightWindowPlacements).toEqual({});
     expect(migrated.preflightConfigRevision).toBe(DEFAULT_CONFIG.preflightConfigRevision);
-    expect(migrated.silenceDurationSeconds).toBe(360);
+    expect(migrated.silenceDurationSeconds).toBe(120);
 
     await new ConfigStore().save({
       ...migrated,
@@ -322,6 +322,26 @@ describe('ConfigStore', () => {
     expect((await new ConfigStore().load()).atemCameraTimeLimitSeconds).toBe(600);
   });
 
+  it('migrates one legacy primary camera and preserves multiple on-camera exemptions', async () => {
+    const store = new ConfigStore();
+    const legacy = await store.save({
+      ...DEFAULT_CONFIG,
+      atemPrimaryInputId: 3,
+      atemPrimaryInputIds: []
+    });
+
+    expect(legacy.atemPrimaryInputIds).toEqual([3]);
+    expect(legacy.atemPrimaryInputId).toBe(3);
+
+    const multiple = await store.save({
+      ...legacy,
+      atemPrimaryInputIds: [3, 1, 3, -1, 2]
+    });
+
+    expect(multiple.atemPrimaryInputIds).toEqual([3, 1, 2]);
+    expect(multiple.atemPrimaryInputId).toBe(3);
+  });
+
   it('resets the legacy wide audio and ATEM bounds to the compact preview size', async () => {
     mkdirSync(electronMock.userData, { recursive: true });
     writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify({
@@ -372,7 +392,7 @@ describe('ConfigStore', () => {
     ]);
 
     const reloaded = await new ConfigStore().load();
-    expect(reloaded.silenceDurationSeconds).toBe(240);
+    expect(reloaded.silenceDurationSeconds).toBe(120);
     expect(reloaded.silenceThresholdDb).toBe(-48);
   });
 });

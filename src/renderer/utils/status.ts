@@ -1,4 +1,5 @@
 import type { AppConfig, AppSnapshot, MonitorStatus, ReadinessReason, UpdateSnapshot } from '../../shared/types';
+import { AUDIO_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 
 // =====================================================================
 // 静音/电平工具
@@ -23,7 +24,7 @@ export const displayedSilenceSeconds = (snapshot: AppSnapshot): number => {
 };
 
 export const secondsUntilVisibleAlert = (snapshot: AppSnapshot): number => {
-  return Math.max(0, snapshot.config.silenceDurationSeconds - displayedSilenceSeconds(snapshot));
+  return Math.max(0, AUDIO_ALERT_SECONDS - displayedSilenceSeconds(snapshot));
 };
 
 export const audioStateKind = (snapshot: AppSnapshot): 'normal' | 'confirming' | 'silent' | 'other' => {
@@ -94,10 +95,10 @@ export const snapshotTone = (snapshot: AppSnapshot): 'safe' | 'warning' | 'dange
   if (snapshot.alertVisible) {
     return 'danger';
   }
-  if (snapshot.preAlertVisible) {
-    return 'warning';
+  if (snapshot.readinessReason === 'ready') {
+    return reminderVisualState(displayedSilenceSeconds(snapshot), AUDIO_ALERT_SECONDS).tone;
   }
-  return snapshot.readinessReason === 'ready' ? 'safe' : 'idle';
+  return 'idle';
 };
 
 export const floatingTone = (snapshot: AppSnapshot): 'safe' | 'warning' | 'danger' | 'idle' => {
@@ -122,23 +123,15 @@ export const floatingEmphasis = (snapshot: AppSnapshot): string => {
 };
 
 /**
- * Continuous yellow warning intensity between 25% and 75% of the silence
- * limit. The last ten seconds are handled separately as the red state.
+ * Continuously warms from 25% of the silence limit, then yields to the
+ * shared red state near the deadline.
  */
 export const floatingWarningProgress = (snapshot: AppSnapshot): number => {
   if (snapshot.alertVisible || snapshot.readinessReason !== 'ready') {
     return 0;
   }
 
-  const duration = Math.max(1, snapshot.config.silenceDurationSeconds);
-  const silentSeconds = displayedSilenceSeconds(snapshot);
-  const start = duration * 0.25;
-  const end = duration * 0.75;
-  if (silentSeconds < start || end <= start) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(1, (silentSeconds - start) / (end - start)));
+  return reminderVisualState(displayedSilenceSeconds(snapshot), AUDIO_ALERT_SECONDS).warningProgress;
 };
 
 export const floatingHint = (snapshot: AppSnapshot): string => {
@@ -364,3 +357,6 @@ export const shouldShowOnboarding = (config: AppConfig, _currentVersion: string)
 };
 
 export const isFirstRun = shouldShowOnboarding;
+
+export const shouldShowReleaseNotes = (config: AppConfig, currentVersion: string): boolean =>
+  config.hasSeenGuide && config.releaseNotesSeenVersion !== currentVersion;

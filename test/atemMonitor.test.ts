@@ -138,7 +138,8 @@ describe('ATEMMonitor connection lifecycle', () => {
 
     expect(monitor.getSnapshot()).toMatchObject({
       programInputOverLimit: true,
-      cameraAlertVisible: true
+      cameraAlertVisible: true,
+      cameraFullscreenAlertVisible: false
     });
 
     const acknowledgedAt = Date.now();
@@ -147,7 +148,28 @@ describe('ATEMMonitor connection lifecycle', () => {
       programInputStartedAt: acknowledgedAt,
       programInputElapsedSeconds: 0,
       programInputOverLimit: false,
-      cameraAlertVisible: false
+      cameraAlertVisible: false,
+      cameraFullscreenAlertVisible: false
+    });
+    await monitor.stop();
+  });
+
+  it('only raises the desktop camera alert after twelve minutes', async () => {
+    const monitor = new ATEMMonitor();
+    await monitor.setConfig(true, '192.168.1.240');
+    monitor.setLiveActive(true);
+    const internals = monitor as unknown as { programInputStartedAt: number | null };
+
+    internals.programInputStartedAt = Date.now() - 719_000;
+    expect(monitor.getSnapshot()).toMatchObject({
+      cameraAlertVisible: true,
+      cameraFullscreenAlertVisible: false
+    });
+
+    internals.programInputStartedAt = Date.now() - 721_000;
+    expect(monitor.getSnapshot()).toMatchObject({
+      cameraAlertVisible: true,
+      cameraFullscreenAlertVisible: true
     });
     await monitor.stop();
   });
@@ -170,18 +192,20 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
-  it('exempts the configured primary camera from pre-alerts and alerts', async () => {
+  it('exempts every configured on-camera input from timers and alerts', async () => {
     const monitor = new ATEMMonitor();
-    await monitor.setConfig(true, '192.168.1.240', 600, true, 1);
+    await monitor.setConfig(true, '192.168.1.240', 600, true, [1, 2]);
     monitor.setLiveActive(true);
     const internals = monitor as unknown as { programInputStartedAt: number | null };
     internals.programInputStartedAt = Date.now() - 900_000;
 
     expect(monitor.getSnapshot()).toMatchObject({
       programInput: 1,
+      programInputExempt: true,
       programInputOverLimit: false,
       cameraPreAlertVisible: false,
-      cameraAlertVisible: false
+      cameraAlertVisible: false,
+      cameraFullscreenAlertVisible: false
     });
     await monitor.stop();
   });

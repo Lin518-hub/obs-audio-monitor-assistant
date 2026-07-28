@@ -137,6 +137,39 @@ describe('remote audio telemetry', () => {
     expect(audio.display).toBe('8s');
   });
 
+  it('uses the shared two-minute duration and gradually warms from 25 percent', () => {
+    const firstQuarter = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -72,
+      lastAudioMeterReceivedAt: 9_500,
+      silentForSeconds: 30,
+      readinessReason: 'ready'
+    }), 10_000);
+    const halfway = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -72,
+      lastAudioMeterReceivedAt: 9_500,
+      silentForSeconds: 60,
+      readinessReason: 'ready'
+    }), 10_000);
+
+    expect(firstQuarter.silenceDurationSeconds).toBe(120);
+    expect(firstQuarter.warningProgress).toBe(0);
+    expect(halfway.warningProgress).toBeGreaterThan(0);
+    expect(halfway.warningProgress).toBeLessThan(1);
+    expect(halfway.tone).toBe('warning');
+  });
+
+  it('turns red near the end of the shared countdown', () => {
+    const audio = remoteAudioTelemetry(snapshot({
+      lastLevelDb: -72,
+      lastAudioMeterReceivedAt: 9_500,
+      silentForSeconds: 109,
+      readinessReason: 'ready'
+    }), 10_000);
+
+    expect(audio.tone).toBe('danger');
+    expect(audio.dangerProgress).toBeGreaterThan(0);
+  });
+
   it('marks an old meter chain as interrupted instead of reusing its level', () => {
     const audio = remoteAudioTelemetry(snapshot({
       lastLevelDb: -18,

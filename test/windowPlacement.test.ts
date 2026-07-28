@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isOBSProjectorWindow, parseWindowsDisplayList, parseWindowsWindowList, selectNewOBSProjectorWindow } from '../src/main/windowsWindowManager.js';
+import { isOBSProjectorWindow, parseWindowsDisplayList, parseWindowsWindowList, selectMainWindow, selectNewOBSProjectorWindow, selectOBSProjectorWindow } from '../src/main/windowsWindowManager.js';
 import { captureWindowPlacement, resolveWindowPlacement, type PlacementDisplay } from '../src/shared/windowPlacement.js';
 
 const displays: PlacementDisplay[] = [
@@ -89,5 +89,22 @@ describe('preflight window placement', () => {
       { handle: 'projector', pid: 10, title: 'OBS 输出画面', bounds: { x: 100, y: 100, width: 960, height: 540 }, windowState: 'normal' as const }
     ];
     expect(selectNewOBSProjectorWindow(windows)?.handle).toBe('projector');
+  });
+
+  it('reuses a known projector handle when an OBS build exposes an unknown localized title', () => {
+    const windows = [
+      { handle: 'main', pid: 10, title: 'OBS 31.0.0 - Profile: Untitled', bounds: { x: 0, y: 0, width: 1400, height: 900 }, windowState: 'normal' as const },
+      { handle: 'projector', pid: 10, title: '直播输出画布', bounds: { x: 1920, y: 0, width: 960, height: 540 }, windowState: 'normal' as const }
+    ];
+    expect(selectOBSProjectorWindow(windows, 'projector')?.handle).toBe('projector');
+  });
+
+  it('finds the only non-main video window while saving an already opened projector', () => {
+    const windows = [
+      { handle: 'main', pid: 10, title: 'OBS 31.0.0 - 配置文件: 默认', bounds: { x: 0, y: 0, width: 1400, height: 900 }, windowState: 'normal' as const },
+      { handle: 'projector', pid: 10, title: '直播画布', bounds: { x: 1920, y: 0, width: 960, height: 540 }, windowState: 'normal' as const }
+    ];
+    expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
+    expect(selectMainWindow(windows)?.handle).toBe('main');
   });
 });

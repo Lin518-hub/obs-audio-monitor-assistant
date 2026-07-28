@@ -25,7 +25,7 @@ export const ManualDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           </article>
           <article>
             <strong>3. 设置静音报警规则</strong>
-            <p>在设置 → 检测规则中调整静音时长和静音阈值；预警比例、报警外观和提示音位于“提醒与窗口”。默认连续静音 120 秒报警，90 秒时先预警，阈值通常保持 -55 dB。</p>
+            <p>音频连续静音 120 秒后报警；可在设置 → 检测规则中调整静音阈值。预警浮窗、报警外观和提示音位于“提醒与窗口”。</p>
           </article>
           <article>
             <strong>4. 不开播时测试</strong>

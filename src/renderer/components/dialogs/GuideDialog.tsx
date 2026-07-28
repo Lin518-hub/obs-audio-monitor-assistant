@@ -37,7 +37,7 @@ export const GuideDialog: React.FC<{
       { target: 'settings-connection', title: '第二步:填写端口和密码', body: '主机一般保持 127.0.0.1,默认端口通常是 4455。OBS 设置了密码时,把同一个密码填到这里。', action: 'test', openDrawer: 'connection' },
       { target: 'settings-diagnostics', title: '第三步:测试 OBS 是否连上', body: '进入设置 → 维护工具，展开“检测与调试”并点击“测试 OBS 连接”。成功后软件就能读取 OBS 音源列表。', action: 'openDiagnostics', openDrawer: 'diagnostics' },
       { target: 'settings-source', title: '第四步:选择要守护的音源', body: '选择主播麦克风、无线麦、声卡输入或直播主混音。图片、文字、显示器采集等无声音源会被过滤。', openDrawer: 'source' },
-      { target: 'settings-rules', title: '第五步:设置报警规则', body: '默认连续静音 120 秒报警,90 秒先预警。口播密集可以缩短,访谈或活动直播可以适当延长。', openDrawer: 'rules' },
+      { target: 'settings-rules', title: '第五步:确认报警规则', body: '音频连续静音 120 秒后报警。这里可以设置静音阈值，并选择需要独立守护的音源。', openDrawer: 'rules' },
       { target: 'meter', title: '第六步:不开播也能测试', body: 'OBS 已连接但还没开播时，可以在“维护工具”的“检测与调试”中打开“模拟开播检测”，测试电平、静音计时和报警弹窗。' },
       { target: 'settings-system', title: '第七步:按需要开启自启动', body: '固定直播电脑建议开启。下次开机后会打开助手，并直接进入开播检查。', openDrawer: 'system' },
       { target: 'meter', title: '第八步:直播中常用大电平表', body: '中栏中间的大电平表显示实时 dB 与距离报警的倒计时。静音阈值可在电平表上拖动调节。' },

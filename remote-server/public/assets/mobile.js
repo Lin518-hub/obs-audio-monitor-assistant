@@ -147,7 +147,10 @@ function setPill(element, text, tone='') { element.textContent = text; element.c
 function audioPresentation(audio = {}) {
   const phase = audio.phase || (audio.ready ? (audio.tone === 'danger' ? 'alert' : audio.display === '正在讲话' ? 'speaking' : 'silent') : 'idle');
   if (phase === 'alert') return { label: '报警', tone: 'danger' };
-  if (phase === 'silent') return { label: '静音计时', tone: audio.tone === 'danger' ? 'danger' : 'warning' };
+  if (phase === 'silent') return {
+    label: '静音计时',
+    tone: audio.tone === 'danger' ? 'danger' : audio.tone === 'warning' ? 'warning' : 'safe'
+  };
   if (phase === 'speaking') return { label: '音频正常', tone: audio.tone || 'safe' };
   return { label: '未就绪', tone: '' };
 }
@@ -170,14 +173,16 @@ function pipVisualMode(audio = {}) {
   if (view.label === '未就绪') return 0;
   if (view.label === '音频正常') return 1;
   if (view.label === '报警') return 6;
-  const limit = Math.max(10, Number(audio.silenceDurationSeconds) || 120);
-  const silent = Math.max(0, Number(audio.silentForSeconds) || 0);
-  const ratio = Math.min(1, silent / limit);
-  if (limit - silent <= 10) return 6;
-  if (ratio >= 0.75) return 5;
-  if (ratio >= 0.5) return 4;
-  if (ratio >= 0.25) return 3;
-  return 2;
+  if ((Number(audio.dangerProgress) || 0) > 0) return 6;
+  return 2 + Math.round(Math.max(0, Math.min(1, Number(audio.warningProgress) || 0)) * 3);
+}
+function setReminderSurface(selector, warningProgress = 0, dangerProgress = 0, tone = '') {
+  const card = document.querySelector(selector);
+  if (!card) return;
+  card.style.setProperty('--timer-warning-progress', String(Math.max(0, Math.min(1, Number(warningProgress) || 0))));
+  card.style.setProperty('--timer-danger-progress', String(Math.max(0, Math.min(1, Number(dangerProgress) || 0))));
+  card.classList.toggle('timer-warning', tone === 'warning');
+  card.classList.toggle('timer-danger', tone === 'danger');
 }
 function renderMeter(meter) {
   if (!state) return;
@@ -197,9 +202,15 @@ function render() {
   $('audio-level').style.transform = `scaleX(${levelPct(audio.levelDb) / 100})`; $('audio-threshold').style.left = `${levelPct(audio.thresholdDb)}%`; $('audio-hint').textContent = audio.hint || '等待状态'; $('audio-silence').textContent = audio.silentForSeconds ? `${audio.silentForSeconds}s` : '';
   const audioView = audioPresentation(audio);
   setPill($('audio-state-chip'), audioView.label, audioView.tone);
+  setReminderSurface('.audio-card', audio.warningProgress, audio.dangerProgress, audioView.tone);
   const labels = atem.inputLabels || {}; $('camera-number').textContent = `PGM ${atem.programInput || '--'}`; $('camera-name').textContent = labels[atem.programInput] || '未读取机位'; $('camera-time').textContent = formatTime(atem.elapsedSeconds);
-  const limit = Math.max(10, atem.limitSeconds || 600), progress = Math.min(100,(atem.elapsedSeconds||0)/limit*100); $('camera-progress').style.width = `${progress}%`; $('camera-hint').textContent = atem.overLimit ? `已超时 ${formatTime(atem.elapsedSeconds-limit)}` : `剩余 ${formatTime(limit-(atem.elapsedSeconds||0))}`; $('preview-summary').textContent = `PVW ${atem.previewInput || '--'}`;
-  setPill($('camera-state-chip'), !atem.connected ? '未连接' : atem.overLimit ? '机位超时' : '计时中', atem.overLimit ? 'danger' : atem.elapsedSeconds >= limit*.75 ? 'warning' : '');
+  const limit = Math.max(10, atem.limitSeconds || 600), progress = atem.exempt ? 0 : Math.min(100,(atem.elapsedSeconds||0)/limit*100); $('camera-progress').style.width = `${progress}%`; $('camera-hint').textContent = atem.exempt ? '出镜机位不计时' : atem.overLimit ? `已超时 ${formatTime(atem.elapsedSeconds-limit)}` : `剩余 ${formatTime(limit-(atem.elapsedSeconds||0))}`; $('preview-summary').textContent = `PVW ${atem.previewInput || '--'}`;
+  setPill(
+    $('camera-state-chip'),
+    !atem.connected ? '未连接' : atem.exempt ? '出镜机位' : atem.overLimit ? '机位超时' : atem.tone === 'idle' ? '等待开播' : '计时中',
+    atem.exempt ? 'safe' : atem.tone || ''
+  );
+  setReminderSurface('.camera-card', atem.warningProgress, atem.dangerProgress, atem.tone);
   $('obs-live').textContent = obs.streaming ? '直播中' : obs.recording ? '录制中' : obs.connected ? '待机' : '未连接'; $('obs-live').classList.toggle('offline', !obs.connected); $('obs-fps').textContent = obs.fps == null ? '--' : Math.round(obs.fps); $('obs-cpu').textContent = obs.cpu == null ? '--' : `${Math.round(obs.cpu)}%`; $('obs-bitrate').textContent = obs.bitrateKbps == null ? '--' : Math.round(obs.bitrateKbps);
   drawPipFrame();
 }

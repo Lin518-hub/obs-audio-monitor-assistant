@@ -198,7 +198,7 @@ async function initializeApp(): Promise<void> {
     config.atemHost,
     config.atemCameraTimeLimitSeconds,
     config.atemCameraTimeAlertEnabled,
-    config.atemPrimaryInputId
+    config.atemPrimaryInputIds
   ).then(() => {
     const merged = injectATEMState(monitor.getSnapshot());
     latestSnapshot = merged;
@@ -225,9 +225,9 @@ async function initializeApp(): Promise<void> {
 
   monitor.on('snapshot', (snapshot) => {
     const previousSnapshot = latestSnapshot;
-    const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+    const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
     const previousLiveActive = latestSnapshot
-      ? latestSnapshot.streaming || latestSnapshot.recording || latestSnapshot.simulatedLive
+      ? latestSnapshot.streaming || latestSnapshot.recording || latestSnapshot.simulatedLive || latestSnapshot.virtualCameraActive
       : false;
     if (!liveActive && (previousLiveActive || atemCurrentSession) && !pendingATEMSessionStop) {
       // Capture the final interval before setLiveActive(false) resets the
@@ -389,13 +389,13 @@ function registerIpc(): void {
       }
       syncFloatingWindow(latestSnapshot);
     }
-    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds') || Object.hasOwn(patch, 'atemCameraTimeAlertEnabled') || Object.hasOwn(patch, 'atemPrimaryInputId')) {
+    if (Object.hasOwn(patch, 'atemEnabled') || Object.hasOwn(patch, 'atemHost') || Object.hasOwn(patch, 'atemCameraTimeLimitSeconds') || Object.hasOwn(patch, 'atemCameraTimeAlertEnabled') || Object.hasOwn(patch, 'atemPrimaryInputId') || Object.hasOwn(patch, 'atemPrimaryInputIds')) {
       void atemMonitor.setConfig(
         nextConfig.atemEnabled,
         nextConfig.atemHost,
         nextConfig.atemCameraTimeLimitSeconds,
         nextConfig.atemCameraTimeAlertEnabled,
-        nextConfig.atemPrimaryInputId
+        nextConfig.atemPrimaryInputIds
       ).then(() => {
         if (latestSnapshot) {
           const previousATEMSnapshot = latestSnapshot;
@@ -458,7 +458,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('monitor:set-simulated-live', (_event, enabled: boolean) => {
     const monitorSnapshot = monitor.setSimulatedLive(enabled);
-    atemMonitor.setLiveActive(monitorSnapshot.streaming || monitorSnapshot.recording || monitorSnapshot.simulatedLive);
+    atemMonitor.setLiveActive(monitorSnapshot.streaming || monitorSnapshot.recording || monitorSnapshot.simulatedLive || monitorSnapshot.virtualCameraActive);
     const snapshot = injectATEMState(monitorSnapshot);
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
@@ -754,13 +754,18 @@ function scheduleProjectorPlacementStabilization(
   placement: PreflightWindowPlacement
 ): void {
   if (process.platform !== 'win32') return;
-  setTimeout(() => {
-    void preflightCheckService.inspectOBSWindows(settings.apps).then(async ({ projector }) => {
-      if (projector) await preflightCheckService.restoreWindow(projector, placement);
-    }).catch((error) => {
-      console.error(`[preflight] failed to stabilize projector placement: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  }, 1_200);
+  void (async () => {
+    for (const delayMs of [1_200, 3_000, 6_000]) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        const { projector } = await preflightCheckService.inspectOBSWindows(settings.apps);
+        if (!projector) continue;
+        await preflightCheckService.restoreWindow(projector, placement, false);
+      } catch (error) {
+        console.error(`[preflight] failed to stabilize projector placement: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  })();
 }
 
 async function waitForOBSConnection(timeoutMs: number): Promise<boolean> {
@@ -786,13 +791,12 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
   const cameraAlertVisible = Boolean(
     snapshot.config.atemCameraTimeAlertEnabled
     && snapshot.config.atemCameraFullscreenAlertEnabled
-    && atem?.cameraAlertVisible
+    && atem?.cameraFullscreenAlertVisible
   );
   const audioPreAlertVisible = snapshot.preAlertVisible && snapshot.activePreAlertSource !== 'atem_camera';
   const cameraPreAlertVisible = Boolean(
     snapshot.config.preAlertEnabled
     && snapshot.config.atemCameraTimeAlertEnabled
-    && snapshot.config.atemCameraFullscreenAlertEnabled
     && atem?.cameraPreAlertVisible
   );
   return {
@@ -819,8 +823,9 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemProgramInputStartedAt: atem.programInputStartedAt,
       atemProgramInputElapsedSeconds: atem.programInputElapsedSeconds,
       atemProgramInputOverLimit: snapshot.config.atemCameraTimeAlertEnabled && atem.programInputOverLimit,
+      atemProgramInputExempt: atem.programInputExempt,
       atemCameraPreAlertVisible: cameraPreAlertVisible,
-      atemCameraAlertVisible: cameraAlertVisible,
+      atemCameraAlertVisible: atem.cameraAlertVisible,
       atemSwitchHistory: atemSwitchHistory.map((entry) => ({
         ...entry,
         fromInputLabel: customizations[String(entry.fromInputId)]?.name || entry.fromInputLabel,
@@ -847,7 +852,7 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
 }
 
 function syncATEMLiveSession(snapshot: AppSnapshot): void {
-  const live = snapshot.streaming || snapshot.recording || snapshot.simulatedLive;
+  const live = snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
   if (atemSessionTransitionPending || (live && atemCurrentSession) || (!live && !atemCurrentSession)) return;
   atemSessionTransitionPending = true;
   atemSessionQueue = atemSessionQueue.catch(() => undefined).then(async () => {
@@ -1925,7 +1930,7 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
     nextConfig.atemHost,
     nextConfig.atemCameraTimeLimitSeconds,
     nextConfig.atemCameraTimeAlertEnabled,
-    nextConfig.atemPrimaryInputId
+    nextConfig.atemPrimaryInputIds
   );
   latestSnapshot = injectATEMState(monitor.getSnapshot());
   syncATEMHotkeys();
