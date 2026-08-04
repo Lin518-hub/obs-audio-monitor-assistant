@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWeComNotifier, isValidWeComWebhook } from '../src/wecom-notifier.mjs';
+import {
+  createWeComNotifier,
+  DEFAULT_WECOM_NOTIFICATION_SETTINGS,
+  isValidWeComWebhook,
+  normalizeWeComNotificationSettings
+} from '../src/wecom-notifier.mjs';
 
 const WEBHOOK = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key';
 
@@ -49,6 +54,123 @@ test('validates enterprise WeCom message push webhooks only', () => {
   assert.equal(isValidWeComWebhook('https://example.com/cgi-bin/webhook/send?key=x'), false);
   assert.equal(isValidWeComWebhook('http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x'), false);
   assert.equal(isValidWeComWebhook('https://qyapi.weixin.qq.com/cgi-bin/webhook/send'), false);
+});
+
+test('normalizes persisted notification settings into supported ranges', () => {
+  assert.deepEqual(normalizeWeComNotificationSettings(), DEFAULT_WECOM_NOTIFICATION_SETTINGS);
+  assert.deepEqual(normalizeWeComNotificationSettings({
+    enabled: false,
+    audioEnabled: false,
+    cameraEnabled: true,
+    recoveryEnabled: false,
+    audioAlertSeconds: 5,
+    cameraAlertSeconds: 99_999
+  }), {
+    enabled: false,
+    audioEnabled: false,
+    cameraEnabled: true,
+    recoveryEnabled: false,
+    audioAlertSeconds: 30,
+    cameraAlertSeconds: 3600
+  });
+});
+
+test('supports disabling enterprise WeCom notifications for one room only', async () => {
+  const calls = [];
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000
+  });
+  const mutedDevice = {
+    uuid: 'muted-room',
+    label: '禁用通知电脑',
+    roomName: '安静直播间',
+    weComNotificationsEnabled: false
+  };
+  const activeDevice = {
+    uuid: 'active-room',
+    label: '正常通知电脑',
+    roomName: '正常直播间',
+    weComNotificationsEnabled: true
+  };
+
+  notifier.observeDevice(mutedDevice, desktopState({ audioPhase: 'alert', audioTone: 'danger' }));
+  notifier.observeDevice(activeDevice, desktopState({ audioPhase: 'alert', audioTone: 'danger' }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0].text.content, /安静直播间/);
+  assert.match(calls[0].text.content, /正常直播间/);
+
+  await assert.rejects(
+    notifier.sendStatusTest(mutedDevice, desktopState()),
+    /已关闭企业微信通知/
+  );
+});
+
+test('uses custom audio and camera push thresholds without changing client state', async () => {
+  const calls = [];
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000,
+    settings: {
+      audioAlertSeconds: 180,
+      cameraAlertSeconds: 900
+    }
+  });
+  const audioDevice = { uuid: 'custom-audio', label: '音频电脑', roomName: '自定义音频直播间' };
+  const cameraDevice = { uuid: 'custom-camera', label: '导播电脑', roomName: '自定义机位直播间' };
+
+  notifier.observeDevice(audioDevice, desktopState({
+    audioPhase: 'alert', audioTone: 'danger', audioSilentForSeconds: 179
+  }));
+  notifier.observeDevice(cameraDevice, desktopState({
+    cameraOverLimit: true, cameraElapsedSeconds: 899
+  }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 0);
+
+  notifier.observeDevice(audioDevice, desktopState({
+    audioPhase: 'alert', audioTone: 'danger', audioSilentForSeconds: 180
+  }));
+  notifier.observeDevice(cameraDevice, desktopState({
+    cameraOverLimit: true, cameraElapsedSeconds: 900
+  }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text.content, /麦克风已静音 3 分钟/);
+  assert.match(calls[0].text.content, /机位停留已达 15 分钟/);
+});
+
+test('supports independent notification switches and optional recovery messages', async () => {
+  const calls = [];
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000,
+    settings: {
+      audioEnabled: false,
+      cameraEnabled: true,
+      recoveryEnabled: false,
+      audioAlertSeconds: 30,
+      cameraAlertSeconds: 60
+    }
+  });
+  const device = { uuid: 'switches', label: '直播电脑', roomName: '开关测试直播间' };
+
+  notifier.observeDevice(device, desktopState({
+    audioPhase: 'alert', audioTone: 'danger', audioSilentForSeconds: 300,
+    cameraOverLimit: true, cameraElapsedSeconds: 60
+  }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0].text.content, /麦克风/);
+  assert.match(calls[0].text.content, /机位停留已达 1 分钟/);
+
+  notifier.observeDevice(device, desktopState());
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
 });
 
 test('sends one alert and one recovery without repeating a steady state', async () => {
@@ -111,8 +233,7 @@ test('aggregates simultaneous room alerts into a single message', async () => {
   const notifier = createWeComNotifier({
     webhookUrl: WEBHOOK,
     fetchImpl: successfulFetch(calls),
-    batchDelayMs: 60_000,
-    minimumCameraAlertDurationMs: 0
+    batchDelayMs: 60_000
   });
 
   notifier.observeDevice(

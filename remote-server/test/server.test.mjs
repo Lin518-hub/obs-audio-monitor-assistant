@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -10,8 +11,30 @@ const port = 18900 + Math.floor(Math.random() * 500);
 const base = `http://127.0.0.1:${port}`;
 const root = await mkdtemp(join(tmpdir(), 'obs-remote-server-'));
 let child;
+let complaintServer;
+let complaintBase;
 
 before(async () => {
+  complaintServer = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        method: req.method,
+        url: req.url,
+        body: Buffer.concat(chunks).toString('utf8'),
+        forwardedPrefix: req.headers['x-forwarded-prefix'],
+        forwardedHost: req.headers['x-forwarded-host']
+      }));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    complaintServer.once('error', reject);
+    complaintServer.listen(0, '127.0.0.1', resolve);
+  });
+  complaintBase = `http://127.0.0.1:${complaintServer.address().port}`;
+
   const dataDir = join(root, 'data');
   await mkdir(dataDir, { recursive: true });
   await writeFile(join(dataDir, 'remote-state.json'), JSON.stringify({
@@ -22,7 +45,7 @@ before(async () => {
   }));
   child = spawn(process.execPath, ['src/server.mjs'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: dataDir, UPDATE_DIR: join(root, 'updates'), UPDATE_SYNC_ENABLED: 'false' },
+    env: { ...process.env, PORT: String(port), PUBLIC_BASE_URL: base, ADMIN_PASSWORD: 'remote-admin-test-password', DATA_DIR: dataDir, UPDATE_DIR: join(root, 'updates'), UPDATE_SYNC_ENABLED: 'false', COMPLAINT_PROXY_URL: complaintBase },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   for (let index = 0; index < 50; index += 1) {
@@ -34,6 +57,7 @@ before(async () => {
 
 after(async () => {
   child?.kill('SIGTERM');
+  await new Promise((resolve) => complaintServer?.close(resolve));
   await rm(root, { recursive: true, force: true });
 });
 
@@ -69,7 +93,22 @@ function trackedSocket(url) {
   };
 }
 
-test('removes legacy mobile pairing and keeps one monitoring identity per room', async () => {
+test('keeps the reserved complaint route and strips its public prefix', async () => {
+  const response = await fetch(`${base}/complaint/api/server-info?source=contract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: '保留路由'
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.method, 'POST');
+  assert.equal(body.url, '/api/server-info?source=contract');
+  assert.equal(body.body, '保留路由');
+  assert.equal(body.forwardedPrefix, '/complaint');
+  assert.equal(body.forwardedHost, `127.0.0.1:${port}`);
+});
+
+test('keeps mobile pairing opt-in and one monitoring identity per room', async () => {
   const uuid = '11111111-1111-4111-8111-111111111111';
   const registered = await request('/api/devices/register', {
     method: 'POST',
@@ -89,20 +128,52 @@ test('removes legacy mobile pairing and keeps one monitoring identity per room',
   assert.equal(registered.body.device.mobileAccessEnabled, false);
 
   const pairInfo = await request('/api/pair/info?token=legacy');
-  assert.equal(pairInfo.response.status, 410);
-  assert.equal(pairInfo.body.error, 'mobile_access_removed');
+  assert.equal(pairInfo.response.status, 404);
+  assert.equal(pairInfo.body.error, 'pair_link_invalid');
+
+  const mobileRegistered = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid,
+      secret: '1'.repeat(64),
+      label: 'Test Desktop',
+      roomName: '测试直播间',
+      roomNameRevision: 0,
+      monitoringIdentityRevision: 1,
+      mobileAccessEnabled: true,
+      appVersion: '3.9.1'
+    })
+  });
+  assert.equal(mobileRegistered.response.status, 200);
+  assert.equal(mobileRegistered.body.device.mobileAccessEnabled, true);
+  assert.match(mobileRegistered.body.device.pairUrl, /\/pair\//);
+  const pairToken = new URL(mobileRegistered.body.device.pairUrl).pathname.split('/').pop();
+  const enabledPairInfo = await request(`/api/pair/info?token=${pairToken}`);
+  assert.equal(enabledPairInfo.response.status, 200);
+  assert.equal(enabledPairInfo.body.device.uuid, uuid);
+  const mobilePage = await fetch(mobileRegistered.body.device.pairUrl);
+  const mobileHtml = await mobilePage.text();
+  assert.equal(mobilePage.status, 200);
+  assert.match(mobileHtml, /直播远程监看/);
+
   const pairRequest = await request('/api/pair/request', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pairToken: 'legacy' })
+    body: JSON.stringify({
+      pairToken,
+      clientId: '33333333-3333-4333-8333-333333333333',
+      clientName: '导播手机'
+    })
   });
-  assert.equal(pairRequest.response.status, 410);
+  assert.equal(pairRequest.response.status, 201);
+  assert.equal(pairRequest.body.request.status, 'pending');
 
   const login = await request('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'remote-admin-test-password' }) });
   const cookie = login.response.headers.get('set-cookie').split(';')[0];
   assert.equal(login.response.status, 200);
   const overview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
-  assert.deepEqual(overview.body.requests, []);
+  assert.equal(overview.body.requests.length, 1);
   assert.deepEqual(overview.body.approvals, []);
 
   const replacementUuid = '22222222-2222-4222-8222-222222222222';
@@ -123,6 +194,7 @@ test('removes legacy mobile pairing and keeps one monitoring identity per room',
   const replacedOverview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
   assert.equal(replacedOverview.body.devices.some((item) => item.uuid === uuid), false);
   assert.equal(replacedOverview.body.devices.some((item) => item.uuid === replacementUuid), true);
+  assert.deepEqual(replacedOverview.body.requests, []);
 });
 
 test('protects and aggregates the live room monitor', async () => {
@@ -282,6 +354,71 @@ test('protects and aggregates the live room monitor', async () => {
   backup.socket.close();
 });
 
+test('persists enterprise WeCom-only thresholds and restores defaults', async () => {
+  const login = await request('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'remote-admin-test-password' })
+  });
+  const cookie = login.response.headers.get('set-cookie').split(';')[0];
+
+  const initial = await request('/api/monitor/notification-settings', { headers: { Cookie: cookie } });
+  assert.equal(initial.response.status, 200);
+  assert.equal(initial.body.settings.audioAlertSeconds, 120);
+  assert.equal(initial.body.settings.cameraAlertSeconds, 600);
+
+  const updated = await request('/api/monitor/notification-settings', {
+    method: 'PUT',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      audioEnabled: true,
+      cameraEnabled: true,
+      recoveryEnabled: false,
+      audioAlertSeconds: 180,
+      cameraAlertSeconds: 900
+    })
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.body.settings.audioAlertSeconds, 180);
+  assert.equal(updated.body.settings.cameraAlertSeconds, 900);
+  assert.equal(updated.body.settings.recoveryEnabled, false);
+  assert.equal(Number.isFinite(updated.body.settingsUpdatedAt), true);
+
+  const overview = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  assert.equal(overview.body.notifications.settings.audioAlertSeconds, 180);
+  assert.equal(overview.body.notifications.settings.cameraAlertSeconds, 900);
+
+  const invalid = await request('/api/monitor/notification-settings', {
+    method: 'PUT',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      audioEnabled: true,
+      cameraEnabled: true,
+      recoveryEnabled: true,
+      audioAlertSeconds: 10,
+      cameraAlertSeconds: 600
+    })
+  });
+  assert.equal(invalid.response.status, 400);
+  assert.equal(invalid.body.error, 'invalid_notification_settings');
+
+  const reset = await request('/api/monitor/notification-settings/reset', {
+    method: 'POST',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(reset.response.status, 200);
+  assert.equal(reset.body.settings.audioAlertSeconds, 120);
+  assert.equal(reset.body.settings.cameraAlertSeconds, 600);
+  assert.equal(reset.body.settings.recoveryEnabled, true);
+
+  const monitorPage = await fetch(`${base}/monitor`);
+  const monitorHtml = await monitorPage.text();
+  assert.match(monitorHtml, /企业微信机器人/);
+  assert.match(monitorHtml, /monitor-notification-settings-reset/);
+});
+
 test('keeps central monitoring always on and recognizes the reported app version', async () => {
   const uuid = '66666666-6666-4666-8666-666666666666';
   const secret = '6'.repeat(64);
@@ -344,12 +481,28 @@ test('keeps central monitoring always on and recognizes the reported app version
   assert.equal(device.app.updateDownloadedVersion, null);
   assert.equal(device.app.mobileAccessEnabled, false);
 
+  const muted = await request(`/api/monitor/devices/${uuid}/wecom-notifications`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false })
+  });
+  assert.equal(muted.response.status, 200);
+  assert.equal(muted.body.device.weComNotificationsEnabled, false);
+
   const weComTest = await request(`/api/monitor/devices/${uuid}/wecom-test`, {
     method: 'POST',
     headers: { Cookie: cookie }
   });
   assert.equal(weComTest.response.status, 503);
-  assert.match(weComTest.body.message, /尚未配置企业微信机器人/);
+  assert.match(weComTest.body.message, /已关闭企业微信通知/);
+
+  const unmuted = await request(`/api/monitor/devices/${uuid}/wecom-notifications`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true })
+  });
+  assert.equal(unmuted.response.status, 200);
+  assert.equal(unmuted.body.device.weComNotificationsEnabled, true);
 
   const monitorPage = await fetch(`${base}/monitor`);
   const monitorHtml = await monitorPage.text();

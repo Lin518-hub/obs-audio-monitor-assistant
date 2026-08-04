@@ -1,14 +1,18 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpServer, request as createHttpRequest } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createNetServer } from 'node:net';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createUpdateCache, parseUpdateReleaseBases } from './update-cache.mjs';
-import { createWeComNotifier } from './wecom-notifier.mjs';
+import {
+  createWeComNotifier,
+  DEFAULT_WECOM_NOTIFICATION_SETTINGS,
+  normalizeWeComNotificationSettings
+} from './wecom-notifier.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = resolve(here, '../public');
@@ -17,6 +21,8 @@ const dataDir = resolve(process.env.DATA_DIR || '/data');
 const updateDir = resolve(process.env.UPDATE_DIR || '/updates');
 const dataFile = join(dataDir, 'remote-state.json');
 const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`).replace(/\/$/, '');
+const complaintProxyUrl = new URL(String(process.env.COMPLAINT_PROXY_URL || 'http://complaint-tool:8010').replace(/\/$/, ''));
+const complaintRoutePrefix = '/complaint';
 const tlsCertFile = process.env.TLS_CERT_FILE ? resolve(process.env.TLS_CERT_FILE) : '';
 const tlsKeyFile = process.env.TLS_KEY_FILE ? resolve(process.env.TLS_KEY_FILE) : '';
 const adminPassword = String(process.env.ADMIN_PASSWORD || '');
@@ -63,8 +69,17 @@ const REMOTE_ADMIN_COMMAND_LABELS = {
   rename_device: '修改直播间名称'
 };
 const COMMAND_TIMEOUT_MS = 20_000;
-const emptyData = () => ({ schemaVersion: MONITORING_IDENTITY_REVISION, devices: [], requests: [], approvals: [], commands: [] });
+const emptyData = () => ({
+  schemaVersion: MONITORING_IDENTITY_REVISION,
+  devices: [],
+  requests: [],
+  approvals: [],
+  commands: [],
+  notificationSettings: { ...DEFAULT_WECOM_NOTIFICATION_SETTINGS },
+  notificationSettingsUpdatedAt: null
+});
 let data = await loadData();
+weComNotifier.updateSettings(data.notificationSettings);
 const desktopSockets = new Map();
 const mobileSockets = new Map();
 const pendingAdminCommands = new Map();
@@ -86,7 +101,11 @@ async function loadData() {
       devices: Array.isArray(parsed.devices) ? parsed.devices : [],
       requests: Array.isArray(parsed.requests) ? parsed.requests : [],
       approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
-      commands: Array.isArray(parsed.commands) ? parsed.commands : []
+      commands: Array.isArray(parsed.commands) ? parsed.commands : [],
+      notificationSettings: normalizeWeComNotificationSettings(parsed.notificationSettings),
+      notificationSettingsUpdatedAt: Number.isFinite(Number(parsed.notificationSettingsUpdatedAt))
+        ? Number(parsed.notificationSettingsUpdatedAt)
+        : null
     };
   } catch {
     return emptyData();
@@ -251,6 +270,7 @@ function approvalByToken(accessToken) {
 }
 
 function publicDevice(device) {
+  const mobileAccessEnabled = device.mobileAccessEnabled === true;
   return {
     uuid: device.uuid,
     label: device.label,
@@ -258,15 +278,16 @@ function publicDevice(device) {
     roomNameRevision: wholeNumber(device.roomNameRevision),
     roomNameUpdatedAt: device.roomNameUpdatedAt || null,
     online: desktopSockets.has(device.uuid),
-    onlineMobileClients: 0,
-    mobileAccessEnabled: false,
+    onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
+    mobileAccessEnabled,
+    weComNotificationsEnabled: device.weComNotificationsEnabled !== false,
     appVersion: appVersion(device.appVersion),
     platform: cleanText(device.platform, 20) || null,
     arch: cleanText(device.arch, 20) || null,
     osRelease: cleanText(device.osRelease, 80) || null,
     lastSeenAt: device.lastSeenAt || null,
     createdAt: device.createdAt,
-    pairUrl: null
+    pairUrl: mobileAccessEnabled ? `${publicBaseUrl}/pair/${device.pairToken}` : null
   };
 }
 
@@ -375,6 +396,7 @@ function monitorDevice(device) {
     roomName: device.roomName || '未命名直播间',
     roomNameRevision: wholeNumber(device.roomNameRevision),
     roomNameUpdatedAt: device.roomNameUpdatedAt || null,
+    weComNotificationsEnabled: device.weComNotificationsEnabled !== false,
     online,
     onlineMobileClients: mobileSockets.get(device.uuid)?.size || 0,
     lastSeenAt: device.lastSeenAt || null,
@@ -427,7 +449,7 @@ function monitorDevice(device) {
       osRelease: cleanText(appState.osRelease, 80) || cleanText(device.osRelease, 80) || null,
       paused: appState.paused === true,
       autoUpdateEnabled: appState.autoUpdateEnabled !== false,
-      mobileAccessEnabled: false,
+      mobileAccessEnabled: device.mobileAccessEnabled === true,
       updateStatus,
       updateAvailable,
       updateAvailableVersion,
@@ -465,7 +487,7 @@ function monitorOverview() {
       activeLiveDevices: room.devices.filter((device) => device.obs.liveActive).length,
       alertCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'danger') + Number(device.atem.tone === 'danger'), 0),
       warningCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'warning') + Number(device.atem.tone === 'warning'), 0),
-      onlineMobileClients: 0,
+      onlineMobileClients: room.devices.reduce((count, device) => count + device.onlineMobileClients, 0),
       updateAvailableDevices: room.devices.filter((device) => device.app.updateAvailable).length,
       devices: room.devices
     };
@@ -482,9 +504,9 @@ function monitorOverview() {
       alertCount: rooms.reduce((count, room) => count + room.alertCount, 0),
       warningCount: rooms.reduce((count, room) => count + room.warningCount, 0),
       updateAvailableDevices: rooms.reduce((count, room) => count + room.updateAvailableDevices, 0),
-      onlineMobileClients: 0
+      onlineMobileClients: Array.from(mobileSockets.values()).reduce((count, sockets) => count + sockets.size, 0)
     },
-    notifications: weComNotifier.getStatus(),
+    notifications: notificationStatus(),
     updates: publicUpdateCacheStatus(),
     commands: {
       available: Object.entries(REMOTE_ADMIN_COMMAND_LABELS).map(([id, label]) => ({ id, label })),
@@ -492,6 +514,49 @@ function monitorOverview() {
     },
     rooms
   };
+}
+
+function notificationStatus() {
+  return {
+    ...weComNotifier.getStatus(),
+    settingsUpdatedAt: data.notificationSettingsUpdatedAt
+  };
+}
+
+function parseNotificationSettings(body) {
+  const source = body && typeof body === 'object' ? body : {};
+  const audioAlertSeconds = Number(source.audioAlertSeconds);
+  const cameraAlertSeconds = Number(source.cameraAlertSeconds);
+  if (!Number.isFinite(audioAlertSeconds) || audioAlertSeconds < 30 || audioAlertSeconds > 1800) {
+    throw new RangeError('音频推送时间必须在 30–1800 秒之间');
+  }
+  if (!Number.isFinite(cameraAlertSeconds) || cameraAlertSeconds < 60 || cameraAlertSeconds > 3600) {
+    throw new RangeError('机位推送时间必须在 1–60 分钟之间');
+  }
+  return normalizeWeComNotificationSettings({
+    enabled: source.enabled,
+    audioEnabled: source.audioEnabled,
+    cameraEnabled: source.cameraEnabled,
+    recoveryEnabled: source.recoveryEnabled,
+    audioAlertSeconds,
+    cameraAlertSeconds
+  });
+}
+
+async function persistNotificationSettings(settings) {
+  const previousSettings = data.notificationSettings;
+  const previousUpdatedAt = data.notificationSettingsUpdatedAt;
+  data.notificationSettings = normalizeWeComNotificationSettings(settings);
+  data.notificationSettingsUpdatedAt = now();
+  try {
+    await saveData();
+  } catch (error) {
+    data.notificationSettings = previousSettings;
+    data.notificationSettingsUpdatedAt = previousUpdatedAt;
+    throw error;
+  }
+  weComNotifier.updateSettings(data.notificationSettings);
+  return notificationStatus();
 }
 
 function publicCommand(command) {
@@ -691,6 +756,7 @@ async function handleApi(req, res, url) {
     }
     const roomName = cleanText(body.roomName, 60);
     const roomNameRevision = wholeNumber(body.roomNameRevision);
+    const mobileAccessEnabled = body.mobileAccessEnabled === true;
     if (roomName.length < 2) return json(res, 400, { error: 'room_name_required' });
     let device = data.devices.find((item) => item.uuid === uuid);
     if (device && !safeEqual(device.secretHash, sha256(secret))) return json(res, 403, { error: 'device_auth_failed' });
@@ -703,7 +769,8 @@ async function handleApi(req, res, url) {
         roomName,
         roomNameRevision: Math.max(1, roomNameRevision),
         roomNameUpdatedAt: now(),
-        mobileAccessEnabled: false,
+        mobileAccessEnabled,
+        weComNotificationsEnabled: true,
         monitoringIdentityRevision: MONITORING_IDENTITY_REVISION,
         appVersion: appVersion(body.appVersion) || '',
         platform: cleanText(body.platform, 20),
@@ -724,7 +791,8 @@ async function handleApi(req, res, url) {
       } else {
         device.roomNameRevision = storedRoomNameRevision;
       }
-      device.mobileAccessEnabled = false;
+      device.mobileAccessEnabled = mobileAccessEnabled;
+      device.weComNotificationsEnabled = device.weComNotificationsEnabled !== false;
       device.monitoringIdentityRevision = MONITORING_IDENTITY_REVISION;
       device.appVersion = appVersion(body.appVersion, device.appVersion) || '';
       device.platform = cleanText(body.platform, 20) || device.platform || '';
@@ -746,26 +814,66 @@ async function handleApi(req, res, url) {
       data.requests = data.requests.filter((item) => !duplicateUuids.has(item.deviceUuid));
       data.approvals = data.approvals.filter((item) => !duplicateUuids.has(item.deviceUuid));
     }
-    closeMobileAccessForDevice(device.uuid, 4003, 'mobile_access_removed');
+    if (!mobileAccessEnabled) closeMobileAccessForDevice(device.uuid, 4003, 'mobile_access_disabled');
     await saveData();
     return json(res, 200, { ok: true, device: publicDevice(device) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/pair/info') {
-    return json(res, 410, { error: 'mobile_access_removed' });
+    const device = deviceByPairToken(url.searchParams.get('token') || '');
+    if (!device) return json(res, 404, { error: 'pair_link_invalid' });
+    if (device.mobileAccessEnabled !== true) return json(res, 403, { error: 'mobile_access_disabled' });
+    return json(res, 200, { device: publicDevice(device) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/pair/request') {
-    return json(res, 410, { error: 'mobile_access_removed' });
+    if (!allowRequest(req, 'pair', 12, 10 * 60_000)) return json(res, 429, { error: 'too_many_requests' });
+    const body = await readJson(req);
+    const device = deviceByPairToken(body.pairToken || '');
+    if (!device) return json(res, 400, { error: 'invalid_request' });
+    if (device.mobileAccessEnabled !== true) return json(res, 403, { error: 'mobile_access_disabled' });
+    const clientId = cleanUuid(body.clientId);
+    const roomName = cleanText(device.roomName, 60) || cleanText(body.roomName, 60);
+    if (!clientId || roomName.length < 2) return json(res, 400, { error: 'invalid_request' });
+    const recent = data.requests.find((item) => item.deviceUuid === device.uuid && item.clientId === clientId && item.status === 'pending');
+    if (recent) return json(res, 200, { request: publicRequest(recent) });
+    const request = {
+      id: token(12),
+      deviceUuid: device.uuid,
+      clientId,
+      clientName: cleanText(body.clientName, 60) || '移动浏览器',
+      roomName,
+      status: 'pending',
+      createdAt: now()
+    };
+    data.requests.push(request);
+    await saveData();
+    notifyAdmins();
+    return json(res, 201, { request: publicRequest(request) });
   }
 
   const requestMatch = url.pathname.match(/^\/api\/pair\/request\/([^/]+)$/);
   if (req.method === 'GET' && requestMatch) {
-    return json(res, 410, { error: 'mobile_access_removed' });
+    const request = data.requests.find((item) => item.id === requestMatch[1] && item.clientId === url.searchParams.get('clientId'));
+    if (!request) return json(res, 404, { error: 'request_not_found' });
+    const payload = { request: publicRequest(request) };
+    if (request.status === 'approved' && request.approvedToken) payload.accessToken = request.approvedToken;
+    return json(res, 200, payload);
   }
 
   if (req.method === 'GET' && url.pathname === '/api/mobile/session') {
-    return json(res, 410, { error: 'mobile_access_removed' });
+    const approval = approvalByToken(url.searchParams.get('token') || '');
+    if (!approval) return json(res, 403, { error: 'access_denied' });
+    const device = data.devices.find((item) => item.uuid === approval.deviceUuid);
+    if (!device) return json(res, 404, { error: 'device_not_found' });
+    if (device.mobileAccessEnabled !== true) return json(res, 403, { error: 'mobile_access_disabled' });
+    approval.lastUsedAt = now();
+    void saveData();
+    return json(res, 200, {
+      approval: publicApproval(approval),
+      device: publicDevice(device),
+      state: device.lastState ? normalizeDesktopState(device.lastState) : null
+    });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/admin/login') {
@@ -796,7 +904,7 @@ async function handleApi(req, res, url) {
         devices: data.devices.map(publicDevice),
         requests: data.requests.filter((item) => item.status === 'pending').map(publicRequest),
         approvals: data.approvals.filter((item) => !item.revokedAt).map(publicApproval),
-        notifications: weComNotifier.getStatus()
+        notifications: notificationStatus()
       });
     }
     const decision = url.pathname.match(/^\/api\/admin\/requests\/([^/]+)\/(approve|reject)$/);
@@ -886,6 +994,29 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
       return json(res, 200, monitorOverview());
     }
+    if (req.method === 'GET' && url.pathname === '/api/monitor/notification-settings') {
+      return json(res, 200, notificationStatus());
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/monitor/notification-settings') {
+      if (!allowRequest(req, 'monitor-notification-settings', 20, 60_000)) {
+        return json(res, 429, { error: 'too_many_requests', message: '通知设置修改过于频繁，请稍后再试' });
+      }
+      try {
+        const settings = parseNotificationSettings(await readJson(req, 16 * 1024));
+        return json(res, 200, await persistNotificationSettings(settings));
+      } catch (error) {
+        if (error instanceof RangeError) {
+          return json(res, 400, { error: 'invalid_notification_settings', message: error.message });
+        }
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/monitor/notification-settings/reset') {
+      if (!allowRequest(req, 'monitor-notification-settings-reset', 10, 60_000)) {
+        return json(res, 429, { error: 'too_many_requests', message: '恢复默认操作过于频繁，请稍后再试' });
+      }
+      return json(res, 200, await persistNotificationSettings(DEFAULT_WECOM_NOTIFICATION_SETTINGS));
+    }
     const renameMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/name$/);
     if (req.method === 'PATCH' && renameMatch) {
       if (!allowRequest(req, 'monitor-rename-device', 30, 60_000)) {
@@ -950,6 +1081,20 @@ async function handleApi(req, res, url) {
         return json(res, 503, { error: 'wecom_test_failed', message: error instanceof Error ? error.message : String(error) });
       }
     }
+    const weComPreferenceMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/wecom-notifications$/);
+    if (req.method === 'PATCH' && weComPreferenceMatch) {
+      const deviceUuid = cleanUuid(weComPreferenceMatch[1]);
+      const device = data.devices.find((item) => item.uuid === deviceUuid);
+      if (!device) return json(res, 404, { error: 'device_not_found', message: '未找到该直播间电脑' });
+      const body = await readJson(req, 16 * 1024);
+      if (typeof body.enabled !== 'boolean') {
+        return json(res, 400, { error: 'invalid_notification_preference', message: '请提供有效的通知开关' });
+      }
+      device.weComNotificationsEnabled = body.enabled;
+      if (!body.enabled) weComNotifier.forgetDevice(deviceUuid);
+      await saveData();
+      return json(res, 200, { ok: true, device: monitorDevice(device) });
+    }
     const commandMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/commands$/);
     if (req.method === 'POST' && commandMatch) {
       if (!allowRequest(req, 'monitor-command', 30, 60_000)) return json(res, 429, { error: 'too_many_requests' });
@@ -970,15 +1115,101 @@ async function handleApi(req, res, url) {
   return json(res, 404, { error: 'not_found' });
 }
 
+const hopByHopHeaders = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade'
+]);
+
+function forwardedHeaders(req) {
+  const headers = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!hopByHopHeaders.has(name.toLowerCase()) && value !== undefined) headers[name] = value;
+  }
+  const remoteAddress = req.socket.remoteAddress || '';
+  const existingForwardedFor = String(req.headers['x-forwarded-for'] || '').trim();
+  headers.host = complaintProxyUrl.host;
+  headers['x-forwarded-for'] = [existingForwardedFor, remoteAddress].filter(Boolean).join(', ');
+  headers['x-forwarded-host'] = req.headers.host || '';
+  headers['x-forwarded-proto'] = req.socket.encrypted ? 'https' : 'http';
+  headers['x-forwarded-prefix'] = complaintRoutePrefix;
+  return headers;
+}
+
+function forwardedResponseHeaders(sourceHeaders) {
+  const headers = {};
+  for (const [name, value] of Object.entries(sourceHeaders)) {
+    if (!hopByHopHeaders.has(name.toLowerCase()) && value !== undefined) headers[name] = value;
+  }
+
+  const location = sourceHeaders.location;
+  if (typeof location === 'string' && location.startsWith('/') && !location.startsWith(`${complaintRoutePrefix}/`)) {
+    headers.location = `${complaintRoutePrefix}${location}`;
+  }
+
+  if (Array.isArray(sourceHeaders['set-cookie'])) {
+    headers['set-cookie'] = sourceHeaders['set-cookie'].map((cookie) =>
+      cookie.replace(/;\s*Path=\/(;|$)/i, `; Path=${complaintRoutePrefix}$1`)
+    );
+  }
+  return headers;
+}
+
+function proxyComplaint(req, res, url) {
+  const upstreamPath = url.pathname.slice(complaintRoutePrefix.length) || '/';
+  const path = `${upstreamPath}${url.search}`;
+
+  return new Promise((resolve) => {
+    const upstream = createHttpRequest({
+      protocol: complaintProxyUrl.protocol,
+      hostname: complaintProxyUrl.hostname,
+      port: complaintProxyUrl.port || 80,
+      method: req.method,
+      path,
+      headers: forwardedHeaders(req)
+    }, (upstreamResponse) => {
+      res.writeHead(
+        upstreamResponse.statusCode || 502,
+        forwardedResponseHeaders(upstreamResponse.headers)
+      );
+      upstreamResponse.pipe(res);
+      upstreamResponse.once('end', resolve);
+      upstreamResponse.once('error', (error) => {
+        console.error('Complaint proxy response failed:', error);
+        res.destroy(error);
+        resolve();
+      });
+    });
+
+    upstream.setTimeout(60_000, () => upstream.destroy(new Error('complaint_proxy_timeout')));
+    upstream.once('error', (error) => {
+      console.error('Complaint proxy request failed:', error);
+      if (!res.headersSent) json(res, 502, { error: 'complaint_service_unavailable' });
+      else res.destroy(error);
+      resolve();
+    });
+    req.once('aborted', () => upstream.destroy());
+    req.pipe(upstream);
+  });
+}
+
 const requestListener = async (req, res) => {
   try {
     const url = new URL(req.url || '/', publicBaseUrl);
+    if (url.pathname === complaintRoutePrefix || url.pathname.startsWith(`${complaintRoutePrefix}/`)) {
+      return await proxyComplaint(req, res, url);
+    }
     if (url.pathname === '/health') return json(res, 200, {
       ok: true,
       desktops: desktopSockets.size,
       mobiles: Array.from(mobileSockets.values()).reduce((sum, sockets) => sum + sockets.size, 0),
       updates: updateCache.getStatus(),
-      notifications: weComNotifier.getStatus()
+      notifications: notificationStatus()
     });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname === '/') return redirect(res, '/admin');
@@ -986,7 +1217,7 @@ const requestListener = async (req, res) => {
     if (url.pathname === '/monitor/') return redirect(res, '/monitor');
     if (url.pathname === '/admin') return serveFile(req, res, join(publicDir, 'admin.html'));
     if (url.pathname === '/monitor') return serveFile(req, res, join(publicDir, 'monitor.html'));
-    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return redirect(res, '/monitor');
+    if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(req, res, join(publicDir, 'mobile.html'));
     if (url.pathname.startsWith('/assets/')) {
       const file = resolve(publicDir, `.${url.pathname}`);
       if (!file.startsWith(publicDir)) return json(res, 403, { error: 'forbidden' });
@@ -1036,7 +1267,7 @@ const server = httpsServer
 const wss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });
 const handleUpgrade = (req, socket, head) => {
   const url = new URL(req.url || '/', publicBaseUrl);
-  if (url.pathname !== '/ws/desktop') return socket.destroy();
+  if (!['/ws/desktop', '/ws/mobile'].includes(url.pathname)) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, url));
 };
 httpServer.on('upgrade', handleUpgrade);
@@ -1058,7 +1289,8 @@ wss.on('connection', (socket, req, url) => {
       type: 'registered',
       roomName: device.roomName,
       roomNameRevision: wholeNumber(device.roomNameRevision),
-      onlineMobileClients: 0
+      pairUrl: device.mobileAccessEnabled === true ? `${publicBaseUrl}/pair/${device.pairToken}` : null,
+      onlineMobileClients: mobileSockets.get(uuid)?.size || 0
     }));
     socket.on('message', (raw) => {
       try {
@@ -1070,15 +1302,33 @@ wss.on('connection', (socket, req, url) => {
           device.platform = cleanText(appState.platform, 20) || device.platform || '';
           device.arch = cleanText(appState.arch, 20) || device.arch || '';
           device.osRelease = cleanText(appState.osRelease, 80) || device.osRelease || '';
-          device.mobileAccessEnabled = false;
+          if (typeof appState.mobileAccessEnabled === 'boolean') {
+            device.mobileAccessEnabled = appState.mobileAccessEnabled;
+          }
           device.lastSeenAt = now();
           weComNotifier.observeDevice(device, device.lastState);
+          if (device.mobileAccessEnabled === true) {
+            broadcastMobile(uuid, { type: 'state', state: device.lastState });
+          } else {
+            closeMobileAccessForDevice(uuid, 4003, 'mobile_access_disabled');
+          }
           socket.send(JSON.stringify({ type: 'state-ack', receivedAt: now() }));
         } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
           socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
-        } else if (message.type === 'meter') {
-          // Central monitoring uses the throttled state snapshot; the former
-          // high-frequency meter stream was only needed by mobile clients.
+        } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
+          if (device.mobileAccessEnabled !== true) return;
+          const rawLevelDb = message.meter.levelDb;
+          const levelDb = typeof rawLevelDb === 'number' && Number.isFinite(rawLevelDb)
+            ? Math.max(-100, Math.min(12, rawLevelDb))
+            : null;
+          broadcastMobile(uuid, {
+            type: 'meter',
+            meter: {
+              timestamp: Number.isFinite(Number(message.meter.timestamp)) ? Number(message.meter.timestamp) : now(),
+              activeInputName: cleanText(message.meter.activeInputName, 100),
+              levelDb
+            }
+          });
         } else if (message.type === 'admin-command-result') {
           const id = cleanText(message.id, 80);
           const pending = pendingAdminCommands.get(id);
@@ -1104,7 +1354,7 @@ wss.on('connection', (socket, req, url) => {
   if (!approval) return socket.close(4003, 'access_denied');
   const device = data.devices.find((item) => item.uuid === approval.deviceUuid);
   if (!device) return socket.close(4004, 'device_not_found');
-  if (device.mobileAccessEnabled === false) return socket.close(4003, 'mobile_access_disabled');
+  if (device.mobileAccessEnabled !== true) return socket.close(4003, 'mobile_access_disabled');
   const sockets = mobileSockets.get(device.uuid) || new Set();
   socket.approvalId = approval.id;
   sockets.add(socket);

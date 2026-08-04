@@ -1,9 +1,27 @@
 const DEFAULT_BATCH_DELAY_MS = 1200;
 const MAX_TEXT_BYTES = 1800;
-const AUDIO_ALERT_SECONDS = 120;
-const CAMERA_ALERT_SECONDS = 10 * 60;
-const DEFAULT_MINIMUM_CAMERA_ALERT_DURATION_MS = 10 * 60 * 1000;
 const RETRY_DELAYS_MS = [1000, 3000, 10_000];
+
+export const DEFAULT_WECOM_NOTIFICATION_SETTINGS = Object.freeze({
+  enabled: true,
+  audioEnabled: true,
+  cameraEnabled: true,
+  recoveryEnabled: true,
+  audioAlertSeconds: 120,
+  cameraAlertSeconds: 10 * 60
+});
+
+export function normalizeWeComNotificationSettings(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    enabled: booleanValue(source.enabled, DEFAULT_WECOM_NOTIFICATION_SETTINGS.enabled),
+    audioEnabled: booleanValue(source.audioEnabled, DEFAULT_WECOM_NOTIFICATION_SETTINGS.audioEnabled),
+    cameraEnabled: booleanValue(source.cameraEnabled, DEFAULT_WECOM_NOTIFICATION_SETTINGS.cameraEnabled),
+    recoveryEnabled: booleanValue(source.recoveryEnabled, DEFAULT_WECOM_NOTIFICATION_SETTINGS.recoveryEnabled),
+    audioAlertSeconds: boundedInteger(source.audioAlertSeconds, 30, 1800, DEFAULT_WECOM_NOTIFICATION_SETTINGS.audioAlertSeconds),
+    cameraAlertSeconds: boundedInteger(source.cameraAlertSeconds, 60, 3600, DEFAULT_WECOM_NOTIFICATION_SETTINGS.cameraAlertSeconds)
+  };
+}
 
 export function isValidWeComWebhook(value) {
   try {
@@ -25,21 +43,20 @@ class WeComNotifier {
   constructor({
     webhookUrl = '',
     enabled = true,
+    settings = DEFAULT_WECOM_NOTIFICATION_SETTINGS,
     fetchImpl = globalThis.fetch,
     batchDelayMs = DEFAULT_BATCH_DELAY_MS,
-    minimumAudioAlertDurationMs = 0,
-    minimumCameraAlertDurationMs = DEFAULT_MINIMUM_CAMERA_ALERT_DURATION_MS,
     logger = console,
     clock = () => Date.now()
   } = {}) {
     this.webhookUrl = String(webhookUrl || '').trim();
-    this.enabled = Boolean(enabled) && isValidWeComWebhook(this.webhookUrl) && typeof fetchImpl === 'function';
+    this.transportEnabled = Boolean(enabled) && isValidWeComWebhook(this.webhookUrl) && typeof fetchImpl === 'function';
     this.fetchImpl = fetchImpl;
     this.batchDelayMs = Math.max(0, Number(batchDelayMs) || 0);
-    this.minimumAudioAlertDurationMs = Math.max(0, Number(minimumAudioAlertDurationMs) || 0);
-    this.minimumCameraAlertDurationMs = Math.max(0, Number(minimumCameraAlertDurationMs) || 0);
     this.logger = logger;
     this.clock = clock;
+    this.settings = normalizeWeComNotificationSettings(settings);
+    this.enabled = this.transportEnabled && this.settings.enabled;
     this.deviceStates = new Map();
     this.queue = [];
     this.flushTimer = null;
@@ -54,16 +71,33 @@ class WeComNotifier {
       enabled: this.enabled,
       queuedEvents: this.queue.length,
       lastSuccessAt: this.lastSuccessAt,
-      lastError: this.lastError
+      lastError: this.lastError,
+      settings: { ...this.settings }
     };
+  }
+
+  updateSettings(value) {
+    this.settings = normalizeWeComNotificationSettings(value);
+    this.enabled = this.transportEnabled && this.settings.enabled;
+    this.deviceStates.clear();
+    if (!this.enabled) {
+      if (this.flushTimer) clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+      this.queue = [];
+    }
+    return this.getStatus();
   }
 
   observeDevice(device, state) {
     if (!this.enabled || !state || typeof state !== 'object') return;
     const uuid = cleanText(device?.uuid, 64);
     if (!uuid) return;
+    if (device?.weComNotificationsEnabled === false) {
+      this.forgetDevice(uuid);
+      return;
+    }
 
-    const current = notificationState(state);
+    const current = notificationState(state, this.settings);
     const previous = this.deviceStates.get(uuid);
     const observedAt = this.clock();
     const identity = {
@@ -89,10 +123,8 @@ class WeComNotifier {
       const cameraAlertStartedAt = current.cameraAlert
         ? observedAt - current.cameraAlertDurationMs
         : null;
-      const audioNotificationSent = current.audioAlert
-        && current.audioAlertDurationMs >= this.minimumAudioAlertDurationMs;
-      const cameraNotificationSent = current.cameraAlert
-        && current.cameraAlertDurationMs >= this.minimumCameraAlertDurationMs;
+      const audioNotificationSent = current.audioAlert;
+      const cameraNotificationSent = current.cameraAlert;
       this.deviceStates.set(uuid, {
         ...current,
         audioAlertStartedAt,
@@ -100,8 +132,8 @@ class WeComNotifier {
         audioNotificationSent,
         cameraNotificationSent
       });
-      if (audioNotificationSent) this.enqueue(audioAlertEvent(identity, state, observedAt));
-      if (cameraNotificationSent) this.enqueue(cameraAlertEvent(identity, state, observedAt));
+      if (audioNotificationSent) this.enqueue(audioAlertEvent(identity, state, observedAt, this.settings.audioAlertSeconds));
+      if (cameraNotificationSent) this.enqueue(cameraAlertEvent(identity, state, observedAt, this.settings.cameraAlertSeconds));
       return;
     }
 
@@ -113,16 +145,10 @@ class WeComNotifier {
       audioNotificationSent = false;
     }
     if (current.audioAlert && !audioNotificationSent) {
-      const duration = Math.max(
-        current.audioAlertDurationMs,
-        observedAt - (audioAlertStartedAt || observedAt)
-      );
-      if (duration >= this.minimumAudioAlertDurationMs) {
-        this.enqueue(audioAlertEvent(identity, state, observedAt));
-        audioNotificationSent = true;
-      }
+      this.enqueue(audioAlertEvent(identity, state, observedAt, this.settings.audioAlertSeconds));
+      audioNotificationSent = true;
     } else if (previous.audioAlert && current.audioHealthy) {
-      if (audioNotificationSent) {
+      if (audioNotificationSent && this.settings.recoveryEnabled) {
         this.enqueue(audioRecoveryEvent(identity, state, audioAlertStartedAt || observedAt, observedAt));
       }
       audioAlertStartedAt = null;
@@ -137,16 +163,10 @@ class WeComNotifier {
       cameraNotificationSent = false;
     }
     if (current.cameraAlert && !cameraNotificationSent) {
-      const duration = Math.max(
-        current.cameraAlertDurationMs,
-        observedAt - (cameraAlertStartedAt || observedAt)
-      );
-      if (duration >= this.minimumCameraAlertDurationMs) {
-        this.enqueue(cameraAlertEvent(identity, state, observedAt));
-        cameraNotificationSent = true;
-      }
+      this.enqueue(cameraAlertEvent(identity, state, observedAt, this.settings.cameraAlertSeconds));
+      cameraNotificationSent = true;
     } else if (previous.cameraAlert && current.cameraHealthy) {
-      if (cameraNotificationSent) {
+      if (cameraNotificationSent && this.settings.recoveryEnabled) {
         this.enqueue(cameraRecoveryEvent(identity, state, cameraAlertStartedAt || observedAt, observedAt));
       }
       cameraAlertStartedAt = null;
@@ -165,6 +185,9 @@ class WeComNotifier {
   }
 
   async sendStatusTest(device, state) {
+    if (device?.weComNotificationsEnabled === false) {
+      throw new Error('该直播间已关闭企业微信通知');
+    }
     if (!this.enabled) {
       throw new Error(isValidWeComWebhook(this.webhookUrl)
         ? '企业微信通知当前已停用'
@@ -176,6 +199,13 @@ class WeComNotifier {
     const sent = await operation;
     if (!sent) throw new Error(this.lastError || '企业微信测试消息发送失败');
     return { ok: true, sentAt: this.lastSuccessAt };
+  }
+
+  forgetDevice(uuid) {
+    const deviceUuid = cleanText(uuid, 64);
+    if (!deviceUuid) return;
+    this.deviceStates.delete(deviceUuid);
+    this.queue = this.queue.filter((event) => event?.identity?.uuid !== deviceUuid);
   }
 
   enqueue(event) {
@@ -234,24 +264,26 @@ class WeComNotifier {
   }
 }
 
-function notificationState(state) {
+function notificationState(state, settings) {
   const audio = state.audio && typeof state.audio === 'object' ? state.audio : {};
   const atem = state.atem && typeof state.atem === 'object' ? state.atem : {};
   const obs = state.obs && typeof state.obs === 'object' ? state.obs : {};
   const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
   const audioSilentForSeconds = wholeSeconds(audio.silentForSeconds);
-  const reachedAudioThreshold = audioSilentForSeconds >= AUDIO_ALERT_SECONDS;
+  const reachedAudioThreshold = audioSilentForSeconds >= settings.audioAlertSeconds;
   const audioAlert = live
+    && settings.audioEnabled
     && audio.ready === true
     && reachedAudioThreshold;
   const audioHealthy = live && audio.ready === true && !audioAlert;
   const cameraElapsedSeconds = wholeSeconds(atem.elapsedSeconds);
   const cameraExempt = atem.exempt === true;
   const cameraAlert = live
+    && settings.cameraEnabled
     && atem.connected === true
     && !cameraExempt
-    && cameraElapsedSeconds >= CAMERA_ALERT_SECONDS;
-  const cameraHealthy = live && atem.connected === true && !cameraAlert;
+    && cameraElapsedSeconds >= settings.cameraAlertSeconds;
+  const cameraHealthy = live && settings.cameraEnabled && atem.connected === true && !cameraAlert;
   return {
     live,
     audioAlert,
@@ -267,11 +299,11 @@ function notificationState(state) {
   };
 }
 
-function audioAlertEvent(identity, state, occurredAt) {
+function audioAlertEvent(identity, state, occurredAt, alertSeconds) {
   return {
     kind: 'audio_alert',
     tone: 'warning',
-    title: '麦克风已静音 2 分钟',
+    title: `麦克风已静音 ${shortDurationText(alertSeconds)}`,
     identity,
     occurredAt,
     detail: `音源：${cleanText(state.audio?.inputName, 100) || '目标音源'}`
@@ -289,13 +321,13 @@ function audioRecoveryEvent(identity, state, startedAt, occurredAt) {
   };
 }
 
-function cameraAlertEvent(identity, state, occurredAt) {
+function cameraAlertEvent(identity, state, occurredAt, alertSeconds) {
   const inputId = Number(state.atem?.programInput);
   const inputName = cleanText(state.atem?.inputLabels?.[inputId], 100) || (Number.isFinite(inputId) ? `机位 ${inputId}` : '当前机位');
   return {
     kind: 'camera_alert',
     tone: 'warning',
-    title: '机位停留已达 10 分钟',
+    title: `机位停留已达 ${shortDurationText(alertSeconds)}`,
     identity,
     occurredAt,
     detail: `机位：${inputName}`
@@ -386,6 +418,22 @@ function cleanText(value, max) {
 function wholeSeconds(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
+}
+
+function boundedInteger(value, minimum, maximum, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, Math.round(number))) : fallback;
+}
+
+function booleanValue(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function shortDurationText(seconds) {
+  const value = Math.max(1, Math.round(Number(seconds) || 0));
+  if (value % 60 === 0) return `${value / 60} 分钟`;
+  if (value > 60) return `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
+  return `${value} 秒`;
 }
 
 function durationText(milliseconds) {

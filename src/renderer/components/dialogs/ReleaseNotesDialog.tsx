@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { BellRing, Check, Mic2, Video } from 'lucide-react';
+import { BellRing, Check, MonitorUp, Smartphone } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES = [
-  { icon: Mic2, title: '音频提醒统一为 2 分钟', detail: '静音计时和报警提示现在使用统一标准。' },
-  { icon: Video, title: '机位计时更清楚', detail: '10 分钟进入超时提醒，电脑端强弹窗仍在 12 分钟出现。' },
-  { icon: BellRing, title: '提醒颜色平滑变化', detail: '音频和机位会逐渐变黄，临近提醒时变红。' },
-  { icon: Check, title: '支持多个出镜机位', detail: '选中的出镜机位不计时，也不会触发提醒。' }
+  { icon: MonitorUp, title: 'Windows 小浮窗更稳定', detail: '修复偶尔失去置顶，以及缩放时文字和圆角短暂变形的问题。' },
+  { icon: Smartphone, title: '恢复手机监看', detail: '开发者模式可再次启用扫码监看和麦克风画中画。' },
+  { icon: BellRing, title: '直播间通知可单独关闭', detail: '监控后台可为指定直播间暂停企业微信报警与恢复通知。' },
+  { icon: Check, title: '配置升级更可靠', detail: '升级后会保留已经启用的开发者和手机监看设置。' }
 ];
 
 export interface ReleaseCameraOption {

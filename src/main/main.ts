@@ -99,6 +99,9 @@ let startupUpdateInProgress = false;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let isAdjustingFloatingWindowSize = false;
+let floatingTopmostTimer: NodeJS.Timeout | null = null;
+let floatingResizeSettleTimer: NodeJS.Timeout | null = null;
+let floatingShapeTimer: NodeJS.Timeout | null = null;
 let lastTrayTone: TrayTone | null = null;
 let lastTrayTooltip = '';
 let lastTrayMenuKey = '';
@@ -411,7 +414,7 @@ function registerIpc(): void {
     if (Object.hasOwn(patch, 'atemHotkeyGlobal')) {
       syncATEMHotkeys();
     }
-    if (Object.hasOwn(patch, 'centralMonitoringEnabled') || Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'remoteServerUrl') || Object.hasOwn(patch, 'livestreamRoomName')) {
+    if (Object.hasOwn(patch, 'centralMonitoringEnabled') || Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'developerModeEnabled') || Object.hasOwn(patch, 'remoteServerUrl') || Object.hasOwn(patch, 'livestreamRoomName')) {
       void remoteBridge.configure(nextConfig);
     }
     if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl') || Object.hasOwn(patch, 'remoteServerUrl')) {
@@ -1846,7 +1849,7 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
   });
 
   attachWindowDiagnostics(floatingWindow, 'floating');
-  floatingWindow.setAlwaysOnTop(true, 'floating');
+  reinforceFloatingWindowTopmost();
   if (fixedAspectRatio) {
     floatingWindow.setAspectRatio(fixedAspectRatio);
   }
@@ -1855,16 +1858,34 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
   floatingWindow.once('ready-to-show', () => {
     applyFloatingWindowShape();
     floatingWindow?.showInactive();
+    reinforceFloatingWindowTopmost(true);
+    startFloatingWindowTopmostGuard();
+  });
+  floatingWindow.on('show', () => reinforceFloatingWindowTopmost(true));
+  floatingWindow.on('blur', () => {
+    setTimeout(() => reinforceFloatingWindowTopmost(true), 80).unref?.();
   });
   floatingWindow.on('moved', () => {
     saveFloatingWindowBoundsFromWindow();
   });
+  floatingWindow.on('will-resize', (event, nextBounds, details) => {
+    if (process.platform !== 'win32' || isAdjustingFloatingWindowSize) return;
+    const activeMode = (latestSnapshot ?? snapshot).config.floatingWindowMode;
+    const ratio = floatingWindowAspectRatio(activeMode);
+    if (!ratio) return;
+    const corrected = correctedFloatingResizeBounds(activeMode, nextBounds, String(details?.edge || ''), ratio);
+    if (corrected.width === nextBounds.width && corrected.height === nextBounds.height) return;
+    event.preventDefault();
+    isAdjustingFloatingWindowSize = true;
+    floatingWindow?.setBounds(corrected, false);
+    isAdjustingFloatingWindowSize = false;
+  });
   floatingWindow.on('resized', () => {
-    keepFloatingWindowAspectRatio();
-    applyFloatingWindowShape();
-    saveFloatingWindowBoundsFromWindow();
+    scheduleFloatingWindowShape();
+    scheduleFloatingWindowResizeSettled();
   });
   floatingWindow.on('closed', () => {
+    stopFloatingWindowTimers();
     floatingWindow = null;
   });
 
@@ -1876,6 +1897,7 @@ function closeFloatingWindow(mode: 'close' | 'destroy' = 'destroy'): void {
     return;
   }
 
+  stopFloatingWindowTimers();
   safelyCloseWindow(floatingWindow, mode);
   floatingWindow = null;
 }
@@ -2634,9 +2656,81 @@ function configureFloatingWindowForMode(snapshot: AppSnapshot): void {
     floatingWindow.setBounds({ ...bounds, width, height }, false);
     isAdjustingFloatingWindowSize = false;
   }
-  floatingWindow.setAlwaysOnTop(true, 'floating');
-  floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  reinforceFloatingWindowTopmost();
   applyFloatingWindowShape();
+}
+
+function reinforceFloatingWindowTopmost(moveToFront = false): void {
+  if (!floatingWindow || floatingWindow.isDestroyed()) return;
+
+  try {
+    floatingWindow.setAlwaysOnTop(true, process.platform === 'win32' ? 'screen-saver' : 'floating');
+    floatingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (moveToFront && floatingWindow.isVisible()) floatingWindow.moveTop();
+  } catch {
+    // The native window may already be closing while a deferred guard runs.
+  }
+}
+
+function startFloatingWindowTopmostGuard(): void {
+  if (floatingTopmostTimer) clearInterval(floatingTopmostTimer);
+  if (process.platform !== 'win32') return;
+  floatingTopmostTimer = setInterval(() => reinforceFloatingWindowTopmost(), 2500);
+  floatingTopmostTimer.unref?.();
+}
+
+function scheduleFloatingWindowShape(): void {
+  if (process.platform !== 'win32' || floatingShapeTimer) return;
+  floatingShapeTimer = setTimeout(() => {
+    floatingShapeTimer = null;
+    applyFloatingWindowShape();
+  }, 48);
+  floatingShapeTimer.unref?.();
+}
+
+function scheduleFloatingWindowResizeSettled(): void {
+  if (floatingResizeSettleTimer) clearTimeout(floatingResizeSettleTimer);
+  floatingResizeSettleTimer = setTimeout(() => {
+    floatingResizeSettleTimer = null;
+    keepFloatingWindowAspectRatio();
+    applyFloatingWindowShape();
+    saveFloatingWindowBoundsFromWindow();
+    reinforceFloatingWindowTopmost();
+  }, 120);
+  floatingResizeSettleTimer.unref?.();
+}
+
+function stopFloatingWindowTimers(): void {
+  if (floatingTopmostTimer) clearInterval(floatingTopmostTimer);
+  if (floatingResizeSettleTimer) clearTimeout(floatingResizeSettleTimer);
+  if (floatingShapeTimer) clearTimeout(floatingShapeTimer);
+  floatingTopmostTimer = null;
+  floatingResizeSettleTimer = null;
+  floatingShapeTimer = null;
+}
+
+function correctedFloatingResizeBounds(
+  mode: AppConfig['floatingWindowMode'],
+  bounds: Rectangle,
+  edge: string,
+  ratio: number
+): Rectangle {
+  const minWidth = floatingWindowMinWidthForMode(mode);
+  const verticalOnly = /top|bottom/.test(edge) && !/left|right/.test(edge);
+  const width = clamp(
+    verticalOnly ? Math.round(bounds.height * ratio) : bounds.width,
+    minWidth,
+    FLOATING_WINDOW_MAX_WIDTH
+  );
+  const height = Math.round(width / ratio);
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
+  return {
+    x: edge.includes('left') ? right - width : bounds.x,
+    y: edge.includes('top') ? bottom - height : bounds.y,
+    width,
+    height
+  };
 }
 
 function keepFloatingWindowAspectRatio(): void {

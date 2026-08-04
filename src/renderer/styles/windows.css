@@ -180,7 +180,6 @@
   border-radius: calc(14px * var(--floating-ui-scale, 1));
   overflow: hidden;
   -webkit-app-region: drag;
-  will-change: contents;
   contain: layout paint style;
   transition: background 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
 }

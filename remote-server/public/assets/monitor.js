@@ -41,6 +41,7 @@ function showDashboard() {
 
 function showLogin() {
   closeDrawer();
+  if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
   $('monitor-dashboard').classList.add('hidden');
   $('monitor-login').classList.remove('hidden');
 }
@@ -103,13 +104,23 @@ function render() {
       : notifications?.configured
         ? '企业微信通知已停用'
         : '企业微信通知未配置';
+  const notificationSettings = notifications?.settings;
+  if (notificationSettings) {
+    const audioSummary = notificationSettings.audioEnabled
+      ? `音频 ${durationSettingText(notificationSettings.audioAlertSeconds)}`
+      : '音频关闭';
+    const cameraSummary = notificationSettings.cameraEnabled
+      ? `机位 ${durationSettingText(notificationSettings.cameraAlertSeconds)}`
+      : '机位关闭';
+    $('monitor-notify-chip').title = `${audioSummary} · ${cameraSummary}`;
+  }
   renderSummary(summary, updates);
   renderRooms(rooms);
   renderCommandLog(commands?.recent || []);
   if (selectedDeviceUuid) {
     const selected = findDevice(selectedDeviceUuid);
     if (!selected) closeDrawer();
-    else if (document.activeElement?.id !== 'monitor-room-name-input') renderDrawer(selected);
+    else if (!$('monitor-device-detail').contains(document.activeElement)) renderDrawer(selected);
   }
 }
 
@@ -308,12 +319,120 @@ function closeDrawer() {
   }, 220);
 }
 
+function openNotificationSettings() {
+  if (!overview?.notifications) return;
+  populateNotificationSettings(overview.notifications);
+  const backdrop = $('monitor-notification-settings');
+  backdrop.classList.remove('hidden');
+  requestAnimationFrame(() => backdrop.classList.add('visible'));
+}
+
+function closeNotificationSettings() {
+  const backdrop = $('monitor-notification-settings');
+  backdrop.classList.remove('visible');
+  setTimeout(() => backdrop.classList.add('hidden'), 200);
+  $('monitor-notification-settings-error').textContent = '';
+}
+
+function populateNotificationSettings(status) {
+  const settings = status?.settings || {};
+  $('monitor-notification-enabled').checked = settings.enabled !== false;
+  $('monitor-notification-audio-enabled').checked = settings.audioEnabled !== false;
+  $('monitor-notification-camera-enabled').checked = settings.cameraEnabled !== false;
+  $('monitor-notification-recovery-enabled').checked = settings.recoveryEnabled !== false;
+  $('monitor-notification-audio-seconds').value = String(Number(settings.audioAlertSeconds) || 120);
+  $('monitor-notification-camera-minutes').value = String(Math.max(1, Math.round((Number(settings.cameraAlertSeconds) || 600) / 60)));
+  $('monitor-notification-configured-hint').textContent = status?.configured
+    ? '机器人已配置，保存后立即生效'
+    : '服务器尚未配置机器人 Webhook，设置会保留但暂不发送';
+  $('monitor-notification-settings-saved').textContent = status?.settingsUpdatedAt
+    ? `上次保存 ${relativeTime(status.settingsUpdatedAt)}`
+    : '当前为默认设置';
+  syncNotificationSettingsControls();
+}
+
+function syncNotificationSettingsControls() {
+  const enabled = $('monitor-notification-enabled').checked;
+  const audioEnabled = enabled && $('monitor-notification-audio-enabled').checked;
+  const cameraEnabled = enabled && $('monitor-notification-camera-enabled').checked;
+  $('monitor-notification-options').classList.toggle('disabled', !enabled);
+  $('monitor-notification-audio-enabled').disabled = !enabled;
+  $('monitor-notification-camera-enabled').disabled = !enabled;
+  $('monitor-notification-recovery-enabled').disabled = !enabled;
+  $('monitor-notification-audio-seconds').disabled = !audioEnabled;
+  $('monitor-notification-camera-minutes').disabled = !cameraEnabled;
+}
+
+function notificationSettingsFromForm() {
+  const audioAlertSeconds = Number($('monitor-notification-audio-seconds').value);
+  const cameraMinutes = Number($('monitor-notification-camera-minutes').value);
+  if (!Number.isFinite(audioAlertSeconds) || audioAlertSeconds < 30 || audioAlertSeconds > 1800) {
+    throw new Error('音频推送时间请输入 30–1800 秒');
+  }
+  if (!Number.isFinite(cameraMinutes) || cameraMinutes < 1 || cameraMinutes > 60) {
+    throw new Error('机位推送时间请输入 1–60 分钟');
+  }
+  return {
+    enabled: $('monitor-notification-enabled').checked,
+    audioEnabled: $('monitor-notification-audio-enabled').checked,
+    cameraEnabled: $('monitor-notification-camera-enabled').checked,
+    recoveryEnabled: $('monitor-notification-recovery-enabled').checked,
+    audioAlertSeconds: Math.round(audioAlertSeconds),
+    cameraAlertSeconds: Math.round(cameraMinutes * 60)
+  };
+}
+
+async function saveNotificationSettings(event) {
+  event.preventDefault();
+  const saveButton = $('monitor-notification-settings-save');
+  $('monitor-notification-settings-error').textContent = '';
+  try {
+    const settings = notificationSettingsFromForm();
+    saveButton.disabled = true;
+    saveButton.textContent = '正在应用';
+    const status = await api('/api/monitor/notification-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    });
+    overview.notifications = status;
+    toast('企业微信通知设置已更新');
+    closeNotificationSettings();
+    render();
+  } catch (error) {
+    $('monitor-notification-settings-error').textContent = error.payload?.message || error.message || '设置保存失败';
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = '应用设置';
+  }
+}
+
+async function resetNotificationSettings() {
+  const resetButton = $('monitor-notification-settings-reset');
+  $('monitor-notification-settings-error').textContent = '';
+  try {
+    resetButton.disabled = true;
+    resetButton.textContent = '正在恢复';
+    const status = await api('/api/monitor/notification-settings/reset', { method: 'POST' });
+    overview.notifications = status;
+    populateNotificationSettings(status);
+    toast('已恢复企业微信通知默认设置');
+    render();
+  } catch (error) {
+    $('monitor-notification-settings-error').textContent = error.payload?.message || error.message || '恢复默认失败';
+  } finally {
+    resetButton.disabled = false;
+    resetButton.textContent = '恢复默认';
+  }
+}
+
 function renderDrawer(device) {
   $('monitor-device-title').textContent = device.roomName;
   $('monitor-device-subtitle').textContent = `${device.label} · ${device.online ? '电脑在线' : `离线 ${relativeTime(device.lastSeenAt)}`}`;
   const detail = $('monitor-device-detail');
   detail.replaceChildren(
     roomNameSection(device),
+    roomNotificationSection(device),
     detailSection('运行状态', [
       ['OBS', obsDisplay(device.obs)],
       ['音频', `${device.audio.display} · ${device.audio.levelDb == null ? '-- dB' : `${device.audio.levelDb.toFixed(1)} dB`}`],
@@ -366,6 +485,8 @@ function renderDrawer(device) {
   weComButton.type = 'button';
   weComButton.className = 'monitor-action primary-action';
   weComButton.textContent = '发送企业微信测试';
+  weComButton.disabled = device.weComNotificationsEnabled === false;
+  if (weComButton.disabled) weComButton.title = '该直播间已关闭企业微信通知';
   weComButton.addEventListener('click', () => void sendWeComTest(device.uuid));
   actions.append(weComButton);
 }
@@ -407,6 +528,33 @@ function roomNameSection(device) {
   return section;
 }
 
+function roomNotificationSection(device) {
+  const section = document.createElement('section');
+  section.className = 'monitor-room-notification-setting';
+  const copy = document.createElement('span');
+  const title = document.createElement('strong');
+  title.textContent = '企业微信通知';
+  const description = document.createElement('small');
+  description.textContent = device.weComNotificationsEnabled === false
+    ? '该直播间不发送报警、恢复和测试消息。'
+    : '该直播间会按监控中心的统一规则发送通知。';
+  copy.append(title, description);
+
+  const label = document.createElement('label');
+  label.className = 'monitor-room-notification-toggle';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'monitor-switch-input';
+  input.checked = device.weComNotificationsEnabled !== false;
+  input.setAttribute('aria-label', `允许${device.roomName}发送企业微信通知`);
+  const visual = document.createElement('i');
+  visual.className = 'monitor-switch';
+  input.addEventListener('change', () => void updateRoomNotificationPreference(device.uuid, input.checked, input));
+  label.append(input, visual);
+  section.append(copy, label);
+  return section;
+}
+
 function detailSection(title, rows) {
   const section = document.createElement('section');
   const heading = document.createElement('h3');
@@ -438,6 +586,25 @@ async function renameDevice(deviceUuid, roomName, button) {
     await refresh();
   } catch (error) {
     toast(error.payload?.message || error.message || '名称更新失败');
+    const current = findDevice(deviceUuid);
+    if (current) renderDrawer(current);
+  }
+}
+
+async function updateRoomNotificationPreference(deviceUuid, enabled, input) {
+  input.disabled = true;
+  try {
+    await api(`/api/monitor/devices/${encodeURIComponent(deviceUuid)}/wecom-notifications`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
+    toast(enabled ? '已恢复该直播间的企业微信通知' : '已关闭该直播间的企业微信通知');
+    await refresh();
+  } catch (error) {
+    input.checked = !enabled;
+    toast(error.payload?.message || error.message || '通知设置更新失败');
+  } finally {
     const current = findDevice(deviceUuid);
     if (current) renderDrawer(current);
   }
@@ -557,6 +724,12 @@ function formatDuration(seconds) {
     : `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
 }
 
+function durationSettingText(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value > 0 && value % 60 === 0) return `${value / 60} 分钟`;
+  return `${value} 秒`;
+}
+
 function relativeTime(value) {
   if (!Number.isFinite(Number(value)) || Number(value) <= 0) return '--';
   const delta = Date.now() - Number(value);
@@ -632,6 +805,18 @@ $('monitor-filter').addEventListener('click', (event) => {
 });
 $('monitor-device-close').addEventListener('click', closeDrawer);
 $('monitor-drawer-backdrop').addEventListener('click', closeDrawer);
+$('monitor-notification-settings-button').addEventListener('click', openNotificationSettings);
+$('monitor-notify-chip').addEventListener('click', openNotificationSettings);
+$('monitor-notification-settings-close').addEventListener('click', closeNotificationSettings);
+$('monitor-notification-settings-cancel').addEventListener('click', closeNotificationSettings);
+$('monitor-notification-settings').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeNotificationSettings();
+});
+$('monitor-notification-settings-form').addEventListener('submit', (event) => void saveNotificationSettings(event));
+$('monitor-notification-settings-reset').addEventListener('click', () => void resetNotificationSettings());
+$('monitor-notification-enabled').addEventListener('change', syncNotificationSettingsControls);
+$('monitor-notification-audio-enabled').addEventListener('change', syncNotificationSettingsControls);
+$('monitor-notification-camera-enabled').addEventListener('change', syncNotificationSettingsControls);
 $('monitor-confirm-cancel').addEventListener('click', closeConfirmation);
 $('monitor-confirm-accept').addEventListener('click', () => {
   const action = pendingConfirmedAction;
@@ -641,6 +826,7 @@ $('monitor-confirm-accept').addEventListener('click', () => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     if (!$('monitor-confirm').classList.contains('hidden')) closeConfirmation();
+    else if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
     else closeDrawer();
   }
 });

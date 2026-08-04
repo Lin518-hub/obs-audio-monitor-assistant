@@ -20,13 +20,13 @@ describe('onboarding visibility', () => {
       ...DEFAULT_CONFIG,
       hasSeenGuide: true,
       releaseNotesSeenVersion: '3.9.4'
-    }, '3.9.5')).toBe(true);
+    }, '3.9.6')).toBe(true);
 
     expect(shouldShowReleaseNotes({
       ...DEFAULT_CONFIG,
       hasSeenGuide: true,
-      releaseNotesSeenVersion: '3.9.5'
-    }, '3.9.5')).toBe(false);
+      releaseNotesSeenVersion: '3.9.6'
+    }, '3.9.6')).toBe(false);
   });
 
   it('does not place release notes over the first-run guide', () => {
@@ -34,6 +34,6 @@ describe('onboarding visibility', () => {
       ...DEFAULT_CONFIG,
       hasSeenGuide: false,
       releaseNotesSeenVersion: ''
-    }, '3.9.5')).toBe(false);
+    }, '3.9.6')).toBe(false);
   });
 });

@@ -103,10 +103,13 @@ describe('ConfigStore', () => {
     const store = new ConfigStore();
     await store.save({
       ...DEFAULT_CONFIG,
-      developerModeEnabled: true
+      developerModeEnabled: true,
+      remoteAccessEnabled: true
     });
 
-    expect((await new ConfigStore().load()).developerModeEnabled).toBe(true);
+    const enabled = await new ConfigStore().load();
+    expect(enabled.developerModeEnabled).toBe(true);
+    expect(enabled.remoteAccessEnabled).toBe(true);
 
     await store.update({ developerModeEnabled: false });
     expect((await new ConfigStore().load()).developerModeEnabled).toBe(false);

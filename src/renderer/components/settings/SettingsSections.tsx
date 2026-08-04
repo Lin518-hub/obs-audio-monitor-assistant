@@ -11,6 +11,7 @@ import {
   Monitor,
   Play,
   Power,
+  QrCode,
   RefreshCw,
   Route,
   TestTube2,
@@ -20,8 +21,11 @@ import {
   Volume2,
   Wifi
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { defaultATEMInputColor } from '../../../shared/atemPalette';
 import {
+  LAN_REMOTE_SERVER_URL,
+  PUBLIC_REMOTE_SERVER_URL,
   type AlertSoundPreset,
   type AppConfig,
   type AppSnapshot,
@@ -895,6 +899,93 @@ export const RemoteAccessSection: React.FC<{
     </div>
   </Section>
 );
+
+export const MobileAccessSection: React.FC<{
+  draft: AppConfig;
+  snapshot: AppSnapshot;
+  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+}> = ({ draft, snapshot, onChange }) => {
+  const [qrDataUrl, setQrDataUrl] = React.useState('');
+  const [copyLabel, setCopyLabel] = React.useState('复制扫码链接');
+  const normalizedServerUrl = draft.remoteServerUrl.trim().replace(/\/$/, '');
+  const usingBuiltInService = normalizedServerUrl === LAN_REMOTE_SERVER_URL || normalizedServerUrl === PUBLIC_REMOTE_SERVER_URL;
+  const pairFallbackBase = usingBuiltInService ? PUBLIC_REMOTE_SERVER_URL : normalizedServerUrl;
+
+  React.useEffect(() => {
+    let active = true;
+    if (!draft.remoteAccessEnabled || !snapshot.remoteAccessPairUrl) {
+      setQrDataUrl('');
+      return () => { active = false; };
+    }
+    void QRCode.toDataURL(snapshot.remoteAccessPairUrl, {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0F172A', light: '#FFFFFF' }
+    }).then((url) => { if (active) setQrDataUrl(url); });
+    return () => { active = false; };
+  }, [draft.remoteAccessEnabled, snapshot.remoteAccessPairUrl]);
+
+  const status = snapshot.remoteAccessConnected
+    ? { label: snapshot.remoteAccessRouteType === 'lan' ? '已连接局域网服务' : '已连接公网服务', tone: 'ok' }
+    : snapshot.remoteAccessConnectionState === 'connecting'
+      ? { label: '正在连接手机监看服务', tone: 'pending' }
+      : snapshot.remoteAccessErrorMessage
+        ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
+        : { label: '等待连接手机监看服务', tone: 'idle' };
+
+  const copyPairUrl = async () => {
+    if (!snapshot.remoteAccessPairUrl) return;
+    await navigator.clipboard.writeText(snapshot.remoteAccessPairUrl);
+    setCopyLabel('已复制');
+    window.setTimeout(() => setCopyLabel('复制扫码链接'), 1500);
+  };
+
+  return (
+    <Section id="settings-mobile-access" icon={QrCode} title="手机远程监看" description="开发者功能 · 只读监看与音频画中画">
+      <ToggleRow
+        id="remote-access-enabled"
+        title="启用手机扫码监看"
+        description="手机首次访问需要后台审批；关闭后不影响集中监控和企业微信报警"
+        checked={draft.remoteAccessEnabled}
+        onChange={(value) => onChange('remoteAccessEnabled', value)}
+      />
+      <div className={`remote-route-card ${usingBuiltInService ? 'auto' : 'custom'}`}>
+        <Route size={18} />
+        <div>
+          <strong>{usingBuiltInService ? '自动选择连接线路' : '使用自定义远程服务'}</strong>
+          <span>{usingBuiltInService ? '局域网可用时优先连接，否则自动切换公网 HTTPS。' : normalizedServerUrl}</span>
+        </div>
+        {usingBuiltInService && <b>自动</b>}
+      </div>
+      <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
+      <div className="remote-metrics-grid">
+        <div><span>线路类型</span><strong>{snapshot.remoteAccessRouteType === 'lan' ? '局域网' : snapshot.remoteAccessRouteType === 'public' ? '公网 HTTPS' : snapshot.remoteAccessRouteType === 'custom' ? '自定义' : '--'}</strong></div>
+        <div><span>服务延迟</span><strong>{snapshot.remoteAccessLatencyMs === null ? '--' : `${snapshot.remoteAccessLatencyMs} ms`}</strong></div>
+        <div><span>在线手机</span><strong>{snapshot.remoteAccessOnlineMobileClients} 台</strong></div>
+        <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
+      </div>
+      {draft.remoteAccessEnabled ? (
+        <div className="remote-access-grid">
+          <div className="remote-qr-card">
+            {qrDataUrl
+              ? <img src={qrDataUrl} alt="手机远程监看二维码" />
+              : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
+          </div>
+          <div className="remote-access-copy">
+            <strong>首次扫码需要审批</strong>
+            <p>管理员批准后，手机可查看音频、机位和 OBS 状态；画中画只显示麦克风状态。</p>
+            <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
+            <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
+          </div>
+        </div>
+      ) : (
+        <div className="settings-hint">手机访问已关闭。集中监控、版本上报和企业微信报警仍会继续运行。</div>
+      )}
+      <div className="settings-hint warn">手机端仅提供只读监看，不允许远程切换 ATEM。请只批准可信设备，并及时撤销不再使用的授权。</div>
+    </Section>
+  );
+};
 
 // ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{

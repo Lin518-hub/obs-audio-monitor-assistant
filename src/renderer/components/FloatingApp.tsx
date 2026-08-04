@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
 import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppSnapshot } from '../../shared/types';
@@ -16,7 +16,7 @@ export const FloatingApp: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('floatingTheme') === 'light' ? 'light' : 'dark'
   );
-  const [scale, setScale] = useState(1);
+  const stageRef = useRef<HTMLElement>(null);
   const meter = useAudioMeter(snapshot);
 
   useEffect(() => {
@@ -31,15 +31,29 @@ export const FloatingApp: React.FC = () => {
   const isAudioAtem = mode === 'audio_atem';
 
   useEffect(() => {
+    let frame = 0;
     const updateScale = () => {
       const base = isMulti ? MULTI_FLOATING_BASE : isAudioAtem ? AUDIO_ATEM_FLOATING_BASE : AUDIO_FLOATING_BASE;
-      const next = Math.min(window.innerWidth / base.width, window.innerHeight / base.height);
-      setScale(Number.isFinite(next) ? Math.max(0.78, next) : 1);
+      // Fixed-ratio modes follow width only. During a native Windows resize the
+      // reported height can lag by a frame, which previously caused all text to
+      // jump in size before the OS completed the drag.
+      const next = isMulti
+        ? Math.min(window.innerWidth / base.width, window.innerHeight / base.height)
+        : window.innerWidth / base.width;
+      const scale = Number.isFinite(next) ? Math.max(0.78, next) : 1;
+      stageRef.current?.style.setProperty('--floating-ui-scale', String(scale));
+    };
+    const queueScaleUpdate = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateScale);
     };
 
     updateScale();
-    window.addEventListener('resize', updateScale);
-    return () => window.removeEventListener('resize', updateScale);
+    window.addEventListener('resize', queueScaleUpdate);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', queueScaleUpdate);
+    };
   }, [isMulti, isAudioAtem]);
 
   const toggleTheme = () => {
@@ -61,7 +75,6 @@ export const FloatingApp: React.FC = () => {
     ? interpolateRgb([238, 243, 248], [253, 230, 138], warningProgress)
     : interpolateRgb([15, 23, 42], [146, 64, 14], warningProgress);
   const scaleStyle = {
-    '--floating-ui-scale': String(scale),
     '--floating-warning-progress': String(warningProgress),
     '--floating-safe-layer-opacity': String(warningGreenWeight),
     '--floating-warning-layer-opacity': String(warningProgress),
@@ -75,7 +88,7 @@ export const FloatingApp: React.FC = () => {
   const floatingTitle = mode === 'audio' ? displayStatusText(snapshot) : mode === 'audio_atem' ? '音频与机位' : '多功能监看';
 
   return (
-    <main className="floating-stage" style={scaleStyle}>
+    <main ref={stageRef} className="floating-stage" style={scaleStyle}>
       <section className={`floating-shell floating-${mode.replace('_', '-')}-mode tone-${tone} theme-${theme} ${emphasis}`}>
         <div className="floating-ambient" />
         <header className="floating-header">

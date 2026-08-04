@@ -86,14 +86,16 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     const roomName = config.livestreamRoomName.trim();
     const roomNameRevision = normalizedRevision(config.livestreamRoomNameRevision);
     const enabled = true;
+    const mobileAccessEnabled = config.developerModeEnabled && config.remoteAccessEnabled;
     const changed = this.enabled !== enabled
+      || this.mobileAccessEnabled !== mobileAccessEnabled
       || this.configuredServerUrl !== normalizedUrl
       || this.roomName !== roomName
       || this.roomNameRevision !== roomNameRevision
       || this.uuid !== config.remoteDeviceUuid
       || this.secret !== config.remoteDeviceSecret;
     this.enabled = enabled;
-    this.mobileAccessEnabled = false;
+    this.mobileAccessEnabled = mobileAccessEnabled;
     this.configuredServerUrl = normalizedUrl;
     this.serverCandidates = remoteServerCandidates(normalizedUrl);
     this.serverUrl = this.serverCandidates[0] ?? '';
@@ -188,7 +190,11 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       if (!this.enabled || generation !== this.generation) return;
       this.serverUrl = registered.serverUrl;
       this.applyServerRoomName(registered.roomName, registered.roomNameRevision);
-      this.setState({ activeServerUrl: registered.serverUrl, pairUrl: null, routeType: remoteRouteType(registered.serverUrl) });
+      this.setState({
+        activeServerUrl: registered.serverUrl,
+        pairUrl: this.mobileAccessEnabled ? publicPairUrl(registered.pairUrl) : null,
+        routeType: remoteRouteType(registered.serverUrl)
+      });
       await this.openSocket(generation);
       return;
     } catch (error) {
@@ -205,7 +211,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     serverUrl: string,
     delayMs: number,
     signal: AbortSignal
-  ): Promise<{ serverUrl: string; roomName: string; roomNameRevision: number }> {
+  ): Promise<{ serverUrl: string; roomName: string; roomNameRevision: number; pairUrl: string | null }> {
     if (delayMs > 0) await abortableDelay(delayMs, signal);
     const timeout = serverUrl === LAN_REMOTE_SERVER_URL ? LAN_CONNECT_TIMEOUT_MS : PUBLIC_CONNECT_TIMEOUT_MS;
     const { session } = await import('electron');
@@ -224,7 +230,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         label: hostname(),
         roomName: this.roomName,
         roomNameRevision: this.roomNameRevision,
-        mobileAccessEnabled: false,
+        mobileAccessEnabled: this.mobileAccessEnabled,
         monitoringIdentityRevision: 1,
         appVersion: this.appVersion,
         platform: this.platform,
@@ -234,14 +240,15 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)])
     });
     const body = await response.json() as {
-      device?: { uuid?: string; roomName?: string; roomNameRevision?: number };
+      device?: { uuid?: string; roomName?: string; roomNameRevision?: number; pairUrl?: string | null };
       error?: string;
     };
     if (!response.ok || !body.device?.uuid) throw new Error(body.error || `服务器返回 ${response.status}`);
     return {
       serverUrl,
       roomName: body.device.roomName ?? this.roomName,
-      roomNameRevision: normalizedRevision(body.device.roomNameRevision)
+      roomNameRevision: normalizedRevision(body.device.roomNameRevision),
+      pairUrl: body.device.pairUrl ?? null
     };
   }
 
@@ -284,7 +291,10 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
         };
         if (message.type === 'registered') {
           this.applyServerRoomName(message.roomName, message.roomNameRevision);
-          this.setState({ pairUrl: null, onlineMobileClients: 0 });
+          this.setState({
+            pairUrl: this.mobileAccessEnabled ? publicPairUrl(message.pairUrl ?? null) : null,
+            onlineMobileClients: Math.max(0, Number(message.onlineMobileClients) || 0)
+          });
         } else if (message.type === 'device-config') {
           this.applyServerRoomName(message.roomName, message.roomNameRevision);
         } else if (message.type === 'presence') {

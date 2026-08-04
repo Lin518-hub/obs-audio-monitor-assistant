@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#eaf6ee">
   <title>直播间监控中心</title>
-  <link rel="stylesheet" href="/assets/app.css?v=3.9.4">
+  <link rel="stylesheet" href="/assets/app.css?v=3.9.6">
   <link rel="stylesheet" href="/assets/monitor-name.css?v=3.9.4">
 </head>
 <body class="monitor-page">
@@ -29,6 +29,7 @@
       </div>
       <div class="monitor-top-actions">
         <span id="monitor-updated-at" class="monitor-updated-at">正在同步</span>
+        <button id="monitor-notification-settings-button" class="secondary touch-button">通知设置</button>
         <button id="refresh-monitor" class="secondary touch-button">刷新</button>
         <a class="secondary touch-button monitor-admin-link" href="/admin">管理后台</a>
       </div>
@@ -38,7 +39,7 @@
       <section class="monitor-heading">
         <div><span class="eyebrow">集中监控</span><h1>当前直播状态</h1><p>异常优先显示；电脑端、更新缓存和通知服务统一汇总。</p></div>
         <div class="monitor-heading-status">
-          <span id="monitor-notify-chip" class="state-pill offline">企业微信未配置</span>
+          <button id="monitor-notify-chip" type="button" class="state-pill offline monitor-notify-chip">企业微信未配置</button>
           <span id="monitor-service-chip" class="state-pill offline">服务连接中</span>
         </div>
       </section>
@@ -84,6 +85,69 @@
     <footer id="monitor-device-actions" class="monitor-device-actions"></footer>
   </aside>
 
+  <div id="monitor-notification-settings" class="monitor-settings-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-notification-settings-title">
+    <article class="monitor-settings-card">
+      <header class="monitor-settings-header">
+        <div>
+          <span class="eyebrow">企业微信机器人</span>
+          <h2 id="monitor-notification-settings-title">通知设置</h2>
+          <p>仅调整企业微信推送，电脑端报警和监控中心状态不受影响。</p>
+        </div>
+        <button id="monitor-notification-settings-close" type="button" class="monitor-icon-button" aria-label="关闭通知设置">×</button>
+      </header>
+
+      <form id="monitor-notification-settings-form" class="monitor-settings-form">
+        <label class="monitor-settings-master">
+          <span><strong>启用企业微信通知</strong><small id="monitor-notification-configured-hint">服务器机器人配置状态</small></span>
+          <input id="monitor-notification-enabled" type="checkbox" class="monitor-switch-input">
+          <i class="monitor-switch" aria-hidden="true"></i>
+        </label>
+
+        <div id="monitor-notification-options" class="monitor-settings-options">
+          <section class="monitor-settings-row">
+            <label class="monitor-settings-toggle">
+              <input id="monitor-notification-audio-enabled" type="checkbox" class="monitor-switch-input">
+              <i class="monitor-switch" aria-hidden="true"></i>
+              <span><strong>音频静音通知</strong><small>持续静音达到设定时间后推送</small></span>
+            </label>
+            <label class="monitor-number-field">
+              <span>推送时间</span>
+              <span class="monitor-number-control"><input id="monitor-notification-audio-seconds" type="number" min="30" max="1800" step="10" inputmode="numeric"><b>秒</b></span>
+              <small>30–1800 秒，默认 120 秒</small>
+            </label>
+          </section>
+
+          <section class="monitor-settings-row">
+            <label class="monitor-settings-toggle">
+              <input id="monitor-notification-camera-enabled" type="checkbox" class="monitor-switch-input">
+              <i class="monitor-switch" aria-hidden="true"></i>
+              <span><strong>机位停留通知</strong><small>非出镜机位停留达到设定时间后推送</small></span>
+            </label>
+            <label class="monitor-number-field">
+              <span>推送时间</span>
+              <span class="monitor-number-control"><input id="monitor-notification-camera-minutes" type="number" min="1" max="60" step="1" inputmode="numeric"><b>分钟</b></span>
+              <small>1–60 分钟，默认 10 分钟</small>
+            </label>
+          </section>
+
+          <label class="monitor-settings-recovery">
+            <span><strong>发送恢复通知</strong><small>声音恢复或机位切换后发送一条简短恢复消息</small></span>
+            <input id="monitor-notification-recovery-enabled" type="checkbox" class="monitor-switch-input">
+            <i class="monitor-switch" aria-hidden="true"></i>
+          </label>
+        </div>
+
+        <p id="monitor-notification-settings-error" class="form-error monitor-settings-error"></p>
+        <footer class="monitor-settings-footer">
+          <button id="monitor-notification-settings-reset" type="button" class="monitor-reset-button">恢复默认</button>
+          <span id="monitor-notification-settings-saved" class="monitor-settings-saved"></span>
+          <button id="monitor-notification-settings-cancel" type="button" class="secondary touch-button">取消</button>
+          <button id="monitor-notification-settings-save" type="submit" class="primary touch-button">应用设置</button>
+        </footer>
+      </form>
+    </article>
+  </div>
+
   <div id="monitor-confirm" class="monitor-confirm-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-confirm-title">
     <article class="monitor-confirm-card">
       <span class="eyebrow">请确认</span>
@@ -93,6 +157,6 @@
     </article>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/assets/monitor.js?v=3.9.4" defer></script>
+  <script src="/assets/monitor.js?v=3.9.6" defer></script>
 </body>
 </html>

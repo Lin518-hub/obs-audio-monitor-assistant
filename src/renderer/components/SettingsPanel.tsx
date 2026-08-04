@@ -9,6 +9,7 @@ import {
   Info,
   Mic2,
   Monitor,
+  Smartphone,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
@@ -31,6 +32,7 @@ import {
   DisplaySection,
   FloatingWindowSection,
   HistorySection,
+  MobileAccessSection,
   RemoteAccessSection,
   RulesSection,
   UpdatesSection
@@ -415,6 +417,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 >
                   <RemoteAccessSection draft={draft} onChange={onChangeDraft} />
                 </SettingsDisclosure>
+                {draft.developerModeEnabled && (
+                  <SettingsDisclosure
+                    {...disclosureState('devices-mobile')}
+                    icon={Smartphone}
+                    title="手机监看"
+                    description="扫码审批、移动监看与音频画中画"
+                    summary={draft.remoteAccessEnabled
+                      ? snapshot.remoteAccessConnected
+                        ? `已启用 · ${snapshot.remoteAccessOnlineMobileClients} 台在线`
+                        : '已启用 · 等待服务'
+                      : '开发者功能 · 未启用'}
+                    tone={draft.remoteAccessEnabled
+                      ? snapshot.remoteAccessConnected ? 'success' : 'warning'
+                      : 'default'}
+                  >
+                    <MobileAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
+                  </SettingsDisclosure>
+                )}
               </>
             )}
 
