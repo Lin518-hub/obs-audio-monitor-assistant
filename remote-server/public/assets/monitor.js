@@ -6,6 +6,7 @@ let activeFilter = 'all';
 let searchText = '';
 let selectedDeviceUuid = null;
 let pendingConfirmedAction = null;
+let accessOverview = { requests: [], approvals: [] };
 
 const api = async (path, options = {}) => {
   const controller = new AbortController();
@@ -41,6 +42,8 @@ function showDashboard() {
 
 function showLogin() {
   closeDrawer();
+  closeManagementPanel('monitor-access-management');
+  closeManagementPanel('monitor-update-management');
   if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
   $('monitor-dashboard').classList.add('hidden');
   $('monitor-login').classList.remove('hidden');
@@ -91,7 +94,7 @@ function scheduleRefresh() {
 }
 
 function render() {
-  const { summary, rooms, generatedAt, notifications, updates, commands } = overview;
+  const { summary, rooms, generatedAt, notifications, updates, access, commands } = overview;
   $('monitor-updated-at').textContent = `更新于 ${relativeTime(generatedAt)}`;
   $('monitor-service-chip').className = 'state-pill';
   $('monitor-service-chip').textContent = summary.onlineRooms > 0 ? `${summary.onlineRooms} 个直播间在线` : '暂无直播间在线';
@@ -114,6 +117,13 @@ function render() {
       : '机位关闭';
     $('monitor-notify-chip').title = `${audioSummary} · ${cameraSummary}`;
   }
+  const pendingAccess = Number(access?.pendingRequests) || 0;
+  $('monitor-access-badge').textContent = String(pendingAccess);
+  $('monitor-access-badge').classList.toggle('hidden', pendingAccess === 0);
+  $('monitor-access-button').classList.toggle('monitor-attention-button', pendingAccess > 0);
+  $('monitor-access-button').title = pendingAccess > 0
+    ? `${pendingAccess} 个手机访问申请待处理`
+    : `${Number(access?.activeApprovals) || 0} 个已授权设备`;
   renderSummary(summary, updates);
   renderRooms(rooms);
   renderCommandLog(commands?.recent || []);
@@ -317,6 +327,248 @@ function closeDrawer() {
     backdrop?.classList.add('hidden');
     drawer?.classList.add('hidden');
   }, 220);
+}
+
+function openManagementPanel(id) {
+  const panel = $(id);
+  panel.classList.remove('hidden');
+  requestAnimationFrame(() => panel.classList.add('visible'));
+}
+
+function closeManagementPanel(id) {
+  const panel = $(id);
+  if (!panel || panel.classList.contains('hidden')) return;
+  panel.classList.remove('visible');
+  setTimeout(() => panel.classList.add('hidden'), 200);
+}
+
+async function openAccessManagement() {
+  openManagementPanel('monitor-access-management');
+  renderManagementLoading('monitor-access-requests', '正在读取待审批申请…');
+  renderManagementLoading('monitor-access-approvals', '正在读取已授权设备…');
+  await refreshAccessManagement();
+}
+
+async function refreshAccessManagement() {
+  try {
+    accessOverview = await api('/api/admin/overview');
+    renderAccessManagement();
+  } catch (error) {
+    if (error.message === 'admin_auth_required') return showLogin();
+    renderManagementLoading('monitor-access-requests', '访问申请读取失败。');
+    renderManagementLoading('monitor-access-approvals', '授权设备读取失败。');
+    toast(error.message);
+  }
+}
+
+function renderAccessManagement() {
+  const requests = accessOverview.requests || [];
+  const approvals = accessOverview.approvals || [];
+  $('monitor-access-request-count').textContent = `${requests.length} 个`;
+  $('monitor-access-request-count').className = `state-pill ${requests.length ? 'warning' : 'offline'}`;
+  $('monitor-access-approval-count').textContent = `${approvals.length} 个`;
+  $('monitor-access-approval-count').className = `state-pill ${approvals.length ? '' : 'offline'}`;
+  renderManagementList(
+    'monitor-access-requests',
+    requests,
+    (request) => managementItem(
+      `${request.roomName || '未命名直播间'} · ${request.clientName || '未命名手机'}`,
+      `${request.deviceLabel || request.deviceUuid} · 申请于 ${relativeTime(request.createdAt)}`,
+      [
+        managementAction('拒绝', 'danger-action', () => decideAccessRequest(request.id, 'reject')),
+        managementAction('通过', 'primary-action', () => decideAccessRequest(request.id, 'approve'))
+      ]
+    ),
+    '暂无待审批申请。请先在客户端开发者模式中开启手机监看，再扫码提交申请。'
+  );
+  renderManagementList(
+    'monitor-access-approvals',
+    approvals,
+    (approval) => managementItem(
+      `${approval.roomName || '未命名直播间'} · ${approval.clientName || '未命名手机'}`,
+      `${approval.deviceLabel || approval.deviceUuid} · ${approval.lastUsedAt ? `最近访问 ${relativeTime(approval.lastUsedAt)}` : '尚未建立连接'}`,
+      [managementAction('撤销授权', 'danger-action', () => revokeAccessApproval(approval.id))]
+    ),
+    '暂无已授权的手机或平板。'
+  );
+}
+
+async function decideAccessRequest(requestId, decision) {
+  try {
+    await api(`/api/admin/requests/${encodeURIComponent(requestId)}/${decision}`, { method: 'POST' });
+    toast(decision === 'approve' ? '已通过手机访问申请' : '已拒绝手机访问申请');
+    await Promise.all([refreshAccessManagement(), refresh()]);
+  } catch (error) {
+    toast(error.message === 'request_not_found' ? '该申请已被处理' : error.message);
+    await refreshAccessManagement();
+  }
+}
+
+async function revokeAccessApproval(approvalId) {
+  try {
+    await api(`/api/admin/approvals/${encodeURIComponent(approvalId)}`, { method: 'DELETE' });
+    toast('已撤销手机访问权限');
+    await Promise.all([refreshAccessManagement(), refresh()]);
+  } catch (error) {
+    toast(error.message === 'approval_not_found' ? '该授权已被撤销' : error.message);
+    await refreshAccessManagement();
+  }
+}
+
+async function openUpdateManagement() {
+  openManagementPanel('monitor-update-management');
+  renderManagementLoading('monitor-update-files-list', '正在读取缓存文件…');
+  await refreshUpdateManagement();
+}
+
+async function refreshUpdateManagement() {
+  try {
+    const result = await api('/api/admin/updates');
+    renderUpdateSync(result.sync || {});
+    renderManagementList(
+      'monitor-update-files-list',
+      result.files || [],
+      (file) => managementItem(
+        file.name,
+        `${formatBytes(file.size)} · 更新于 ${relativeTime(file.updatedAt)}`,
+        [managementAction('删除', 'danger-action', () => confirmDeleteUpdate(file.name))],
+        'monitor-update-file-name'
+      ),
+      '缓存目录暂时为空。自动同步完成后，客户端仍使用原有更新地址下载。'
+    );
+  } catch (error) {
+    if (error.message === 'admin_auth_required') return showLogin();
+    renderManagementLoading('monitor-update-files-list', '更新缓存读取失败。');
+    toast(error.message);
+  }
+}
+
+function renderUpdateSync(sync = {}) {
+  const labels = {
+    idle: '等待首次同步',
+    syncing: '正在从更新源下载并校验',
+    ready: `已缓存 v${sync.version || '--'}`,
+    error: '自动同步失败',
+    disabled: '自动同步已关闭'
+  };
+  const details = [];
+  if (sync.source) details.push(sync.source);
+  if (sync.lastSuccessAt) details.push(`完成于 ${relativeTime(sync.lastSuccessAt)}`);
+  if (sync.error) details.push(sync.error);
+  $('monitor-update-sync-copy').textContent = `${labels[sync.status] || '状态未知'}${details.length ? ` · ${details.join(' · ')}` : ''}`;
+  $('monitor-sync-updates').disabled = sync.status === 'syncing';
+  $('monitor-sync-updates').textContent = sync.status === 'syncing' ? '同步中…' : '立即同步';
+}
+
+async function syncUpdatesNow() {
+  const button = $('monitor-sync-updates');
+  button.disabled = true;
+  button.textContent = '同步中…';
+  try {
+    const result = await api('/api/admin/updates/sync', { method: 'POST' });
+    toast(result.sync?.version ? `已缓存 v${result.sync.version}` : '更新缓存已同步');
+  } catch (error) {
+    toast(error.payload?.message || error.message);
+  } finally {
+    await refreshUpdateManagement();
+    await refresh();
+  }
+}
+
+function confirmDeleteUpdate(filename) {
+  showConfirmation(
+    () => void deleteUpdateFile(filename),
+    { title: '删除更新文件', copy: `确定删除 ${filename} 吗？删除后客户端可能无法从内部服务器下载对应版本。`, accept: '确认删除' }
+  );
+}
+
+async function deleteUpdateFile(filename) {
+  try {
+    await api(`/api/admin/updates/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    toast('更新文件已删除');
+    await refreshUpdateManagement();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function uploadUpdateFiles(event) {
+  const files = Array.from(event.currentTarget.files || []);
+  if (!files.length) return;
+  const progress = $('monitor-upload-progress');
+  const bar = progress.querySelector('i');
+  const copy = progress.querySelector('span');
+  progress.classList.remove('hidden');
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    copy.textContent = `正在上传 ${file.name} (${index + 1}/${files.length})`;
+    bar.style.width = `${Math.round(index / files.length * 100)}%`;
+    try {
+      const response = await fetch(`/api/admin/updates/${encodeURIComponent(file.name)}`, { method: 'PUT', body: file });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '上传失败');
+    } catch (error) {
+      toast(error.message);
+      break;
+    }
+  }
+  bar.style.width = '100%';
+  copy.textContent = '上传完成';
+  setTimeout(() => progress.classList.add('hidden'), 700);
+  event.currentTarget.value = '';
+  await refreshUpdateManagement();
+}
+
+function renderManagementList(id, items, renderItem, emptyCopy) {
+  const root = $(id);
+  root.replaceChildren();
+  if (!items.length) {
+    renderManagementLoading(id, emptyCopy);
+    return;
+  }
+  root.append(...items.map(renderItem));
+}
+
+function renderManagementLoading(id, copy) {
+  const empty = document.createElement('div');
+  empty.className = 'monitor-management-empty';
+  empty.textContent = copy;
+  $(id).replaceChildren(empty);
+}
+
+function managementItem(titleText, detailText, actions = [], titleClass = '') {
+  const item = document.createElement('article');
+  item.className = 'monitor-management-item';
+  const copy = document.createElement('div');
+  copy.className = 'monitor-management-copy';
+  const title = document.createElement('strong');
+  title.className = titleClass;
+  title.textContent = titleText;
+  const detail = document.createElement('span');
+  detail.textContent = detailText;
+  copy.append(title, detail);
+  const actionRoot = document.createElement('div');
+  actionRoot.className = 'monitor-management-actions';
+  actionRoot.append(...actions);
+  item.append(copy, actionRoot);
+  return item;
+}
+
+function managementAction(label, className, handler) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `monitor-management-action ${className}`;
+  button.textContent = label;
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try { await handler(); } finally { button.disabled = false; }
+  });
+  return button;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB`;
 }
 
 function openNotificationSettings() {
@@ -645,8 +897,11 @@ async function sendWeComTest(deviceUuid) {
   }
 }
 
-function showConfirmation(action) {
+function showConfirmation(action, options = {}) {
   pendingConfirmedAction = action;
+  $('monitor-confirm-title').textContent = options.title || '暂停检测';
+  $('monitor-confirm-copy').textContent = options.copy || '暂停后电脑仍保持在线，但不会触发音频报警。';
+  $('monitor-confirm-accept').textContent = options.accept || '确认暂停';
   $('monitor-confirm').classList.remove('hidden');
   requestAnimationFrame(() => $('monitor-confirm').classList.add('visible'));
 }
@@ -805,6 +1060,18 @@ $('monitor-filter').addEventListener('click', (event) => {
 });
 $('monitor-device-close').addEventListener('click', closeDrawer);
 $('monitor-drawer-backdrop').addEventListener('click', closeDrawer);
+$('monitor-access-button').addEventListener('click', () => void openAccessManagement());
+$('monitor-access-close').addEventListener('click', () => closeManagementPanel('monitor-access-management'));
+$('monitor-access-management').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeManagementPanel('monitor-access-management');
+});
+$('monitor-updates-button').addEventListener('click', () => void openUpdateManagement());
+$('monitor-update-close').addEventListener('click', () => closeManagementPanel('monitor-update-management'));
+$('monitor-update-management').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeManagementPanel('monitor-update-management');
+});
+$('monitor-sync-updates').addEventListener('click', () => void syncUpdatesNow());
+$('monitor-update-files').addEventListener('change', (event) => void uploadUpdateFiles(event));
 $('monitor-notification-settings-button').addEventListener('click', openNotificationSettings);
 $('monitor-notify-chip').addEventListener('click', openNotificationSettings);
 $('monitor-notification-settings-close').addEventListener('click', closeNotificationSettings);
@@ -826,6 +1093,8 @@ $('monitor-confirm-accept').addEventListener('click', () => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     if (!$('monitor-confirm').classList.contains('hidden')) closeConfirmation();
+    else if (!$('monitor-access-management').classList.contains('hidden')) closeManagementPanel('monitor-access-management');
+    else if (!$('monitor-update-management').classList.contains('hidden')) closeManagementPanel('monitor-update-management');
     else if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
     else closeDrawer();
   }

@@ -508,6 +508,10 @@ function monitorOverview() {
     },
     notifications: notificationStatus(),
     updates: publicUpdateCacheStatus(),
+    access: {
+      pendingRequests: data.requests.filter((item) => item.status === 'pending').length,
+      activeApprovals: data.approvals.filter((item) => !item.revokedAt).length
+    },
     commands: {
       available: Object.entries(REMOTE_ADMIN_COMMAND_LABELS).map(([id, label]) => ({ id, label })),
       recent: data.commands.slice(-50).reverse().map(publicCommand)
@@ -1212,10 +1216,9 @@ const requestListener = async (req, res) => {
       notifications: notificationStatus()
     });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
-    if (url.pathname === '/') return redirect(res, '/admin');
-    if (url.pathname === '/admin/') return redirect(res, '/admin');
+    if (url.pathname === '/') return redirect(res, '/monitor');
+    if (url.pathname === '/admin/' || url.pathname === '/admin') return redirect(res, '/monitor');
     if (url.pathname === '/monitor/') return redirect(res, '/monitor');
-    if (url.pathname === '/admin') return serveFile(req, res, join(publicDir, 'admin.html'));
     if (url.pathname === '/monitor') return serveFile(req, res, join(publicDir, 'monitor.html'));
     if (url.pathname === '/remote' || url.pathname.startsWith('/pair/')) return serveFile(req, res, join(publicDir, 'mobile.html'));
     if (url.pathname.startsWith('/assets/')) {

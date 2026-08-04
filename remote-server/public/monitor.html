@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#eaf6ee">
   <title>直播间监控中心</title>
-  <link rel="stylesheet" href="/assets/app.css?v=3.9.6">
+  <link rel="stylesheet" href="/assets/app.css?v=monitor-console-1">
   <link rel="stylesheet" href="/assets/monitor-name.css?v=3.9.4">
 </head>
 <body class="monitor-page">
@@ -29,9 +29,10 @@
       </div>
       <div class="monitor-top-actions">
         <span id="monitor-updated-at" class="monitor-updated-at">正在同步</span>
+        <button id="monitor-access-button" class="secondary touch-button monitor-badge-button">访问审批<span id="monitor-access-badge" class="monitor-access-badge hidden">0</span></button>
+        <button id="monitor-updates-button" class="secondary touch-button">更新管理</button>
         <button id="monitor-notification-settings-button" class="secondary touch-button">通知设置</button>
         <button id="refresh-monitor" class="secondary touch-button">刷新</button>
-        <a class="secondary touch-button monitor-admin-link" href="/admin">管理后台</a>
       </div>
     </header>
 
@@ -84,6 +85,52 @@
     <div id="monitor-device-detail" class="monitor-device-detail"></div>
     <footer id="monitor-device-actions" class="monitor-device-actions"></footer>
   </aside>
+
+  <div id="monitor-access-management" class="monitor-settings-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-access-title">
+    <article class="monitor-settings-card monitor-management-card">
+      <header class="monitor-settings-header">
+        <div>
+          <span class="eyebrow">手机监看</span>
+          <h2 id="monitor-access-title">访问审批</h2>
+          <p>审批首次扫码的手机或平板，并可随时撤销已授权设备。</p>
+        </div>
+        <button id="monitor-access-close" type="button" class="monitor-icon-button" aria-label="关闭访问审批">×</button>
+      </header>
+      <div class="monitor-management-body">
+        <section class="monitor-management-section">
+          <header><div><h3>待审批申请</h3><p>只有通过后，扫码设备才能进入监看页面。</p></div><span id="monitor-access-request-count" class="state-pill offline">0 个</span></header>
+          <div id="monitor-access-requests" class="monitor-management-list"></div>
+        </section>
+        <section class="monitor-management-section">
+          <header><div><h3>已授权设备</h3><p>撤销后，对应手机会立即退出实时监看。</p></div><span id="monitor-access-approval-count" class="state-pill offline">0 个</span></header>
+          <div id="monitor-access-approvals" class="monitor-management-list"></div>
+        </section>
+      </div>
+    </article>
+  </div>
+
+  <div id="monitor-update-management" class="monitor-settings-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-update-title">
+    <article class="monitor-settings-card monitor-management-card">
+      <header class="monitor-settings-header">
+        <div>
+          <span class="eyebrow">内部更新缓存</span>
+          <h2 id="monitor-update-title">更新管理</h2>
+          <p>更新地址与客户端协议保持不变，这里只管理服务器预下载缓存。</p>
+        </div>
+        <button id="monitor-update-close" type="button" class="monitor-icon-button" aria-label="关闭更新管理">×</button>
+      </header>
+      <div class="monitor-management-body">
+        <section class="monitor-management-section monitor-update-status">
+          <header><div><h3>自动同步</h3><p id="monitor-update-sync-copy">正在读取更新缓存状态…</p></div><button id="monitor-sync-updates" type="button" class="secondary touch-button">立即同步</button></header>
+        </section>
+        <section class="monitor-management-section">
+          <header><div><h3>缓存文件</h3><p>通常无需手动操作；仅在自动同步失败时补充安装包、blockmap 或更新描述。</p></div><label class="secondary touch-button monitor-file-button">选择文件<input id="monitor-update-files" type="file" multiple></label></header>
+          <div id="monitor-upload-progress" class="monitor-upload-progress hidden"><i></i><span>正在上传</span></div>
+          <div id="monitor-update-files-list" class="monitor-management-list"></div>
+        </section>
+      </div>
+    </article>
+  </div>
 
   <div id="monitor-notification-settings" class="monitor-settings-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="monitor-notification-settings-title">
     <article class="monitor-settings-card">
@@ -157,6 +204,6 @@
     </article>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script src="/assets/monitor.js?v=3.9.6" defer></script>
+  <script src="/assets/monitor.js?v=monitor-console-1" defer></script>
 </body>
 </html>

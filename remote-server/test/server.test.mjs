@@ -108,6 +108,22 @@ test('keeps the reserved complaint route and strips its public prefix', async ()
   assert.equal(body.forwardedHost, `127.0.0.1:${port}`);
 });
 
+test('uses the monitor center as the only management frontend', async () => {
+  for (const path of ['/', '/admin', '/admin/']) {
+    const response = await fetch(`${base}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/monitor');
+  }
+  const response = await fetch(`${base}/monitor`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /monitor-access-management/);
+  assert.match(html, /monitor-update-management/);
+  assert.match(html, /访问审批/);
+  assert.match(html, /更新管理/);
+  assert.doesNotMatch(html, /href="\/admin"/);
+});
+
 test('keeps mobile pairing opt-in and one monitoring identity per room', async () => {
   const uuid = '11111111-1111-4111-8111-111111111111';
   const registered = await request('/api/devices/register', {
@@ -175,6 +191,29 @@ test('keeps mobile pairing opt-in and one monitoring identity per room', async (
   const overview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
   assert.equal(overview.body.requests.length, 1);
   assert.deepEqual(overview.body.approvals, []);
+
+  const approved = await request(`/api/admin/requests/${pairRequest.body.request.id}/approve`, {
+    method: 'POST',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(approved.response.status, 200);
+  assert.equal(approved.body.request.status, 'approved');
+  const approvedPoll = await request(`/api/pair/request/${pairRequest.body.request.id}?clientId=33333333-3333-4333-8333-333333333333`);
+  assert.equal(approvedPoll.body.request.status, 'approved');
+  assert.equal(typeof approvedPoll.body.accessToken, 'string');
+  const mobileSession = await request(`/api/mobile/session?token=${encodeURIComponent(approvedPoll.body.accessToken)}`);
+  assert.equal(mobileSession.response.status, 200);
+  assert.equal(mobileSession.body.device.uuid, uuid);
+  const approvedOverview = await request('/api/admin/overview', { headers: { Cookie: cookie } });
+  assert.equal(approvedOverview.body.requests.length, 0);
+  assert.equal(approvedOverview.body.approvals.length, 1);
+  const revoked = await request(`/api/admin/approvals/${approvedOverview.body.approvals[0].id}`, {
+    method: 'DELETE',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(revoked.response.status, 200);
+  const revokedSession = await request(`/api/mobile/session?token=${encodeURIComponent(approvedPoll.body.accessToken)}`);
+  assert.equal(revokedSession.response.status, 403);
 
   const replacementUuid = '22222222-2222-4222-8222-222222222222';
   const replacement = await request('/api/devices/register', {
@@ -274,6 +313,8 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(room.devices[0].audio.silenceDurationSeconds, 120);
   assert.equal(room.devices[0].audio.dangerProgress, 1);
   assert.equal(monitor.body.summary.onlineDevices >= 2, true);
+  assert.equal(Number.isInteger(monitor.body.access.pendingRequests), true);
+  assert.equal(Number.isInteger(monitor.body.access.activeApprovals), true);
   const backupRoom = monitor.body.rooms.find((item) => item.name === '品牌二号直播间');
   assert.equal(backupRoom.devices[0].audio.ready, true);
   assert.equal(backupRoom.devices[0].audio.display, '正在讲话');
