@@ -10,8 +10,6 @@ export interface MonitorRuntimeState {
   silentSince: number | null;
   alertVisible: boolean;
   preAlertDismissedSilentSince: number | null;
-  snoozedUntil: number | null;
-  ignoredUntilAudioReturns: boolean;
 }
 
 export const initialRuntimeState: MonitorRuntimeState = {
@@ -22,9 +20,7 @@ export const initialRuntimeState: MonitorRuntimeState = {
   lastLevelDb: null,
   silentSince: null,
   alertVisible: false,
-  preAlertDismissedSilentSince: null,
-  snoozedUntil: null,
-  ignoredUntilAudioReturns: false
+  preAlertDismissedSilentSince: null
 };
 
 export function deriveStatus(state: MonitorRuntimeState, config: AppConfig, now: number): MonitorStatus {
@@ -34,14 +30,6 @@ export function deriveStatus(state: MonitorRuntimeState, config: AppConfig, now:
 
   if (!state.connected) {
     return 'disconnected';
-  }
-
-  if (state.snoozedUntil !== null && state.snoozedUntil > now) {
-    return 'snoozed';
-  }
-
-  if (state.ignoredUntilAudioReturns) {
-    return 'ignored_until_audio_returns';
   }
 
   if (!state.streaming && !state.recording) {
@@ -119,8 +107,7 @@ export function reduceAudioLevel(
   const canMonitor =
     next.connected &&
     !config.paused &&
-    (next.streaming || next.recording) &&
-    !(next.snoozedUntil !== null && next.snoozedUntil > now);
+    (next.streaming || next.recording);
 
   if (!canMonitor) {
     return {
@@ -135,8 +122,7 @@ export function reduceAudioLevel(
       ...next,
       silentSince: null,
       alertVisible: false,
-      preAlertDismissedSilentSince: null,
-      ignoredUntilAudioReturns: false
+      preAlertDismissedSilentSince: null
     };
     return {
       ...next,
@@ -144,7 +130,7 @@ export function reduceAudioLevel(
     };
   }
 
-  if (next.ignoredUntilAudioReturns || next.alertVisible) {
+  if (next.alertVisible) {
     return {
       ...next,
       status: deriveStatus(next, config, now)
@@ -179,8 +165,7 @@ export function reduceOutputState(
     recording,
     silentSince: shouldReset ? null : state.silentSince,
     alertVisible: shouldReset ? false : state.alertVisible,
-    preAlertDismissedSilentSince: shouldReset ? null : state.preAlertDismissedSilentSince,
-    ignoredUntilAudioReturns: shouldReset ? false : state.ignoredUntilAudioReturns
+    preAlertDismissedSilentSince: shouldReset ? null : state.preAlertDismissedSilentSince
   };
 
   return {
@@ -192,37 +177,15 @@ export function reduceOutputState(
 export function reduceAlertAction(
   state: MonitorRuntimeState,
   config: AppConfig,
-  action: AlertAction,
+  _action: AlertAction,
   now: number
 ): MonitorRuntimeState {
-  let next: MonitorRuntimeState;
-
-  if (action === 'snooze_10m') {
-    next = {
-      ...state,
-      alertVisible: false,
-      silentSince: null,
-      preAlertDismissedSilentSince: null,
-      snoozedUntil: now + 10 * 60 * 1000,
-      ignoredUntilAudioReturns: false
-    };
-  } else if (action === 'ignore_once') {
-    next = {
-      ...state,
-      alertVisible: false,
-      silentSince: null,
-      preAlertDismissedSilentSince: null,
-      snoozedUntil: now + 5 * 60 * 1000,
-      ignoredUntilAudioReturns: false
-    };
-  } else {
-    next = {
-      ...state,
-      alertVisible: false,
-      silentSince: null,
-      preAlertDismissedSilentSince: null
-    };
-  }
+  const next: MonitorRuntimeState = {
+    ...state,
+    alertVisible: false,
+    silentSince: null,
+    preAlertDismissedSilentSince: null
+  };
 
   return {
     ...next,

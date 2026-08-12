@@ -141,7 +141,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       activePreAlertSource: preAlertVisible ? 'audio' : null,
       preAlertRemainingSeconds: preAlertVisible ? preAlertRemainingSeconds(this.state, this.config, now) : null,
       preAlertDismissed: this.state.silentSince !== null && this.state.preAlertDismissedSilentSince === this.state.silentSince,
-      snoozedUntil: this.state.snoozedUntil,
       history: this.history,
       silenceEvents: this.silenceEvents,
       inputMonitors: this.getInputMonitorSnapshots(now),
@@ -273,9 +272,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       lastLevelDb: null,
       silentSince: null,
       alertVisible: false,
-      preAlertDismissedSilentSince: null,
-      snoozedUntil: null,
-      ignoredUntilAudioReturns: false
+      preAlertDismissedSilentSince: null
     };
     this.state = {
       ...resetState,
@@ -423,8 +420,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       silentSince: now - this.config.silenceDurationSeconds * 1000,
       alertVisible: true,
       preAlertDismissedSilentSince: null,
-      snoozedUntil: null,
-      ignoredUntilAudioReturns: false,
       status: 'alerting'
     };
     const snapshot = this.getSnapshot(now);
@@ -559,8 +554,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         lastLevelDb: null,
         silentSince: null,
         alertVisible: false,
-        preAlertDismissedSilentSince: null,
-        ignoredUntilAudioReturns: false
+        preAlertDismissedSilentSince: null
       };
       this.state = {
         ...next,
@@ -677,8 +671,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private unavailableState(status: 'connecting' | 'disconnected'): MonitorRuntimeState {
     return {
       ...initialRuntimeState,
-      status,
-      snoozedUntil: this.state.snoozedUntil
+      status
     };
   }
 
@@ -714,13 +707,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     this.tickTimer = setInterval(() => {
       const now = Date.now();
-      if (this.state.snoozedUntil !== null && this.state.snoozedUntil <= now) {
-        this.state = {
-          ...this.state,
-          snoozedUntil: null,
-          preAlertDismissedSilentSince: null
-        };
-      }
       if (this.lastTargetMeterAt !== null && now - this.lastTargetMeterAt > 5000 && !this.state.alertVisible) {
         this.state = {
           ...this.state,
@@ -797,10 +783,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     if (!this.state.connected) {
       return this.state.status === 'connecting' ? 'obs_connecting' : 'obs_disconnected';
-    }
-
-    if (this.state.snoozedUntil !== null && this.state.snoozedUntil > now) {
-      return 'snoozed';
     }
 
     if (this.state.alertVisible) {
@@ -925,8 +907,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const canMonitor =
       this.state.connected &&
       !this.config.paused &&
-      (this.state.streaming || this.state.recording) &&
-      !(this.state.snoozedUntil !== null && this.state.snoozedUntil > now);
+      (this.state.streaming || this.state.recording);
 
     if (!canMonitor || targets.length === 0) {
       this.state = {
@@ -935,7 +916,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         silentSince: null,
         alertVisible: false,
         preAlertDismissedSilentSince: null,
-        ignoredUntilAudioReturns: false,
         status: deriveStatus(this.state, this.config, now)
       };
       return;
@@ -969,7 +949,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         silentSince: null,
         alertVisible: false,
         preAlertDismissedSilentSince: null,
-        ignoredUntilAudioReturns: false,
         status: deriveStatus(this.state, this.config, now)
       };
       return;

@@ -38,7 +38,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({ snapshot, onClear, sea
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <strong>{entry.silentForSeconds}s</strong>
-                  <div>{entry.action === 'acknowledge' ? '已确认' : '单次忽略'}</div>
+                  <div>{entry.action === 'acknowledge' ? '已确认' : entry.action === 'pause' ? '已暂停检测' : '旧版单次忽略'}</div>
                 </div>
               </div>
             ))}

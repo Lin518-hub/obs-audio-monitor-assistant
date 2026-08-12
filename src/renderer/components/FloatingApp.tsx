@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
 import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppSnapshot } from '../../shared/types';
@@ -30,31 +30,40 @@ export const FloatingApp: React.FC = () => {
   const isMulti = mode === 'multifunction';
   const isAudioAtem = mode === 'audio_atem';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!snapshot) return;
+
     let frame = 0;
+    const stage = stageRef.current;
+    if (!stage) return;
+
     const updateScale = () => {
       const base = isMulti ? MULTI_FLOATING_BASE : isAudioAtem ? AUDIO_ATEM_FLOATING_BASE : AUDIO_FLOATING_BASE;
+      const bounds = stage.getBoundingClientRect();
       // Fixed-ratio modes follow width only. During a native Windows resize the
       // reported height can lag by a frame, which previously caused all text to
       // jump in size before the OS completed the drag.
       const next = isMulti
-        ? Math.min(window.innerWidth / base.width, window.innerHeight / base.height)
-        : window.innerWidth / base.width;
-      const scale = Number.isFinite(next) ? Math.max(0.78, next) : 1;
-      stageRef.current?.style.setProperty('--floating-ui-scale', String(scale));
+        ? Math.min(bounds.width / base.width, bounds.height / base.height)
+        : bounds.width / base.width;
+      const scale = Number.isFinite(next) ? Math.min(2, Math.max(0.78, next)) : 1;
+      stage.style.setProperty('--floating-ui-scale', String(scale));
     };
     const queueScaleUpdate = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(updateScale);
     };
 
+    const observer = new ResizeObserver(queueScaleUpdate);
+    observer.observe(stage);
     updateScale();
     window.addEventListener('resize', queueScaleUpdate);
     return () => {
       cancelAnimationFrame(frame);
+      observer.disconnect();
       window.removeEventListener('resize', queueScaleUpdate);
     };
-  }, [isMulti, isAudioAtem]);
+  }, [snapshot !== null, isMulti, isAudioAtem]);
 
   const toggleTheme = () => {
     setTheme((current) => {

@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
   proxyDirectiveUrl,
   publicPairUrl,
+  recentRuntimeError,
   remoteAudioTelemetry,
   remoteRouteType,
   remoteServerCandidates,
@@ -42,6 +43,55 @@ describe('remote server selection', () => {
     expect(publicPairUrl('https://remote.example.com/pair/example-token')).toBe(
       'https://remote.example.com/pair/example-token'
     );
+  });
+});
+
+describe('remote service reconnect pacing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('backs off repeated reconnects and resets during lifecycle cleanup', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const bridge = new (await import('../src/main/RemoteBridge.js')).RemoteBridge();
+    const internal = bridge as unknown as {
+      enabled: boolean;
+      reconnectAttempt: number;
+      reconnectTimer: NodeJS.Timeout | null;
+      connect: (generation: number) => Promise<void>;
+      scheduleReconnect: (generation: number) => void;
+      clearTimers: () => void;
+    };
+    internal.enabled = true;
+    internal.connect = vi.fn(async () => undefined);
+
+    internal.scheduleReconnect(1);
+    expect(internal.reconnectAttempt).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(internal.connect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(internal.connect).toHaveBeenCalledTimes(1);
+
+    internal.scheduleReconnect(1);
+    expect(internal.reconnectAttempt).toBe(2);
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(internal.connect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(internal.connect).toHaveBeenCalledTimes(2);
+
+    internal.clearTimers();
+    expect(internal.reconnectAttempt).toBe(0);
+    expect(internal.reconnectTimer).toBeNull();
+  });
+});
+
+describe('remote runtime diagnostics', () => {
+  it('stops reporting stale client errors after seven days', () => {
+    const error = { code: 'renderer_gone', source: 'floating', message: 'crashed', occurredAt: 1000, count: 1 };
+    expect(recentRuntimeError(error, 2000)).toEqual(error);
+    expect(recentRuntimeError(error, 1000 + 7 * 24 * 60 * 60 * 1000 + 1)).toBeNull();
   });
 });
 

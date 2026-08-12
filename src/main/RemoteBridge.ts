@@ -5,6 +5,7 @@ import { ProxyAgent } from 'proxy-agent';
 import WebSocket from 'ws';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { AUDIO_ALERT_SECONDS, CAMERA_ALERT_SECONDS, reminderVisualState } from '../shared/reminderTiming.js';
+import { reconnectBackoffDelay } from '../shared/reconnect.js';
 import {
   LAN_REMOTE_SERVER_URL,
   PUBLIC_REMOTE_SERVER_URL,
@@ -14,6 +15,7 @@ import {
   type RemoteAccessSnapshot,
   type RemoteAdminCommand,
   type RemoteAdminCommandResult,
+  type RuntimeErrorSummary,
   type UpdateSnapshot
 } from '../shared/types.js';
 
@@ -32,6 +34,7 @@ const LAN_CONNECT_TIMEOUT_MS = 2500;
 const PUBLIC_CONNECT_TIMEOUT_MS = 8000;
 const PUBLIC_FALLBACK_DELAY_MS = 350;
 const REMOTE_METER_FRESH_MS = 5000;
+const RUNTIME_ERROR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private socket: WebSocket | null = null;
@@ -44,6 +47,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private latestMeterFrame: AudioMeterFrame | null = null;
   private latestSnapshot: AppSnapshot | null = null;
   private latestUpdateSnapshot: UpdateSnapshot | null = null;
+  private latestRuntimeError: RuntimeErrorSummary | null = null;
   private commandHandler: RemoteAdminCommandHandler | null = null;
   private enabled = false;
   private mobileAccessEnabled = false;
@@ -55,6 +59,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
   private uuid = '';
   private secret = '';
   private generation = 0;
+  private reconnectAttempt = 0;
   private readonly appVersion: string;
   private readonly platform = process.platform;
   private readonly architecture = process.arch;
@@ -145,6 +150,11 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   updateUpdateState(snapshot: UpdateSnapshot): void {
     this.latestUpdateSnapshot = snapshot;
+    if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
+  }
+
+  updateRuntimeError(summary: RuntimeErrorSummary | null): void {
+    this.latestRuntimeError = summary ? { ...summary } : null;
     if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
   }
 
@@ -270,6 +280,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
       if (socket !== this.socket || generation !== this.generation) return;
       if (this.socketConnectTimer) clearTimeout(this.socketConnectTimer);
       this.socketConnectTimer = null;
+      this.reconnectAttempt = 0;
       this.setState({ connectionState: 'connected', connected: true, errorMessage: null, lastConnectedAt: Date.now() });
       this.sendState();
       this.startLatencyMonitor();
@@ -340,7 +351,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
           arch: this.architecture,
           osRelease: this.osRelease,
           mobileAccessEnabled: this.mobileAccessEnabled
-        }
+        },
+        this.latestRuntimeError
       )
     });
   }
@@ -404,10 +416,12 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
 
   private scheduleReconnect(generation: number): void {
     if (!this.enabled || this.reconnectTimer) return;
+    this.reconnectAttempt += 1;
+    const delay = reconnectBackoffDelay(this.reconnectAttempt);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       void this.connect(generation);
-    }, 5000);
+    }, delay);
   }
 
   private clearTimers(): void {
@@ -422,6 +436,7 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.socketConnectTimer = null;
     this.latencyTimer = null;
     this.latencyPingSentAt = null;
+    this.reconnectAttempt = 0;
   }
 
   private closeSocket(): void {
@@ -578,9 +593,6 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
   } else if (snapshot.readinessReason === 'paused') {
     display = '检测已暂停';
     hint = '请在电脑端恢复检测';
-  } else if (snapshot.readinessReason === 'snoozed') {
-    display = '暂时忽略';
-    hint = '忽略结束后会自动恢复检测';
   } else if (!hasFreshMeter || snapshot.readinessReason === 'no_target_meter') {
     display = '等待音频数据';
     hint = lastMeterAt === null ? '尚未收到 OBS 电平数据' : '音频电平链路已中断';
@@ -612,8 +624,10 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
 function remoteTelemetry(
   snapshot: AppSnapshot,
   update: UpdateSnapshot | null,
-  identity: { version: string; platform: string; arch: string; osRelease: string; mobileAccessEnabled: boolean }
+  identity: { version: string; platform: string; arch: string; osRelease: string; mobileAccessEnabled: boolean },
+  latestRuntimeError: RuntimeErrorSummary | null = null
 ) {
+  const recentError = recentRuntimeError(latestRuntimeError);
   return {
     timestamp: Date.now(),
     desktopOnline: true,
@@ -666,8 +680,21 @@ function remoteTelemetry(
       latencyMs: snapshot.remoteAccessLatencyMs,
       onlineMobileClients: snapshot.remoteAccessOnlineMobileClients,
       lastSyncAt: snapshot.remoteAccessLastSyncAt
+    },
+    diagnostics: {
+      latestError: recentError
     }
   };
+}
+
+export function recentRuntimeError(
+  summary: RuntimeErrorSummary | null,
+  now = Date.now()
+): RuntimeErrorSummary | null {
+  if (!summary || !Number.isFinite(summary.occurredAt) || now - summary.occurredAt > RUNTIME_ERROR_MAX_AGE_MS) {
+    return null;
+  }
+  return { ...summary };
 }
 
 function isRemoteAdminCommand(value: unknown): value is RemoteAdminCommand {

@@ -107,4 +107,33 @@ describe('preflight window placement', () => {
     expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
     expect(selectMainWindow(windows)?.handle).toBe('main');
   });
+
+  it('recognizes portrait 9:16 projectors commonly used by e-commerce livestreams', () => {
+    const base = { handle: '1', pid: 10, bounds: { x: 0, y: 0, width: 1080, height: 1920 }, windowState: 'normal' as const };
+    expect(isOBSProjectorWindow({ ...base, title: '窗口投影（输出）' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '全屏投影（输出）' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '投影 - 输出' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: 'Projector - Program' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: 'Program' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '节目' })).toBe(true);
+    expect(isOBSProjectorWindow({ ...base, title: '输出' })).toBe(true);
+  });
+
+  it('keeps the portrait projector selected and the OBS main window intact when saving the layout', () => {
+    const windows = [
+      { handle: 'main', pid: 10, title: 'OBS 31.0.0 - Profile: Untitled', bounds: { x: 0, y: 0, width: 1400, height: 800 }, windowState: 'normal' as const },
+      { handle: 'projector', pid: 10, title: 'Program', bounds: { x: 200, y: 0, width: 1080, height: 1920 }, windowState: 'normal' as const }
+    ];
+    expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
+    expect(selectMainWindow(windows)?.handle).toBe('main');
+  });
+
+  it('does not mistake a portrait projector for the main window when the title only says Program', () => {
+    const windows = [
+      { handle: 'main', pid: 10, title: 'OBS 31.0.0 - 配置文件: 默认', bounds: { x: 0, y: 0, width: 1400, height: 800 }, windowState: 'normal' as const },
+      { handle: 'projector', pid: 10, title: '节目', bounds: { x: 100, y: 0, width: 1080, height: 1920 }, windowState: 'normal' as const }
+    ];
+    expect(selectMainWindow(windows)?.handle).toBe('main');
+    expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
+  });
 });

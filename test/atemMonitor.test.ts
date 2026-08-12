@@ -210,7 +210,7 @@ describe('ATEMMonitor connection lifecycle', () => {
     await monitor.stop();
   });
 
-  it('snoozes a camera alert for five minutes and starts a fresh interval afterwards', async () => {
+  it('clears a camera alert without a delayed-ignore interval when pausing', async () => {
     const monitor = new ATEMMonitor();
     await monitor.setConfig(true, '192.168.1.240');
     monitor.setLiveActive(true);
@@ -220,20 +220,15 @@ describe('ATEMMonitor connection lifecycle', () => {
     };
     internals.programInputStartedAt = Date.now() - 601_000;
 
-    const ignoredAt = Date.now();
-    monitor.handleCameraAlertAction('ignore_once', ignoredAt);
+    const pausedAt = Date.now();
+    monitor.handleCameraAlertAction('pause', pausedAt);
     expect(monitor.getSnapshot()).toMatchObject({
-      programInputStartedAt: ignoredAt + 300_000,
+      programInputStartedAt: pausedAt,
       programInputElapsedSeconds: 0,
       programInputOverLimit: false,
       cameraAlertVisible: false
     });
-
-    internals.cameraSnoozedUntil = Date.now() - 1;
-    internals.programInputStartedAt = Date.now() - 599_000;
-    expect(monitor.getSnapshot().cameraAlertVisible).toBe(false);
-    internals.programInputStartedAt = Date.now() - 601_000;
-    expect(monitor.getSnapshot().cameraAlertVisible).toBe(true);
+    expect(internals.cameraSnoozedUntil).toBeNull();
     await monitor.stop();
   });
 

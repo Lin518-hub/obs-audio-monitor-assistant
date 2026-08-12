@@ -50,8 +50,6 @@ export const statusText = (status: MonitorStatus): string => {
     silent_counting: '静音计时中',
     pre_alert: '静音计时中',
     alerting: '正在提醒',
-    snoozed: '已延后检测',
-    ignored_until_audio_returns: '本次已忽略',
     paused: '检测已暂停',
     error: '状态异常'
   };
@@ -171,8 +169,6 @@ const readinessReasonText: Record<string, (s: AppSnapshot) => string> = {
   target_missing: () => '目标音源不在 OBS 输入源列表中，请刷新或重新选择。',
   no_target_meter: () => '暂时没有收到目标音源电平数据，请确认该源处于活动状态。',
   paused: () => '检测已手动暂停。',
-  snoozed: (s) =>
-    s.snoozedUntil ? `已延后检测，将在 ${new Date(s.snoozedUntil).toLocaleTimeString()} 后恢复。` : '已延后检测。',
   alerting: () => '目标音源静音超时，请处理报警弹窗。',
   error: (s) => s.errorMessage ?? '检测状态异常。'
 };
@@ -200,8 +196,7 @@ const readinessActionTextMap: Record<string, (s: AppSnapshot) => string> = {
   target_missing: () => '下一步：刷新音源列表，或在 OBS 中恢复这个音源。',
   no_target_meter: () => '下一步：确认该源在当前场景中处于活动状态。',
   paused: () => '需要恢复时点击右侧"恢复检测"。',
-  snoozed: () => '忽略倒计时结束后会自动恢复检测。',
-  alerting: () => '请处理报警弹窗中的"确定"或"单次忽略"。',
+  alerting: () => '请处理报警弹窗中的"确定"或"暂停检测"。',
   error: () => '请查看错误信息，必要时重连 OBS。'
 };
 

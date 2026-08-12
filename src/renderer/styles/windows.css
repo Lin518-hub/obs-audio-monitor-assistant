@@ -106,6 +106,7 @@
 
 /* ====== PreAlertApp ====== */
 .prealert-shell {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
@@ -115,10 +116,12 @@
   padding: var(--s-4) var(--s-5);
   background: linear-gradient(135deg, var(--event-yellow) 0%, var(--neutral-0) 100%);
   border: 1px solid var(--event-yellow-border);
-  border-radius: var(--r-md);
+  border-radius: 18px;
+  clip-path: inset(0 round 18px);
   box-shadow: 0 8px 28px rgba(234, 179, 8, 0.18);
   -webkit-app-region: drag;
   overflow: hidden;
+  isolation: isolate;
 }
 .prealert-close {
   position: absolute;

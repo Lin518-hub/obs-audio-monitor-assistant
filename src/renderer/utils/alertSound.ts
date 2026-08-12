@@ -7,6 +7,17 @@ const SOUND_PRESETS: Record<AlertSoundPreset, { frequency: number; gain: number;
   soft: { frequency: 740, gain: 0.28, duration: 0.40, type: 'sine' }
 };
 
+let sharedAudioContext: AudioContext | null = null;
+
+function audioContext(): AudioContext | null {
+  if (sharedAudioContext && sharedAudioContext.state !== 'closed') return sharedAudioContext;
+  const AudioContextCtor = window.AudioContext
+    || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  sharedAudioContext = new AudioContextCtor();
+  return sharedAudioContext;
+}
+
 /** Play one audible cue through the system default output. */
 export function playAlertTone(enabled: boolean, preset: AlertSoundPreset = 'strong'): void {
   if (!enabled) {
@@ -14,12 +25,9 @@ export function playAlertTone(enabled: boolean, preset: AlertSoundPreset = 'stro
   }
 
   try {
-    const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      return;
-    }
-
-    const context = new AudioContextCtor();
+    const context = audioContext();
+    if (!context) return;
+    if (context.state === 'suspended') void context.resume().catch(() => undefined);
     const tone = SOUND_PRESETS[preset] ?? SOUND_PRESETS.strong;
     const gain = context.createGain();
     const oscillator = context.createOscillator();
@@ -35,7 +43,10 @@ export function playAlertTone(enabled: boolean, preset: AlertSoundPreset = 'stro
     gain.connect(context.destination);
     oscillator.start(now);
     oscillator.stop(end + 0.04);
-    window.setTimeout(() => void context.close().catch(() => undefined), 700);
+    oscillator.addEventListener('ended', () => {
+      oscillator.disconnect();
+      gain.disconnect();
+    }, { once: true });
   } catch {
     // Browsers may block audio in rare cases; the visual alert still works.
   }

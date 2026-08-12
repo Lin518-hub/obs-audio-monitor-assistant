@@ -246,17 +246,9 @@ function SettingsApp() {
   const completeOnboarding = useCallback(() => {
     void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION });
   }, [flushSave]);
-  const confirmReleaseNotes = useCallback(async (cameraIds: number[]) => {
-    await flushSave({
-      releaseNotesSeenVersion: APP_VERSION,
-      ...(draft?.atemEnabled
-        ? {
-            atemPrimaryInputIds: cameraIds,
-            atemPrimaryInputId: cameraIds[0] ?? null
-          }
-        : {})
-    });
-  }, [draft?.atemEnabled, flushSave]);
+  const confirmReleaseNotes = useCallback(async () => {
+    await flushSave({ releaseNotesSeenVersion: APP_VERSION });
+  }, [flushSave]);
   const refreshOnboardingInputs = useCallback(() => {
     void window.obsGuard.refreshInputs();
   }, []);
@@ -281,7 +273,7 @@ function SettingsApp() {
     return <RoomNameSetup onSave={(roomName) => flushSave({ livestreamRoomName: roomName })} />;
   }
 
-  // 首次安装或版本更新：显示引导向导，不清空已有配置。
+  // Only a first install or factory reset opens the setup wizard.
   if (shouldShowOnboarding(snapshot.config, APP_VERSION)) {
     return (
       <OnboardingWizard
@@ -447,17 +439,6 @@ function SettingsApp() {
       {shouldShowReleaseNotes(snapshot.config, APP_VERSION) && (
         <ReleaseNotesDialog
           version={APP_VERSION}
-          cameraSelectionRequired={draft.atemEnabled}
-          cameraOptions={Array.from({ length: 8 }, (_, index) => {
-            const inputId = index + 1;
-            const customization = draft.atemInputCustomizations[String(inputId)];
-            return {
-              id: inputId,
-              label: customization?.name || snapshot.atemInputLabels[inputId] || `Camera ${inputId}`,
-              color: customization?.color || defaultATEMInputColor(inputId)
-            };
-          })}
-          initialCameraIds={draft.atemPrimaryInputIds}
           onConfirm={confirmReleaseNotes}
         />
       )}

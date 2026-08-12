@@ -68,7 +68,7 @@ const AlertStylePreview: React.FC<{ mode: 'classic' | 'fullscreen' }> = ({ mode 
       </div>
       <span className="alert-preview-line" />
       <div className="alert-preview-actions">
-        <span>单次忽略</span>
+        <span>暂停检测</span>
         <span>确定</span>
       </div>
     </div>
@@ -739,7 +739,7 @@ export const AlertExperienceSection: React.FC<{
           value={draft.alertSoundPreset}
           onChange={(v) => onChange('alertSoundPreset', v)}
         />
-        <p className="settings-section-hint">正式报警后循环播放，确认或单次忽略后立即停止；声音通过系统默认扬声器输出。</p>
+        <p className="settings-section-hint">正式报警后循环播放，确认或暂停检测后立即停止；声音通过系统默认扬声器输出。</p>
       </div>
     )}
   </Section>
@@ -1085,7 +1085,7 @@ export const HistorySection: React.FC<{
               </div>
               <div className="history-item-side">
                 <strong>{entry.silentForSeconds}s</strong>
-                <div>{entry.action === 'acknowledge' ? '已确认' : '单次忽略'}</div>
+                <div>{entry.action === 'acknowledge' ? '已确认' : entry.action === 'pause' ? '已暂停检测' : '旧版单次忽略'}</div>
               </div>
             </div>
           ))}

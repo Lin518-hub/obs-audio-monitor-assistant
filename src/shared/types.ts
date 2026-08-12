@@ -6,8 +6,6 @@ export type MonitorStatus =
   | 'silent_counting'
   | 'pre_alert'
   | 'alerting'
-  | 'snoozed'
-  | 'ignored_until_audio_returns'
   | 'paused'
   | 'error';
 
@@ -21,7 +19,15 @@ export type RemoteRouteType = 'lan' | 'public' | 'custom' | null;
 export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
 export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
 
-export type AlertAction = 'acknowledge' | 'snooze_10m' | 'ignore_once';
+export interface RuntimeErrorSummary {
+  code: string;
+  source: string;
+  message: string;
+  occurredAt: number;
+  count: number;
+}
+
+export type AlertAction = 'acknowledge' | 'pause';
 
 export type ReadinessReason =
   | 'ready'
@@ -32,11 +38,11 @@ export type ReadinessReason =
   | 'target_missing'
   | 'no_target_meter'
   | 'paused'
-  | 'snoozed'
   | 'alerting'
   | 'error';
 
-export type AlertHistoryAction = 'acknowledge' | 'ignore_once';
+// Keep ignore_once so history written by older releases remains readable.
+export type AlertHistoryAction = 'acknowledge' | 'pause' | 'ignore_once';
 
 export interface AlertPosition {
   x: number;
@@ -450,7 +456,6 @@ export interface AppSnapshot {
   activePreAlertSource: AlertSource | null;
   preAlertRemainingSeconds: number | null;
   preAlertDismissed: boolean;
-  snoozedUntil: number | null;
   history: AlertHistoryEntry[];
   silenceEvents: SilenceEventEntry[];
   inputMonitors: InputMonitorSnapshot[];

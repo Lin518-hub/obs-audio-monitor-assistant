@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -11,11 +11,16 @@ import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
 import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
 import { PreflightCheckService } from './preflightCheck.js';
+import { crashRestartArgs } from './crashRecovery.js';
+import { installFileLogger } from './fileLogger.js';
+import { rendererSnapshot } from './rendererSnapshot.js';
+import { RuntimeDiagnosticsStore } from './runtimeDiagnostics.js';
+import { roundedWindowShape, type WindowShapeRectangle } from './windowShape.js';
 import { compareVersions, PendingUpdateStore, type PendingUpdate } from './pendingUpdateStore.js';
 import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { isPreflightAppId } from '../shared/preflight.js';
-import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AlertHistoryAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type RemoteAdminCommand, type RemoteAdminCommandResult, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
+import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type RemoteAdminCommand, type RemoteAdminCommandResult, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
 
 // GUI/background launches can outlive the terminal that originally owned
 // stdout/stderr. Diagnostic writes must not crash Electron after that pipe closes.
@@ -63,6 +68,24 @@ const { autoUpdater } = electronUpdater;
 
 app.setName('OBS 音频检测助手');
 app.setPath('userData', join(app.getPath('appData'), 'obs-audio-monitor-assistant'));
+
+const runtimeDiagnostics = new RuntimeDiagnosticsStore(join(app.getPath('userData'), 'runtime-error.json'));
+let diagnosticsBridge: RemoteBridge | null = null;
+const mainLogger = installFileLogger({
+  directory: join(app.getPath('userData'), 'logs'),
+  onError: (message) => {
+    const summary = runtimeDiagnostics.record('main_log_error', 'main', message);
+    diagnosticsBridge?.updateRuntimeError(summary);
+  }
+});
+let handlingFatalMainError = false;
+
+process.once('uncaughtException', (error) => {
+  handleFatalMainError(error, 'uncaught_exception');
+});
+process.once('unhandledRejection', (reason) => {
+  handleFatalMainError(reason, 'unhandled_rejection');
+});
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.obsaudioassistant.app');
@@ -126,7 +149,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     void initializeApp().catch((error) => {
       console.error(`[app] failed to initialize: ${error instanceof Error ? error.message : String(error)}`);
-      app.quit();
+      handleFatalMainError(error, 'initialization_failed');
     });
   });
 }
@@ -161,6 +184,8 @@ async function initializeApp(): Promise<void> {
 
   atemMonitor = new ATEMMonitor();
   remoteBridge = new RemoteBridge(app.getVersion());
+  diagnosticsBridge = remoteBridge;
+  remoteBridge.updateRuntimeError(runtimeDiagnostics.getRecent());
   remoteBridge.setCommandHandler(handleRemoteAdminCommand);
   preflightCheckService = new PreflightCheckService();
   pendingUpdateStore = new PendingUpdateStore(app.getPath('userData'));
@@ -237,7 +262,7 @@ async function initializeApp(): Promise<void> {
       // visible timer. The session store still needs this last camera span.
       pendingATEMSessionStop = { endedAt: Date.now(), state: atemMonitor.getSnapshot() };
     }
-    atemMonitor.setLiveActive(liveActive);
+    atemMonitor.setLiveActive(liveActive && !snapshot.config.paused);
     const incoming = injectATEMState(snapshot);
     latestSnapshot = preserveSnapshotHistory(incoming);
     broadcastSnapshot(latestSnapshot);
@@ -307,6 +332,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  void mainLogger.flush();
   if (updateInitialTimer) {
     clearTimeout(updateInitialTimer);
     updateInitialTimer = null;
@@ -351,7 +377,10 @@ async function applyAutoLaunch(enabled: boolean): Promise<void> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('snapshot:get', () => rendererSnapshot(latestSnapshot ?? monitor.getSnapshot()));
+  ipcMain.handle('snapshot:get', (event) => rendererSnapshot(
+    latestSnapshot ?? monitor.getSnapshot(),
+    settingsWindow?.webContents.id === event.sender.id
+  ));
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
     const previousSnapshot = latestSnapshot ?? monitor.getSnapshot();
     const previous = previousSnapshot.config;
@@ -1844,7 +1873,8 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      backgroundThrottling: false
     }
   });
 
@@ -1867,18 +1897,6 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
   });
   floatingWindow.on('moved', () => {
     saveFloatingWindowBoundsFromWindow();
-  });
-  floatingWindow.on('will-resize', (event, nextBounds, details) => {
-    if (process.platform !== 'win32' || isAdjustingFloatingWindowSize) return;
-    const activeMode = (latestSnapshot ?? snapshot).config.floatingWindowMode;
-    const ratio = floatingWindowAspectRatio(activeMode);
-    if (!ratio) return;
-    const corrected = correctedFloatingResizeBounds(activeMode, nextBounds, String(details?.edge || ''), ratio);
-    if (corrected.width === nextBounds.width && corrected.height === nextBounds.height) return;
-    event.preventDefault();
-    isAdjustingFloatingWindowSize = true;
-    floatingWindow?.setBounds(corrected, false);
-    isAdjustingFloatingWindowSize = false;
   });
   floatingWindow.on('resized', () => {
     scheduleFloatingWindowShape();
@@ -2187,6 +2205,7 @@ function showPreAlertWindows(snapshot: AppSnapshot): void {
       maximizable: false,
       fullscreenable: false,
       alwaysOnTop: true,
+      hasShadow: false,
       icon: appIconPath(),
       skipTaskbar: true,
       frame: false,
@@ -2198,13 +2217,17 @@ function showPreAlertWindows(snapshot: AppSnapshot): void {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        backgroundThrottling: false
       }
     });
 
     attachWindowDiagnostics(preAlertWindow, `prealert:${display.id}`);
     preAlertWindow.setAlwaysOnTop(true, 'floating');
-    preAlertWindow.once('ready-to-show', () => preAlertWindow.showInactive());
+    preAlertWindow.once('ready-to-show', () => {
+      applyRoundedWindowShape(preAlertWindow, 18);
+      preAlertWindow.showInactive();
+    });
     preAlertWindow.on('closed', () => {
       preAlertWindows.delete(display.id);
     });
@@ -2295,6 +2318,13 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
       monitor.handleAlertAction(action);
     }
 
+    let monitorSnapshot = monitor.getSnapshot();
+    if (action === 'pause') {
+      const nextConfig = await configStore.update({ paused: true });
+      monitorSnapshot = await monitor.updateConfig(nextConfig);
+      atemMonitor.setLiveActive(false);
+    }
+
     if (shouldRecord) {
       try {
         const history = await historyStore.add({
@@ -2312,7 +2342,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
     }
 
     const previousSnapshot = before;
-    latestSnapshot = injectATEMState(monitor.getSnapshot());
+    latestSnapshot = injectATEMState(monitorSnapshot);
     broadcastSnapshot(latestSnapshot);
     remoteBridge.updateSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
@@ -2416,31 +2446,23 @@ function loadRendererSafely(window: BrowserWindow, hash: string, label: string):
   void loadRenderer(window, hash).catch((error) => {
     if (!window.isDestroyed()) {
       console.error(`[${label}] renderer load rejected: ${error instanceof Error ? error.message : String(error)}`);
+      reportRuntimeError('renderer_load_rejected', label, error);
     }
   });
 }
 
 function broadcastSnapshot(snapshot: AppSnapshot): void {
-  const safeSnapshot = rendererSnapshot(snapshot);
+  const fullSnapshot = rendererSnapshot(snapshot, true);
+  const compactSnapshot = rendererSnapshot(snapshot, false);
   BrowserWindow.getAllWindows().forEach((window) => {
-    sendToWindow(window, 'snapshot', safeSnapshot);
+    sendToWindow(window, 'snapshot', window === settingsWindow ? fullSnapshot : compactSnapshot);
   });
 }
 
 function broadcastMeterFrame(frame: AudioMeterFrame): void {
-  BrowserWindow.getAllWindows().forEach((window) => {
-    sendToWindow(window, 'meter:update', frame);
-  });
-}
-
-function rendererSnapshot(snapshot: AppSnapshot): AppSnapshot {
-  return {
-    ...snapshot,
-    config: {
-      ...snapshot.config,
-      remoteDeviceSecret: ''
-    }
-  };
+  for (const window of [settingsWindow, floatingWindow]) {
+    if (window) sendToWindow(window, 'meter:update', frame);
+  }
 }
 
 function broadcastUpdateState(): void {
@@ -2485,10 +2507,12 @@ function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
     console.error(`[${label}] failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`);
+    reportRuntimeError(`renderer_load_${errorCode}`, label, `${errorDescription}: ${validatedUrl}`);
   });
   window.webContents.on('render-process-gone', (_event, details) => {
     rendererUnavailable.add(window);
     console.error(`[${label}] renderer gone: ${details.reason}`);
+    reportRuntimeError(`renderer_gone_${details.reason}`, label, `${details.reason} (exit ${details.exitCode})`);
     if (isQuitting || window.isDestroyed() || rendererReloadTimers.has(window)) {
       return;
     }
@@ -2505,6 +2529,30 @@ function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
   window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     const levelName = ['log', 'warn', 'error', 'debug'][level] ?? String(level);
     console.log(`[${label}] ${levelName}: ${message} (${sourceId}:${line})`);
+  });
+}
+
+function reportRuntimeError(code: string, source: string, error: unknown): void {
+  const summary = runtimeDiagnostics.record(code, source, error);
+  diagnosticsBridge?.updateRuntimeError(summary);
+}
+
+function handleFatalMainError(error: unknown, code: string): void {
+  if (handlingFatalMainError) {
+    app.exit(1);
+    return;
+  }
+  handlingFatalMainError = true;
+  isQuitting = true;
+  const message = error instanceof Error ? error.stack || error.message : String(error);
+  console.error(`[app] fatal main-process error: ${message}`);
+  reportRuntimeError(code, 'main', error);
+  const relaunchArgs = crashRestartArgs(process.argv.slice(1));
+  if (relaunchArgs) app.relaunch({ args: relaunchArgs });
+  const forceExit = setTimeout(() => app.exit(1), 1500);
+  void mainLogger.flush().finally(() => {
+    clearTimeout(forceExit);
+    app.exit(1);
   });
 }
 
@@ -2709,30 +2757,6 @@ function stopFloatingWindowTimers(): void {
   floatingShapeTimer = null;
 }
 
-function correctedFloatingResizeBounds(
-  mode: AppConfig['floatingWindowMode'],
-  bounds: Rectangle,
-  edge: string,
-  ratio: number
-): Rectangle {
-  const minWidth = floatingWindowMinWidthForMode(mode);
-  const verticalOnly = /top|bottom/.test(edge) && !/left|right/.test(edge);
-  const width = clamp(
-    verticalOnly ? Math.round(bounds.height * ratio) : bounds.width,
-    minWidth,
-    FLOATING_WINDOW_MAX_WIDTH
-  );
-  const height = Math.round(width / ratio);
-  const right = bounds.x + bounds.width;
-  const bottom = bounds.y + bounds.height;
-  return {
-    x: edge.includes('left') ? right - width : bounds.x,
-    y: edge.includes('top') ? bottom - height : bounds.y,
-    width,
-    height
-  };
-}
-
 function keepFloatingWindowAspectRatio(): void {
   if (!floatingWindow || floatingWindow.isDestroyed() || isAdjustingFloatingWindowSize) {
     return;
@@ -2760,13 +2784,6 @@ function applyFloatingWindowShape(): void {
     return;
   }
 
-  const windowWithShape = floatingWindow as BrowserWindow & {
-    setShape?: (rectangles: Rectangle[]) => void;
-  };
-  if (typeof windowWithShape.setShape !== 'function') {
-    return;
-  }
-
   const { width, height } = floatingWindow.getBounds();
   const mode = latestSnapshot?.config.floatingWindowMode ?? 'audio';
   const baseWidth = mode === 'audio_atem'
@@ -2775,25 +2792,21 @@ function applyFloatingWindowShape(): void {
       ? FLOATING_MULTI_DEFAULT_WIDTH
       : FLOATING_WINDOW_DEFAULT_WIDTH;
   const radius = Math.min(Math.round(FLOATING_WINDOW_BASE_RADIUS * (width / baseWidth)), Math.floor(width / 2), Math.floor(height / 2));
-  const rectangles: Rectangle[] = [];
+  applyRoundedWindowShape(floatingWindow, radius);
+}
 
-  for (let y = 0; y < height; y += 1) {
-    const distanceFromTop = y < radius ? radius - y : y >= height - radius ? y - (height - radius - 1) : 0;
-    if (distanceFromTop <= 0) {
-      rectangles.push({ x: 0, y, width, height: 1 });
-      continue;
-    }
+function applyRoundedWindowShape(targetWindow: BrowserWindow, radius: number): void {
+  if (process.platform !== 'win32' || targetWindow.isDestroyed()) return;
 
-    const inset = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - distanceFromTop * distanceFromTop)));
-    rectangles.push({
-      x: inset,
-      y,
-      width: Math.max(0, width - inset * 2),
-      height: 1
-    });
+  const windowWithShape = targetWindow as BrowserWindow & {
+    setShape?: (rectangles: WindowShapeRectangle[]) => void;
+  };
+  if (typeof windowWithShape.setShape !== 'function') {
+    return;
   }
 
-  windowWithShape.setShape(rectangles);
+  const { width, height } = targetWindow.getBounds();
+  windowWithShape.setShape(roundedWindowShape(width, height, radius));
 }
 
 function selectAlertDisplays(mode: string, displayId: number | null, displays: DisplayInfo[]): DisplayInfo[] {
@@ -2829,8 +2842,6 @@ function statusLabel(status: string): string {
     silent_counting: '静音计时中',
     pre_alert: '预警中',
     alerting: '正在报警',
-    snoozed: '已延后',
-    ignored_until_audio_returns: '本次已忽略',
     paused: '已暂停',
     error: '异常'
   };
@@ -2868,8 +2879,8 @@ async function handleTrayUpdateClick(): Promise<void> {
   await checkAndStageUpdate(true);
 }
 
-function isHistoryAction(action: AlertAction): action is AlertHistoryAction {
-  return action === 'acknowledge' || action === 'ignore_once';
+function isHistoryAction(action: AlertAction): boolean {
+  return action === 'acknowledge' || action === 'pause';
 }
 
 type TrayTone = keyof typeof trayIconPaths;

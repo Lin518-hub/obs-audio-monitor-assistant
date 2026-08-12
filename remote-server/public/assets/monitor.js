@@ -682,7 +682,7 @@ function renderDrawer(device) {
   $('monitor-device-title').textContent = device.roomName;
   $('monitor-device-subtitle').textContent = `${device.label} · ${device.online ? '电脑在线' : `离线 ${relativeTime(device.lastSeenAt)}`}`;
   const detail = $('monitor-device-detail');
-  detail.replaceChildren(
+  const sections = [
     roomNameSection(device),
     roomNotificationSection(device),
     detailSection('运行状态', [
@@ -707,7 +707,17 @@ function renderDrawer(device) {
       ['延迟', device.service.latencyMs == null ? '--' : `${Math.round(device.service.latencyMs)} ms`],
       ['最后同步', relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)]
     ])
-  );
+  ];
+  if (device.diagnostics?.latestError) {
+    const latestError = device.diagnostics.latestError;
+    sections.push(detailSection('最近客户端错误', [
+      ['时间', relativeTime(latestError.occurredAt)],
+      ['位置', latestError.source || '主进程'],
+      ['错误', latestError.message || latestError.code || '未知错误'],
+      ['重复次数', String(Math.max(1, Number(latestError.count) || 1))]
+    ]));
+  }
+  detail.replaceChildren(...sections);
 
   const actions = $('monitor-device-actions');
   actions.replaceChildren();

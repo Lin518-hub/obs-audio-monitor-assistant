@@ -119,6 +119,14 @@ Start-Process -FilePath ([string]$payload.target) -Verb RunAs
 
 export function selectMainWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
   const projector = selectOBSProjectorWindow(windows);
+  // 优先选择标题明确标识 OBS 主窗口（版本号/配置文件/场景集合）的窗口，
+  // 避免竖屏或超大投影窗口（面积可能大于主窗口）被误当成主窗口保存。
+  const mainByTitle = windows.find((window) => (
+    window.handle !== projector?.handle
+    && !isAnyOBSProjectorWindow(window)
+    && isLikelyOBSMainWindow(window)
+  ));
+  if (mainByTitle) return mainByTitle;
   return [...windows]
     .filter((window) => window.handle !== projector?.handle && !isAnyOBSProjectorWindow(window))
     .sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
@@ -173,7 +181,18 @@ export function isOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
 
   // Some localized builds expose the right-click “Projector - Output” window
   // as an output-view title without the word “projector”.
-  return /(?:obs\s*)?(?:program|节目|pgm)\s*(?:output|输出)|(?:obs\s*)?(?:output|输出)(?:\s*画面|\s*view)?$/.test(title);
+  if (/(?:obs\s*)?(?:program|节目|pgm)\s*(?:output|输出)|(?:obs\s*)?(?:output|输出)(?:\s*画面|\s*view)?$/.test(title)) return true;
+
+  // 部分 OBS 构建的节目输出投影窗口标题只有 Program/节目/输出，
+  // 需结合视频尺寸特征才能与普通窗口区分。
+  if (/^(?:program|节目|输出)$/.test(title)) {
+    const { width, height } = window.bounds;
+    if (width < 320 || height < 180) return false;
+    const aspectRatio = width / height;
+    return aspectRatio >= 0.5 && aspectRatio <= 2.8;
+  }
+
+  return false;
 }
 
 function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
@@ -188,7 +207,9 @@ function isLikelyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const { width, height } = window.bounds;
   if (width < 320 || height < 180) return false;
   const aspectRatio = width / height;
-  return aspectRatio >= 1.15 && aspectRatio <= 2.6;
+  // 电商直播常用竖屏投影（9:16 约 0.56），横屏 16:9 约 1.78。
+  // 放宽到 0.5–2.8 以同时覆盖竖屏与横屏，但仍排除 4:3 对话框等普通窗口。
+  return aspectRatio >= 0.5 && aspectRatio <= 2.8;
 }
 
 function isLikelyOBSMainWindow(window: WindowsTopLevelWindow): boolean {

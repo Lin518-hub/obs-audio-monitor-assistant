@@ -108,6 +108,26 @@ test('supports disabling enterprise WeCom notifications for one room only', asyn
   );
 });
 
+test('forgets queued and active notification state when a device is removed', async () => {
+  const calls = [];
+  const notifier = createWeComNotifier({
+    webhookUrl: WEBHOOK,
+    fetchImpl: successfulFetch(calls),
+    batchDelayMs: 60_000
+  });
+  const device = { uuid: 'reassigned-device', label: '旧电脑', roomName: '换机直播间' };
+
+  notifier.observeDevice(device, desktopState({ audioPhase: 'alert', audioTone: 'danger' }));
+  notifier.forgetDevice(device.uuid);
+  await notifier.flushNow();
+  assert.equal(calls.length, 0);
+
+  notifier.observeDevice(device, desktopState());
+  notifier.observeDevice(device, desktopState({ audioPhase: 'alert', audioTone: 'danger' }));
+  await notifier.flushNow();
+  assert.equal(calls.length, 1);
+});
+
 test('uses custom audio and camera push thresholds without changing client state', async () => {
   const calls = [];
   const notifier = createWeComNotifier({

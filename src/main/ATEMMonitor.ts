@@ -533,20 +533,13 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     await this.disconnect();
   }
 
-  handleCameraAlertAction(action: AlertAction, now = Date.now()): ATEMStateSnapshot {
+  handleCameraAlertAction(_action: AlertAction, now = Date.now()): ATEMStateSnapshot {
     if (this.lastState.programInput <= 0) return this.getSnapshot();
 
-    if (action === 'ignore_once') {
-      this.cameraSnoozedUntil = now + 5 * 60 * 1000;
-      this.programInputStartedAt = this.cameraSnoozedUntil;
-    } else if (action === 'snooze_10m') {
-      this.cameraSnoozedUntil = now + 10 * 60 * 1000;
-      this.programInputStartedAt = this.cameraSnoozedUntil;
-    } else {
-      // Confirming a camera alert starts a fresh interval for the same PGM.
-      this.cameraSnoozedUntil = null;
-      this.programInputStartedAt = now;
-    }
+    // Acknowledging starts a fresh interval. Pausing is applied globally by
+    // the main process immediately after this alert state is closed.
+    this.cameraSnoozedUntil = null;
+    this.programInputStartedAt = now;
     this.cameraPreAlertDismissedForStartedAt = null;
 
     this.lastState = {

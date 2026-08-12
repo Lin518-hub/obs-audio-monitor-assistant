@@ -110,7 +110,7 @@ describe('silence monitor state', () => {
     expect(state.status).toBe('monitoring');
   });
 
-  it('snoozes for ten minutes from an alert action', () => {
+  it.each(['acknowledge', 'pause'] as const)('closes an alert and resets the timer for %s', (action) => {
     const now = 1_000;
     const state = reduceAlertAction(
       {
@@ -121,34 +121,13 @@ describe('silence monitor state', () => {
         silentSince: now - 120_000
       },
       config,
-      'snooze_10m',
+      action,
       now
     );
 
     expect(state.alertVisible).toBe(false);
-    expect(state.snoozedUntil).toBe(now + 600_000);
-    expect(state.status).toBe('snoozed');
-  });
-
-  it('snoozes for five minutes when ignoring one alert', () => {
-    const now = 1_000;
-    let state = reduceAlertAction(
-      {
-        ...initialRuntimeState,
-        connected: true,
-        streaming: true,
-        alertVisible: true,
-        silentSince: now - 120_000
-      },
-      config,
-      'ignore_once',
-      now
-    );
-
-    state = reduceAudioLevel(state, config, -85, now + 120_000);
-    expect(state.alertVisible).toBe(false);
-    expect(state.snoozedUntil).toBe(now + 300_000);
-    expect(state.status).toBe('snoozed');
+    expect(state.silentSince).toBeNull();
+    expect(state.status).toBe('monitoring');
   });
 
   it('does not count silence while OBS is not streaming or recording', () => {

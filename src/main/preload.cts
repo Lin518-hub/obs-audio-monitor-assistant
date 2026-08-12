@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ObsGuardApi } from '../shared/ipc.js';
 import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
-contextBridge.exposeInMainWorld('obsGuard', {
+const obsGuardApi = {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get') as Promise<AppSnapshot>,
   saveConfig: (patch: Partial<AppConfig>) => ipcRenderer.invoke('config:save', patch) as Promise<AppSnapshot>,
   resetConfig: () => ipcRenderer.invoke('config:reset') as Promise<AppSnapshot>,
@@ -67,4 +68,6 @@ contextBridge.exposeInMainWorld('obsGuard', {
   testATEMConnection: (host: string) => ipcRenderer.invoke('atem:test-connection', host),
   scanATEMNetwork: (host?: string) => ipcRenderer.invoke('atem:scan-network', host) as Promise<ATEMScanResult>,
   atemReconnect: () => ipcRenderer.invoke('atem:reconnect')
-});
+} satisfies ObsGuardApi;
+
+contextBridge.exposeInMainWorld('obsGuard', obsGuardApi);

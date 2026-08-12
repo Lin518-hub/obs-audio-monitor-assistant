@@ -275,7 +275,12 @@ test('protects and aggregates the live room monitor', async () => {
       },
       atem: { connected: true, programInput: 1, previewInput: 2, inputLabels: { 1: '主播近景', 2: '商品特写' }, elapsedSeconds: 60, limitSeconds: 720, overLimit: false },
       obs: { connected: true, streaming: true, recording: false, fps: 60, cpu: 8.5, bitrateKbps: 6000 },
-      service: { routeType: 'lan', latencyMs: 7, lastSyncAt: timestamp }
+      service: { routeType: 'lan', latencyMs: 7, lastSyncAt: timestamp },
+      diagnostics: {
+        latestError: {
+          code: 'renderer_gone_crashed', source: 'floating', message: 'renderer crashed', occurredAt: timestamp, count: 2
+        }
+      }
     }
   }));
   backup.socket.send(JSON.stringify({
@@ -312,6 +317,9 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(room.devices[0].audio.inputName.length > 0, true);
   assert.equal(room.devices[0].audio.silenceDurationSeconds, 120);
   assert.equal(room.devices[0].audio.dangerProgress, 1);
+  assert.deepEqual(room.devices[0].diagnostics.latestError, {
+    code: 'renderer_gone_crashed', source: 'floating', message: 'renderer crashed', occurredAt: timestamp, count: 2
+  });
   assert.equal(monitor.body.summary.onlineDevices >= 2, true);
   assert.equal(Number.isInteger(monitor.body.access.pendingRequests), true);
   assert.equal(Number.isInteger(monitor.body.access.activeApprovals), true);

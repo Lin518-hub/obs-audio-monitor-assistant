@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BellOff, Check } from 'lucide-react';
+import { AlertTriangle, Check, Pause } from 'lucide-react';
 import type { AlertAction, AppSnapshot } from '../../shared/types';
 import { startAlertToneLoop } from '../utils/alertSound';
 
@@ -78,9 +78,9 @@ export const AlertApp: React.FC = () => {
           : `已连续静音 ${snapshot.silentForSeconds} 秒,请确认麦克风是否静音、无线麦是否没电、声卡或 OBS 音频路由是否异常。`}</p>
       </section>
       <section className="alert-actions">
-        <button className="alert-btn alert-btn-quiet" onClick={() => void sendAction('ignore_once')} disabled={closingAction !== null}>
-          <BellOff size={18} />
-          {closingAction === 'ignore_once' ? '处理中…' : '单次忽略'}
+        <button className="alert-btn alert-btn-quiet" onClick={() => void sendAction('pause')} disabled={closingAction !== null}>
+          <Pause size={18} />
+          {closingAction === 'pause' ? '暂停中…' : '暂停检测'}
         </button>
         <button className="alert-btn alert-btn-confirm" onClick={() => void sendAction('acknowledge')} disabled={closingAction !== null}>
           <Check size={18} />

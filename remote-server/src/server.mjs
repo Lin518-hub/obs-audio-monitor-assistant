@@ -7,6 +7,9 @@ import { createServer as createNetServer } from 'node:net';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createStateBackupScheduler } from './state-backup.mjs';
+import { createTlsCertificateReloader } from './tls-certificate.mjs';
+import { createRevisionTtlCache } from './ttl-cache.mjs';
 import { createUpdateCache, parseUpdateReleaseBases } from './update-cache.mjs';
 import {
   createWeComNotifier,
@@ -20,11 +23,15 @@ const port = Number(process.env.PORT || 8088);
 const dataDir = resolve(process.env.DATA_DIR || '/data');
 const updateDir = resolve(process.env.UPDATE_DIR || '/updates');
 const dataFile = join(dataDir, 'remote-state.json');
+const stateBackupDir = resolve(process.env.STATE_BACKUP_DIR || join(dataDir, 'backups'));
+const stateBackupIntervalMs = Math.max(60_000, Number(process.env.STATE_BACKUP_INTERVAL_MS || 24 * 60 * 60 * 1000));
+const stateBackupRetain = Math.max(2, Number(process.env.STATE_BACKUP_RETAIN || 14));
 const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`).replace(/\/$/, '');
 const complaintProxyUrl = new URL(String(process.env.COMPLAINT_PROXY_URL || 'http://complaint-tool:8010').replace(/\/$/, ''));
 const complaintRoutePrefix = '/complaint';
 const tlsCertFile = process.env.TLS_CERT_FILE ? resolve(process.env.TLS_CERT_FILE) : '';
 const tlsKeyFile = process.env.TLS_KEY_FILE ? resolve(process.env.TLS_KEY_FILE) : '';
+const tlsReloadIntervalMs = Math.max(60_000, Number(process.env.TLS_RELOAD_INTERVAL_MS || 5 * 60 * 1000));
 const adminPassword = String(process.env.ADMIN_PASSWORD || '');
 const updateSyncEnabled = !/^(0|false|off)$/i.test(String(process.env.UPDATE_SYNC_ENABLED || 'true'));
 const updateSyncIntervalMs = Math.max(60_000, Number(process.env.UPDATE_SYNC_INTERVAL_MS || 2 * 60 * 1000));
@@ -87,6 +94,20 @@ const adminSessions = new Map();
 const loginAttempts = new Map();
 const requestLimits = new Map();
 let saveQueue = Promise.resolve();
+let monitorRevision = 0;
+const monitorOverviewCache = createRevisionTtlCache(monitorOverview, { ttlMs: 1000 });
+const stateBackup = createStateBackupScheduler({
+  dataFile,
+  backupDir: stateBackupDir,
+  intervalMs: stateBackupIntervalMs,
+  retain: stateBackupRetain,
+  logger: console
+});
+
+await stateBackup.backupNow().catch((error) => {
+  console.warn(`[backup] startup state backup skipped: ${error instanceof Error ? error.message : String(error)}`);
+});
+stateBackup.start();
 
 if (data.schemaVersion < MONITORING_IDENTITY_REVISION) {
   data = emptyData();
@@ -113,6 +134,7 @@ async function loadData() {
 }
 
 function saveData() {
+  markMonitorChanged();
   pruneStoredData();
   const serialized = `${JSON.stringify(data, null, 2)}\n`;
   const operation = saveQueue.catch(() => undefined).then(async () => {
@@ -122,6 +144,14 @@ function saveData() {
   });
   saveQueue = operation;
   return operation;
+}
+
+function markMonitorChanged() {
+  monitorRevision += 1;
+}
+
+function cachedMonitorOverview() {
+  return monitorOverviewCache.get(monitorRevision);
 }
 
 function token(bytes = 32) {
@@ -338,6 +368,10 @@ function monitorDevice(device) {
   const atem = state?.atem && typeof state.atem === 'object' ? state.atem : {};
   const obs = state?.obs && typeof state.obs === 'object' ? state.obs : {};
   const service = state?.service && typeof state.service === 'object' ? state.service : {};
+  const diagnostics = state?.diagnostics && typeof state.diagnostics === 'object' ? state.diagnostics : {};
+  const latestError = diagnostics.latestError && typeof diagnostics.latestError === 'object'
+    ? diagnostics.latestError
+    : null;
   const appState = state?.app && typeof state.app === 'object' ? state.app : {};
   const latestVersion = cleanText(updateCache.getStatus().version, 32) || null;
   const installedVersion = appVersion(
@@ -462,6 +496,15 @@ function monitorDevice(device) {
       routeType: cleanText(service.routeType, 20) || null,
       latencyMs: finiteNumber(service.latencyMs),
       lastSyncAt: finiteNumber(service.lastSyncAt)
+    },
+    diagnostics: {
+      latestError: latestError ? {
+        code: cleanText(latestError.code, 80) || 'unknown_error',
+        source: cleanText(latestError.source, 80) || 'main',
+        message: cleanText(latestError.message, 240) || '未知错误',
+        occurredAt: finiteNumber(latestError.occurredAt),
+        count: Math.max(1, wholeNumber(latestError.count))
+      } : null
     }
   };
 }
@@ -812,6 +855,7 @@ async function handleApi(req, res, url) {
     for (const duplicateUuid of duplicateUuids) {
       desktopSockets.get(duplicateUuid)?.close(4000, 'room_reassigned');
       closeMobileAccessForDevice(duplicateUuid, 4003, 'mobile_access_removed');
+      weComNotifier.forgetDevice(duplicateUuid);
     }
     if (duplicateUuids.size > 0) {
       data.devices = data.devices.filter((item) => !duplicateUuids.has(item.uuid));
@@ -996,7 +1040,7 @@ async function handleApi(req, res, url) {
   if (url.pathname.startsWith('/api/monitor/')) {
     if (!adminSession(req)) return json(res, 401, { error: 'admin_auth_required' });
     if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
-      return json(res, 200, monitorOverview());
+      return json(res, 200, cachedMonitorOverview());
     }
     if (req.method === 'GET' && url.pathname === '/api/monitor/notification-settings') {
       return json(res, 200, notificationStatus());
@@ -1251,6 +1295,17 @@ const httpsServer = tlsCertFile
       key: await readFile(tlsKeyFile)
     }, requestListener)
   : null;
+const tlsCertificateReloader = httpsServer
+  ? createTlsCertificateReloader({
+      server: httpsServer,
+      certFile: tlsCertFile,
+      keyFile: tlsKeyFile,
+      intervalMs: tlsReloadIntervalMs,
+      logger: console
+    })
+  : null;
+await tlsCertificateReloader?.initialize();
+tlsCertificateReloader?.start();
 const server = httpsServer
   ? createNetServer((socket) => {
       socket.setTimeout(10_000, () => socket.destroy());
@@ -1286,6 +1341,7 @@ wss.on('connection', (socket, req, url) => {
     if (!device) return socket.close(4001, 'device_auth_failed');
     desktopSockets.get(uuid)?.close(4000, 'replaced');
     desktopSockets.set(uuid, socket);
+    markMonitorChanged();
     device.lastSeenAt = now();
     void saveData();
     socket.send(JSON.stringify({
@@ -1300,6 +1356,7 @@ wss.on('connection', (socket, req, url) => {
         const message = JSON.parse(raw.toString());
         if (message.type === 'state' && message.state && typeof message.state === 'object') {
           device.lastState = normalizeDesktopState(message.state);
+          markMonitorChanged();
           const appState = device.lastState.app && typeof device.lastState.app === 'object' ? device.lastState.app : {};
           device.appVersion = appVersion(appState.version, appState.updateCurrentVersion, device.appVersion) || '';
           device.platform = cleanText(appState.platform, 20) || device.platform || '';
@@ -1346,6 +1403,7 @@ wss.on('connection', (socket, req, url) => {
     });
     socket.on('close', () => {
       if (desktopSockets.get(uuid) === socket) desktopSockets.delete(uuid);
+      markMonitorChanged();
       failPendingCommandsForDevice(uuid, '电脑连接已断开');
       broadcastMobile(uuid, { type: 'device-status', online: false });
     });
@@ -1362,6 +1420,7 @@ wss.on('connection', (socket, req, url) => {
   socket.approvalId = approval.id;
   sockets.add(socket);
   mobileSockets.set(device.uuid, sockets);
+  markMonitorChanged();
   notifyDesktopPresence(device.uuid);
   approval.lastUsedAt = now();
   socket.send(JSON.stringify({ type: 'state', state: device.lastState ? normalizeDesktopState(device.lastState) : null }));
@@ -1382,6 +1441,7 @@ wss.on('connection', (socket, req, url) => {
   socket.on('close', () => {
     sockets.delete(socket);
     if (sockets.size === 0) mobileSockets.delete(device.uuid);
+    markMonitorChanged();
     notifyDesktopPresence(device.uuid);
   });
 });
@@ -1415,6 +1475,8 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}, shutting down remote service`);
   clearInterval(heartbeat);
+  tlsCertificateReloader?.stop();
+  stateBackup.stop();
   updateCache.stop();
   await weComNotifier.stop();
   for (const socket of wss.clients) socket.terminate();
