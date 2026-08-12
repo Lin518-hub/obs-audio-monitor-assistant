@@ -1488,6 +1488,9 @@ sshpass -p '密码' ssh liveserver@192.168.110.111 'docker logs --tail 100 obs-a
 - **服务端**：监控概览增加短缓存，状态数据每日自动备份并保留 14 份；证书文件变化可热加载；移除直播间重复设备时会清理企业微信通知状态。
 - **报警语义**：运行时已移除“单次忽略/延后检测”状态；报警只提供确认或暂停检测。旧历史记录仍兼容读取。
 - **验证**：客户端 137 + 服务端 29 测试全绿，生产构建通过；保留 `/complaint` 代理并通过回归测试。
+- **部署步骤**：备份原文件至服务器 `backups/20260812-095925-v3.9.7/` → scp 上传 `server.mjs`、`state-backup.mjs`、`tls-certificate.mjs`、`ttl-cache.mjs`、`mobile.html`、`monitor.js`、`mobile.js`、`package.json`、`package-lock.json`、`.env.example` → 服务器 sha256 与本地逐项一致 → `docker compose up -d --build obs-audio-remote`。
+- **缓存唤醒**：发布后手动触发内部更新缓存同步时，服务器回环访问公网域名会超时（hairpin NAT 限制），需用 `curl --resolve obs.huaweilive.top:8088:192.168.110.111` 指定内网地址调用 `/api/updates/sync`；当前缓存已就绪 v3.9.7。
+- **公网回归**：`/health`（ok，4 台电脑在线）、`/monitor`、`/complaint/api/server-info`、`/complaint/updates/latest.yml`、`/updates/latest.yml` 全部 200。
 
 ## 附录 C 历史部署记录（2026-08-04）
 
