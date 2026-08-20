@@ -6,7 +6,7 @@ import {
   reducePreAlertDismiss,
   reduceAlertAction,
   reduceAudioLevel,
-  reduceOutputState,
+  reduceMonitoringActive,
   secondsUntilAlert
 } from '../src/shared/silenceState.js';
 import { DEFAULT_CONFIG, type AppConfig } from '../src/shared/types.js';
@@ -26,7 +26,7 @@ describe('silence monitor state', () => {
       connected: true
     };
 
-    state = reduceOutputState(state, config, true, false, now);
+    state = reduceMonitoringActive(state, config, true, now);
     state = reduceAudioLevel(state, config, -80, now);
     expect(state.status).toBe('silent_counting');
     expect(secondsUntilAlert(state, config, now + 60_000)).toBe(60);
@@ -43,7 +43,7 @@ describe('silence monitor state', () => {
       connected: true
     };
 
-    state = reduceOutputState(state, config, true, false, now);
+    state = reduceMonitoringActive(state, config, true, now);
     state = reduceAudioLevel(state, config, -80, now);
 
     expect(isPreAlertVisible(state, config, now + 89_000)).toBe(false);
@@ -62,7 +62,7 @@ describe('silence monitor state', () => {
       connected: true
     };
 
-    state = reduceOutputState(state, config, true, false, now);
+    state = reduceMonitoringActive(state, config, true, now);
     state = reduceAudioLevel(state, config, -80, now);
 
     expect(isPreAlertVisible(state, config, now + 90_000)).toBe(true);
@@ -83,7 +83,7 @@ describe('silence monitor state', () => {
       connected: true
     };
 
-    state = reduceOutputState(state, config, true, false, now);
+    state = reduceMonitoringActive(state, config, true, now);
     state = reduceAudioLevel(state, config, -80, now);
     state = reducePreAlertDismiss(state, config, now + 90_000);
     state = reduceAudioLevel(state, config, -20, now + 95_000);
@@ -102,7 +102,7 @@ describe('silence monitor state', () => {
       connected: true
     };
 
-    state = reduceOutputState(state, config, true, false, now);
+    state = reduceMonitoringActive(state, config, true, now);
     state = reduceAudioLevel(state, config, -80, now);
     state = reduceAudioLevel(state, config, -20, now + 30_000);
 
@@ -115,6 +115,7 @@ describe('silence monitor state', () => {
     const state = reduceAlertAction(
       {
         ...initialRuntimeState,
+        monitoringActive: true,
         connected: true,
         streaming: true,
         alertVisible: true,
@@ -130,18 +131,40 @@ describe('silence monitor state', () => {
     expect(state.status).toBe('monitoring');
   });
 
-  it('does not count silence while OBS is not streaming or recording', () => {
-    const state = reduceAudioLevel(
+  it('counts silence while manually active even when OBS is not streaming or recording', () => {
+    let state = reduceMonitoringActive(
       {
         ...initialRuntimeState,
         connected: true
       },
       config,
+      true,
+      1_000
+    );
+    state = reduceAudioLevel(
+      state,
+      config,
       -80,
       1_000
     );
 
+    expect(state.silentSince).toBe(1_000);
+    expect(state.status).toBe('silent_counting');
+  });
+
+  it('clears silence immediately when monitoring stops', () => {
+    const now = 1_000;
+    let state = reduceMonitoringActive(
+      { ...initialRuntimeState, connected: true },
+      config,
+      true,
+      now
+    );
+    state = reduceAudioLevel(state, config, -80, now);
+    state = reduceMonitoringActive(state, config, false, now + 5_000);
+
     expect(state.silentSince).toBeNull();
-    expect(state.status).toBe('idle_not_streaming');
+    expect(state.alertVisible).toBe(false);
+    expect(state.status).toBe('paused');
   });
 });

@@ -211,6 +211,51 @@
   border-radius: inherit;
   z-index: 0;
 }
+.floating-recovery-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 2px rgba(74, 222, 128, .82),
+    inset 0 0 34px rgba(34, 197, 94, .48);
+  animation: floating-recovery-confirm 920ms cubic-bezier(.22,.76,.24,1) both;
+  will-change: opacity;
+}
+.floating-recovery-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 210deg,
+    rgba(134, 239, 172, .18),
+    rgba(34, 197, 94, .95),
+    rgba(187, 247, 208, .35),
+    rgba(22, 163, 74, .9),
+    rgba(134, 239, 172, .18)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+@keyframes floating-recovery-confirm {
+  0% {
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .floating-recovery-flash { animation-duration: 260ms; }
+}
 .floating-ambient::before,
 .floating-ambient::after {
   content: '';

@@ -4,7 +4,8 @@ import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../../shared/reminder
 import type { AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
 import {
-  audioStateKind, dbLevelPercent, displayStatusText, floatingEmphasis, floatingHint, floatingTone, floatingWarningProgress, formatDb, thresholdPercent
+  audioRecoveryState, audioStateKind, dbLevelPercent, displayStatusText, floatingEmphasis, floatingHint, floatingTone,
+  floatingWarningProgress, formatDb, shouldFlashAudioRecovery, thresholdPercent, type AudioRecoveryState
 } from '../utils/status';
 
 const AUDIO_FLOATING_BASE = { width: 340, height: 178 };
@@ -16,7 +17,9 @@ export const FloatingApp: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('floatingTheme') === 'light' ? 'light' : 'dark'
   );
+  const [recoveryFlashId, setRecoveryFlashId] = useState<number | null>(null);
   const stageRef = useRef<HTMLElement>(null);
+  const previousAudioState = useRef<AudioRecoveryState | null>(null);
   const meter = useAudioMeter(snapshot);
 
   useEffect(() => {
@@ -29,6 +32,15 @@ export const FloatingApp: React.FC = () => {
   const mode = snapshot?.config.floatingWindowMode ?? 'audio';
   const isMulti = mode === 'multifunction';
   const isAudioAtem = mode === 'audio_atem';
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const current = audioRecoveryState(snapshot);
+    if (shouldFlashAudioRecovery(previousAudioState.current, current)) {
+      setRecoveryFlashId((value) => (value ?? 0) + 1);
+    }
+    previousAudioState.current = current;
+  }, [snapshot?.audioSpeaking, snapshot?.monitoringActive, snapshot?.readinessReason, snapshot?.silentForSeconds]);
 
   useLayoutEffect(() => {
     if (!snapshot) return;
@@ -100,6 +112,13 @@ export const FloatingApp: React.FC = () => {
     <main ref={stageRef} className="floating-stage" style={scaleStyle}>
       <section className={`floating-shell floating-${mode.replace('_', '-')}-mode tone-${tone} theme-${theme} ${emphasis}`}>
         <div className="floating-ambient" />
+        {recoveryFlashId !== null && (
+          <div
+            key={recoveryFlashId}
+            className="floating-recovery-flash"
+            onAnimationEnd={() => setRecoveryFlashId(null)}
+          />
+        )}
         <header className="floating-header">
           <div className="floating-status">
             <span />

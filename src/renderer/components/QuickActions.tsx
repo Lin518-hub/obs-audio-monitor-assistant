@@ -10,15 +10,15 @@ interface QuickActionsProps {
 }
 
 export const QuickActions: React.FC<QuickActionsProps> = ({ snapshot, onTogglePause, onToggleFloating, onReconnect }) => {
-  const paused = snapshot.config.paused;
+  const monitoringActive = snapshot.monitoringActive;
   const floatingOn = snapshot.config.floatingWindowEnabled;
   return (
     <div className="quick-grid">
-      <button type="button" className={`quick-card ${paused ? 'active' : 'warning'}`} onClick={onTogglePause}>
-        <span className="quick-card-icon">{paused ? <Play size={18} /> : <Pause size={18} />}</span>
+      <button type="button" className={`quick-card ${monitoringActive ? 'warning' : 'active'}`} onClick={onTogglePause}>
+        <span className="quick-card-icon">{monitoringActive ? <Pause size={18} /> : <Play size={18} />}</span>
         <span className="quick-card-body">
-          <span className="quick-card-title">{paused ? '恢复检测' : '暂停检测'}</span>
-          <span className="quick-card-sub">{paused ? '当前已暂停' : '中场休息 / 调试'}</span>
+          <span className="quick-card-title">{monitoringActive ? '停止检测' : '开始检测'}</span>
+          <span className="quick-card-sub">{monitoringActive ? '当前正在检测' : '当前已停止'}</span>
         </span>
       </button>
       <button type="button" className={`quick-card ${floatingOn ? 'active' : ''}`} onClick={onToggleFloating}>

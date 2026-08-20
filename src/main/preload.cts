@@ -10,6 +10,7 @@ const obsGuardApi = {
   reconnect: () => ipcRenderer.invoke('obs:reconnect') as Promise<AppSnapshot>,
   testConnection: (patch: Partial<AppConfig>) =>
     ipcRenderer.invoke('obs:test-connection', patch) as Promise<TestConnectionResult>,
+  setMonitoringActive: (active: boolean) => ipcRenderer.invoke('monitor:set-active', active) as Promise<AppSnapshot>,
   setPaused: (paused: boolean) => ipcRenderer.invoke('monitor:set-paused', paused) as Promise<AppSnapshot>,
   setSimulatedLive: (enabled: boolean) => ipcRenderer.invoke('monitor:set-simulated-live', enabled) as Promise<AppSnapshot>,
   testAlert: () => ipcRenderer.invoke('alert:test') as Promise<AppSnapshot>,

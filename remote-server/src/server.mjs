@@ -172,6 +172,9 @@ const cleanUuid = (value) => /^[0-9a-f-]{20,64}$/i.test(String(value || '')) ? S
 function normalizeDesktopState(value) {
   const state = value && typeof value === 'object' ? { ...value } : {};
   const audio = state.audio && typeof state.audio === 'object' ? { ...state.audio } : {};
+  const obs = state.obs && typeof state.obs === 'object' ? state.obs : {};
+  const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
+  const monitoringActive = typeof obs.monitoringActive === 'boolean' ? obs.monitoringActive : live;
   const rawLevel = audio.levelDb;
   const lastMeterAt = Number(audio.lastMeterReceivedAt);
   const meterAgeMs = typeof audio.meterAgeMs === 'number' && Number.isFinite(audio.meterAgeMs)
@@ -185,7 +188,14 @@ function normalizeDesktopState(value) {
 
   audio.levelDb = hasFreshMeter ? Math.max(-100, Math.min(12, rawLevel)) : null;
   audio.meterAgeMs = Number.isFinite(meterAgeMs) ? Math.max(0, Math.min(60_000, meterAgeMs)) : null;
-  if (!hasFreshMeter) {
+  if (!monitoringActive) {
+    audio.ready = false;
+    audio.phase = 'idle';
+    audio.tone = '';
+    audio.silentForSeconds = 0;
+    audio.display = '检测已停止';
+    audio.hint = '可在电脑端手动开始，开播时也会自动开始';
+  } else if (!hasFreshMeter) {
     audio.ready = false;
     audio.phase = 'idle';
     audio.tone = '';
@@ -193,7 +203,6 @@ function normalizeDesktopState(value) {
     audio.display = '等待音频数据';
     audio.hint = Number.isFinite(lastMeterAt) && lastMeterAt > 0 ? '音频电平链路已中断' : '尚未收到 OBS 电平数据';
   } else if (audio.ready !== true && audio.display === '正在讲话') {
-    const obs = state.obs && typeof state.obs === 'object' ? state.obs : {};
     audio.display = obs.streaming || obs.recording ? '等待检测' : '等待直播/录制';
     audio.hint = obs.streaming || obs.recording ? '电脑端检测尚未就绪' : '开始直播、录制或模拟开播后检测';
   }
@@ -397,24 +406,25 @@ function monitorDevice(device) {
     : null;
   const updateAvailable = Boolean(updateAvailableVersion || updateDownloadedVersion);
   const live = obs.liveActive === true || obs.streaming === true || obs.recording === true || obs.simulatedLive === true || obs.virtualCameraActive === true;
+  const monitoringActive = typeof obs.monitoringActive === 'boolean' ? obs.monitoringActive : live;
   const audioSilentForSeconds = wholeNumber(audio.silentForSeconds);
   const audioProgress = reminderProgress(audioSilentForSeconds, AUDIO_ALERT_SECONDS);
   const audioTone = !online
     ? 'offline'
-    : live && audio.ready === true && audioSilentForSeconds >= AUDIO_ALERT_SECONDS
+    : !monitoringActive
+      ? 'idle'
+    : audio.ready === true && (audioSilentForSeconds >= AUDIO_ALERT_SECONDS || audioProgress.danger > 0)
       ? 'danger'
-      : live && audio.ready === true && audioProgress.warning > 0
+      : audio.ready === true && audioProgress.warning > 0
         ? 'warning'
-        : live && audio.ready !== true
-          ? 'warning'
-          : audio.ready === true
+        : audio.ready === true
             ? 'safe'
             : 'idle';
   const elapsedSeconds = wholeNumber(atem.elapsedSeconds);
   const limitSeconds = CAMERA_ALERT_SECONDS;
   const cameraExempt = atem.exempt === true;
   const cameraProgress = reminderProgress(elapsedSeconds, limitSeconds);
-  const cameraTone = !online || !live || atem.connected !== true
+  const cameraTone = !online || !monitoringActive || atem.connected !== true
     ? 'idle'
     : cameraExempt
       ? 'safe'
@@ -445,8 +455,8 @@ function monitorDevice(device) {
       thresholdDb: finiteNumber(audio.thresholdDb),
       silentForSeconds: audioSilentForSeconds,
       silenceDurationSeconds: AUDIO_ALERT_SECONDS,
-      warningProgress: audioProgress.warning,
-      dangerProgress: audioProgress.danger,
+      warningProgress: monitoringActive && audio.ready === true ? audioProgress.warning : 0,
+      dangerProgress: monitoringActive && audio.ready === true ? audioProgress.danger : 0,
       display: cleanText(audio.display, 80) || '等待音频数据',
       hint: cleanText(audio.hint, 160),
       lastMeterReceivedAt: finiteNumber(audio.lastMeterReceivedAt)
@@ -460,10 +470,10 @@ function monitorDevice(device) {
       previewName: cleanText(atem.inputLabels?.[atem.previewInput], 100) || '',
       elapsedSeconds,
       limitSeconds,
-      overLimit: live && !cameraExempt && elapsedSeconds >= limitSeconds,
+      overLimit: monitoringActive && !cameraExempt && elapsedSeconds >= limitSeconds,
       exempt: cameraExempt,
-      warningProgress: !live || cameraExempt ? 0 : cameraProgress.warning,
-      dangerProgress: !live || cameraExempt ? 0 : cameraProgress.danger
+      warningProgress: !monitoringActive || cameraExempt ? 0 : cameraProgress.warning,
+      dangerProgress: !monitoringActive || cameraExempt ? 0 : cameraProgress.danger
     },
     obs: {
       connected: obs.connected === true,
@@ -471,6 +481,7 @@ function monitorDevice(device) {
       recording: obs.recording === true,
       simulatedLive: obs.simulatedLive === true,
       virtualCameraActive: obs.virtualCameraActive === true,
+      monitoringActive,
       liveActive: live,
       fps: finiteNumber(obs.fps),
       cpu: finiteNumber(obs.cpu),
@@ -528,7 +539,9 @@ function monitorOverview() {
       totalDevices: room.devices.length,
       onlineDevices: room.devices.filter((device) => device.online).length,
       activeLiveDevices: room.devices.filter((device) => device.obs.liveActive).length,
-      alertCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'danger') + Number(device.atem.tone === 'danger'), 0),
+      alertCount: room.devices.reduce((count, device) => count
+        + Number(device.audio.ready && device.audio.silentForSeconds >= device.audio.silenceDurationSeconds)
+        + Number(device.atem.overLimit), 0),
       warningCount: room.devices.reduce((count, device) => count + Number(device.audio.tone === 'warning') + Number(device.atem.tone === 'warning'), 0),
       onlineMobileClients: room.devices.reduce((count, device) => count + device.onlineMobileClients, 0),
       updateAvailableDevices: room.devices.filter((device) => device.app.updateAvailable).length,

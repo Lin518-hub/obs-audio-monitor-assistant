@@ -253,16 +253,14 @@ async function initializeApp(): Promise<void> {
 
   monitor.on('snapshot', (snapshot) => {
     const previousSnapshot = latestSnapshot;
-    const liveActive = snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
-    const previousLiveActive = latestSnapshot
-      ? latestSnapshot.streaming || latestSnapshot.recording || latestSnapshot.simulatedLive || latestSnapshot.virtualCameraActive
-      : false;
-    if (!liveActive && (previousLiveActive || atemCurrentSession) && !pendingATEMSessionStop) {
+    const monitoringActive = snapshot.monitoringActive;
+    const previousMonitoringActive = latestSnapshot?.monitoringActive ?? false;
+    if (!monitoringActive && (previousMonitoringActive || atemCurrentSession) && !pendingATEMSessionStop) {
       // Capture the final interval before setLiveActive(false) resets the
       // visible timer. The session store still needs this last camera span.
       pendingATEMSessionStop = { endedAt: Date.now(), state: atemMonitor.getSnapshot() };
     }
-    atemMonitor.setLiveActive(liveActive && !snapshot.config.paused);
+    atemMonitor.setLiveActive(monitoringActive);
     const incoming = injectATEMState(snapshot);
     latestSnapshot = preserveSnapshotHistory(incoming);
     broadcastSnapshot(latestSnapshot);
@@ -480,17 +478,15 @@ function registerIpc(): void {
     };
     return monitor.testConnection(config);
   });
+  ipcMain.handle('monitor:set-active', (_event, active: boolean) => {
+    return injectATEMState(monitor.setMonitoringActive(active));
+  });
   ipcMain.handle('monitor:set-paused', async (_event, paused: boolean) => {
-    const nextConfig = await configStore.update({ paused });
-    const snapshot = injectATEMState(await monitor.updateConfig(nextConfig));
-    latestSnapshot = snapshot;
-    broadcastSnapshot(snapshot);
-    updateTray(snapshot);
-    return snapshot;
+    return injectATEMState(monitor.setMonitoringActive(!paused));
   });
   ipcMain.handle('monitor:set-simulated-live', (_event, enabled: boolean) => {
     const monitorSnapshot = monitor.setSimulatedLive(enabled);
-    atemMonitor.setLiveActive(monitorSnapshot.streaming || monitorSnapshot.recording || monitorSnapshot.simulatedLive || monitorSnapshot.virtualCameraActive);
+    atemMonitor.setLiveActive(monitorSnapshot.monitoringActive);
     const snapshot = injectATEMState(monitorSnapshot);
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
@@ -884,7 +880,7 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
 }
 
 function syncATEMLiveSession(snapshot: AppSnapshot): void {
-  const live = snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
+  const live = snapshot.monitoringActive;
   if (atemSessionTransitionPending || (live && atemCurrentSession) || (!live && !atemCurrentSession)) return;
   atemSessionTransitionPending = true;
   atemSessionQueue = atemSessionQueue.catch(() => undefined).then(async () => {
@@ -1343,8 +1339,7 @@ async function handleRemoteAdminCommand(command: RemoteAdminCommand): Promise<Re
     case 'pause_monitoring':
     case 'resume_monitoring': {
       const paused = command === 'pause_monitoring';
-      const nextConfig = await configStore.update({ paused });
-      const snapshot = injectATEMState(await monitor.updateConfig(nextConfig));
+      const snapshot = injectATEMState(monitor.setMonitoringActive(!paused));
       publishRemoteCommandSnapshot(snapshot);
       return { ok: true, message: paused ? '检测已暂停' : '检测已恢复' };
     }
@@ -2320,8 +2315,7 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
 
     let monitorSnapshot = monitor.getSnapshot();
     if (action === 'pause') {
-      const nextConfig = await configStore.update({ paused: true });
-      monitorSnapshot = await monitor.updateConfig(nextConfig);
+      monitorSnapshot = monitor.setMonitoringActive(false);
       atemMonitor.setLiveActive(false);
     }
 
@@ -2373,7 +2367,7 @@ function updateTray(snapshot: AppSnapshot): void {
   const menuKey = [
     statusText,
     snapshot.config.floatingWindowEnabled,
-    snapshot.config.paused,
+    snapshot.monitoringActive,
     updateState?.status ?? 'idle',
     updateState?.availableVersion ?? ''
   ].join('|');
@@ -2409,12 +2403,9 @@ function updateTray(snapshot: AppSnapshot): void {
         }
       },
       {
-        label: snapshot.config.paused ? '恢复检测' : '暂停检测',
+        label: snapshot.monitoringActive ? '暂停检测' : '恢复检测',
         click: () => {
-          void (async () => {
-            const nextConfig = await configStore.update({ paused: !snapshot.config.paused });
-            await monitor.updateConfig(nextConfig);
-          })();
+          monitor.setMonitoringActive(!snapshot.monitoringActive);
         }
       },
       { type: 'separator' },

@@ -3,6 +3,7 @@ import type { AlertAction, AppConfig, MonitorStatus } from './types.js';
 
 export interface MonitorRuntimeState {
   status: MonitorStatus;
+  monitoringActive: boolean;
   connected: boolean;
   streaming: boolean;
   recording: boolean;
@@ -14,6 +15,7 @@ export interface MonitorRuntimeState {
 
 export const initialRuntimeState: MonitorRuntimeState = {
   status: 'disconnected',
+  monitoringActive: false,
   connected: false,
   streaming: false,
   recording: false,
@@ -24,16 +26,12 @@ export const initialRuntimeState: MonitorRuntimeState = {
 };
 
 export function deriveStatus(state: MonitorRuntimeState, config: AppConfig, now: number): MonitorStatus {
-  if (config.paused) {
+  if (!state.monitoringActive) {
     return 'paused';
   }
 
   if (!state.connected) {
     return 'disconnected';
-  }
-
-  if (!state.streaming && !state.recording) {
-    return 'idle_not_streaming';
   }
 
   if (state.alertVisible) {
@@ -106,8 +104,7 @@ export function reduceAudioLevel(
 
   const canMonitor =
     next.connected &&
-    !config.paused &&
-    (next.streaming || next.recording);
+    next.monitoringActive;
 
   if (!canMonitor) {
     return {
@@ -151,6 +148,27 @@ export function reduceAudioLevel(
   };
 }
 
+export function reduceMonitoringActive(
+  state: MonitorRuntimeState,
+  config: AppConfig,
+  monitoringActive: boolean,
+  now: number
+): MonitorRuntimeState {
+  const next: MonitorRuntimeState = {
+    ...state,
+    monitoringActive,
+    lastLevelDb: monitoringActive ? state.lastLevelDb : null,
+    silentSince: null,
+    alertVisible: false,
+    preAlertDismissedSilentSince: null
+  };
+
+  return {
+    ...next,
+    status: deriveStatus(next, config, now)
+  };
+}
+
 export function reduceOutputState(
   state: MonitorRuntimeState,
   config: AppConfig,
@@ -158,14 +176,10 @@ export function reduceOutputState(
   recording: boolean,
   now: number
 ): MonitorRuntimeState {
-  const shouldReset = !streaming && !recording;
   const next: MonitorRuntimeState = {
     ...state,
     streaming,
-    recording,
-    silentSince: shouldReset ? null : state.silentSince,
-    alertVisible: shouldReset ? false : state.alertVisible,
-    preAlertDismissedSilentSince: shouldReset ? null : state.preAlertDismissedSilentSince
+    recording
   };
 
   return {

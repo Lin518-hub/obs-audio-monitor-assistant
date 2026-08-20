@@ -10,6 +10,7 @@ import {
   preAlertRemainingSeconds,
   reducePreAlertDismiss,
   reduceAlertAction,
+  reduceMonitoringActive,
   reduceOutputState,
   secondsUntilAlert,
   silentForSeconds,
@@ -74,7 +75,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private config: AppConfig;
   private inputs: InputOption[] = [];
   private displays: DisplayInfo[] = [];
-  private state: MonitorRuntimeState = initialRuntimeState;
+  private state: MonitorRuntimeState = { ...initialRuntimeState };
   private errorMessage: string | null = null;
   private outputTimer: NodeJS.Timeout | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
@@ -106,6 +107,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private actualStreaming = false;
   private actualRecording = false;
   private actualVirtualCamera = false;
+  private observedStreaming = false;
+  private observedRecording = false;
+  private observedVirtualCamera = false;
+  private observedSimulatedLive = false;
 
   constructor(config: AppConfig, displays: DisplayInfo[]) {
     super();
@@ -121,6 +126,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     return {
       config: this.config,
       status,
+      monitoringActive: this.state.monitoringActive,
       inputs: this.inputs,
       displays: this.displays,
       connected: this.state.connected,
@@ -204,15 +210,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.cachedTargetInputSet = null;
     }
 
-    if (this.config.paused) {
-      this.state = {
-        ...this.state,
-        silentSince: null,
-        alertVisible: false,
-        preAlertDismissedSilentSince: null
-      };
-    }
-
     if (targetsChanged) {
       this.lastTargetMeterAt = null;
       this.lastAudioMeterReceivedAt = null;
@@ -267,6 +264,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const now = Date.now();
     const resetState: MonitorRuntimeState = {
       ...this.state,
+      monitoringActive: this.actualStreaming || this.actualVirtualCamera || this.actualRecording,
       streaming: this.actualStreaming || this.actualVirtualCamera,
       recording: this.actualRecording,
       lastLevelDb: null,
@@ -331,6 +329,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     this.clearSilentInputStates();
     this.state = reduceAlertAction(this.state, this.config, action, Date.now());
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  setMonitoringActive(active: boolean): AppSnapshot {
+    this.applyMonitoringActive(active, Date.now());
     this.emitSnapshot();
     return this.getSnapshot();
   }
@@ -413,6 +417,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     this.state = {
       ...this.state,
+      monitoringActive: true,
       connected: true,
       streaming: true,
       recording: false,
@@ -450,6 +455,16 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.scheduleReconnect();
     });
     obs.on('InputVolumeMeters', (event) => this.handleVolumeMeters(event as OBSInputVolumeMetersEvent));
+    obs.on('StreamStateChanged', (event) => {
+      this.actualStreaming = Boolean(event.outputActive);
+      this.applyCurrentOutputState();
+      this.emitSnapshot();
+    });
+    obs.on('RecordStateChanged', (event) => {
+      this.actualRecording = Boolean(event.outputActive);
+      this.applyCurrentOutputState();
+      this.emitSnapshot();
+    });
     obs.on('VirtualcamStateChanged', (event) => {
       this.actualVirtualCamera = Boolean(event.outputActive);
       this.applyCurrentOutputState();
@@ -488,6 +503,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.actualStreaming = false;
     this.actualRecording = false;
     this.actualVirtualCamera = false;
+    this.observedStreaming = false;
+    this.observedRecording = false;
+    this.observedVirtualCamera = false;
+    this.observedSimulatedLive = false;
 
     if (!this.obs) {
       return;
@@ -542,24 +561,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.emitSnapshot();
     } catch (error) {
       const message = error instanceof Error ? error.message : '读取 OBS 推流/录制状态失败。';
-      const now = Date.now();
       this.errorMessage = message;
-      this.actualStreaming = false;
-      this.actualRecording = false;
-      this.actualVirtualCamera = false;
-      const next: MonitorRuntimeState = {
-        ...this.state,
-        streaming: false,
-        recording: false,
-        lastLevelDb: null,
-        silentSince: null,
-        alertVisible: false,
-        preAlertDismissedSilentSince: null
-      };
-      this.state = {
-        ...next,
-        status: deriveStatus(next, this.config, now)
-      };
       this.emitSnapshot();
     }
   }
@@ -651,14 +653,15 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   }
 
   private applyCurrentOutputState(now = Date.now()): void {
-    const wasMonitoring = this.state.streaming || this.state.recording;
-    const willMonitor = this.simulatedLive || this.actualStreaming || this.actualVirtualCamera || this.actualRecording;
-    if (!wasMonitoring && willMonitor) {
-      // Meter events continue while OBS is idle. Never inherit those old
-      // silent intervals when a new live/recording session begins.
-      this.clearSilentInputStates(false);
-      this.lastTargetMeterAt = null;
-    }
+    const wasOutputActive = this.observedSimulatedLive
+      || this.observedStreaming
+      || this.observedVirtualCamera
+      || this.observedRecording;
+    const outputActive = this.simulatedLive || this.actualStreaming || this.actualVirtualCamera || this.actualRecording;
+    const hasStartEdge = (!this.observedSimulatedLive && this.simulatedLive)
+      || (!this.observedStreaming && this.actualStreaming)
+      || (!this.observedVirtualCamera && this.actualVirtualCamera)
+      || (!this.observedRecording && this.actualRecording);
     this.state = reduceOutputState(
       this.state,
       this.config,
@@ -666,6 +669,23 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.actualRecording,
       now
     );
+    this.observedSimulatedLive = this.simulatedLive;
+    this.observedStreaming = this.actualStreaming;
+    this.observedVirtualCamera = this.actualVirtualCamera;
+    this.observedRecording = this.actualRecording;
+    if (hasStartEdge) this.applyMonitoringActive(true, now);
+    else if (wasOutputActive && !outputActive) this.applyMonitoringActive(false, now);
+  }
+
+  private applyMonitoringActive(active: boolean, now: number): void {
+    if (active === this.state.monitoringActive) {
+      return;
+    }
+
+    this.clearSilentInputStates(!active);
+    this.lastTargetMeterAt = null;
+    this.pendingMeterFrame = null;
+    this.state = reduceMonitoringActive(this.state, this.config, active, now);
   }
 
   private unavailableState(status: 'connecting' | 'disconnected'): MonitorRuntimeState {
@@ -777,7 +797,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
   private getReadinessReason(now: number): ReadinessReason {
     const targets = this.getTargetInputNames();
-    if (this.config.paused) {
+    if (!this.state.monitoringActive) {
       return 'paused';
     }
 
@@ -791,10 +811,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
     if (this.errorMessage) {
       return 'error';
-    }
-
-    if (!this.state.streaming && !this.state.recording) {
-      return 'not_streaming_or_recording';
     }
 
     if (targets.length === 0) {
@@ -868,7 +884,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.lastTargetMeterAt = Math.max(this.lastTargetMeterAt ?? 0, now);
     this.lastAudioMeterReceivedAt = Math.max(this.lastAudioMeterReceivedAt ?? 0, now);
 
-    if (!this.state.streaming && !this.state.recording) {
+    if (!this.state.monitoringActive) {
       state.silentSince = null;
       state.activeEventId = null;
       state.alertTriggered = false;
@@ -904,10 +920,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
 
   private recomputeAggregateState(now: number): void {
     const targets = this.getTargetInputNames();
-    const canMonitor =
-      this.state.connected &&
-      !this.config.paused &&
-      (this.state.streaming || this.state.recording);
+    const canMonitor = this.state.connected && this.state.monitoringActive;
 
     if (!canMonitor || targets.length === 0) {
       this.state = {

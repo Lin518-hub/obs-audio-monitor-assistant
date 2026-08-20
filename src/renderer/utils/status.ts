@@ -37,6 +37,29 @@ export const audioStateKind = (snapshot: AppSnapshot): 'normal' | 'confirming' |
   return displayedSilenceSeconds(snapshot) === 0 ? 'confirming' : 'silent';
 };
 
+export interface AudioRecoveryState {
+  kind: ReturnType<typeof audioStateKind>;
+  silentForSeconds: number;
+  monitoringActive: boolean;
+}
+
+export const audioRecoveryState = (snapshot: AppSnapshot): AudioRecoveryState => ({
+  kind: audioStateKind(snapshot),
+  silentForSeconds: displayedSilenceSeconds(snapshot),
+  monitoringActive: snapshot.monitoringActive
+});
+
+export const shouldFlashAudioRecovery = (
+  previous: AudioRecoveryState | null,
+  current: AudioRecoveryState
+): boolean => Boolean(
+  previous?.monitoringActive
+  && current.monitoringActive
+  && previous.kind === 'silent'
+  && previous.silentForSeconds >= 3
+  && current.kind === 'normal'
+);
+
 // =====================================================================
 // 状态文字
 // =====================================================================

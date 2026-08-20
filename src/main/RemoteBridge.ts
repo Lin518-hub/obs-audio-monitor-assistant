@@ -560,7 +560,8 @@ export function remoteAudioTelemetry(snapshot: AppSnapshot, now = Date.now()) {
   const hasFreshMeter = snapshot.lastLevelDb !== null
     && meterAgeMs !== null
     && meterAgeMs <= REMOTE_METER_FRESH_MS;
-  const activelyMonitoring = snapshot.readinessReason === 'ready' || snapshot.readinessReason === 'alerting';
+  const activelyMonitoring = snapshot.monitoringActive
+    && (snapshot.readinessReason === 'ready' || snapshot.readinessReason === 'alerting');
   const ready = activelyMonitoring && hasFreshMeter;
   const audioAlertVisible = snapshot.activeAlertSource === 'audio';
   const phase = !ready
@@ -656,6 +657,7 @@ function remoteTelemetry(
     obs: {
       connected: snapshot.connected, streaming: snapshot.streaming, recording: snapshot.recording,
       simulatedLive: snapshot.simulatedLive, virtualCameraActive: snapshot.virtualCameraActive,
+      monitoringActive: snapshot.monitoringActive,
       liveActive: snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive,
       fps: snapshot.obsStats.activeFps, cpu: snapshot.obsStats.cpuUsage, bitrateKbps: snapshot.obsStats.streamBitrateKbps
     },
@@ -665,7 +667,7 @@ function remoteTelemetry(
       arch: identity.arch,
       osRelease: identity.osRelease,
       mobileAccessEnabled: identity.mobileAccessEnabled,
-      paused: snapshot.config.paused,
+      paused: !snapshot.monitoringActive,
       autoUpdateEnabled: snapshot.config.autoUpdateEnabled,
       updateStatus: update?.status ?? 'idle',
       updateCurrentVersion: update?.currentVersion ?? identity.version,

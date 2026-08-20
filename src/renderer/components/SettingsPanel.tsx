@@ -48,6 +48,8 @@ interface SettingsPanelProps {
   onChangeDraft: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   updateState: UpdateSnapshot | null;
   onCheckUpdate: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
   testingConnection: boolean;
   testResult: TestConnectionResult | null;
   onTestConnection: () => void;
@@ -218,6 +220,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     onChangeDraft,
     updateState,
     onCheckUpdate,
+    onDownloadUpdate,
+    onInstallUpdate,
     testingConnection,
     testResult,
     onTestConnection,
@@ -512,7 +516,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                   summary={updateSummary}
                   tone={updateState?.status === 'available' || updateState?.status === 'downloaded' ? 'warning' : 'default'}
                 >
-                  <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} />
+                  <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} />
                 </SettingsDisclosure>
                 <SettingsDisclosure
                   {...disclosureState('system-history')}

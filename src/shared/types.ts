@@ -436,6 +436,8 @@ export interface DisplayInfo {
 export interface AppSnapshot {
   config: AppConfig;
   status: MonitorStatus;
+  /** Current session detection switch. OBS output edges and manual actions both control it. */
+  monitoringActive: boolean;
   inputs: InputOption[];
   displays: DisplayInfo[];
   connected: boolean;

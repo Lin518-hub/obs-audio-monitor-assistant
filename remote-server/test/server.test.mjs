@@ -330,6 +330,66 @@ test('protects and aggregates the live room monitor', async () => {
   assert.equal(backupRoom.devices[0].atem.overLimit, true);
   assert.equal(backupRoom.devices[0].atem.tone, 'danger');
 
+  backup.socket.send(JSON.stringify({
+    type: 'state',
+    state: {
+      timestamp: Date.now(),
+      audio: {
+        ready: true, phase: 'speaking', tone: 'safe', inputName: '备用麦克风', levelDb: -22,
+        thresholdDb: -55, silentForSeconds: 0, silenceDurationSeconds: 120, display: '正在讲话',
+        hint: '音频正常', lastMeterReceivedAt: Date.now(), meterAgeMs: 100
+      },
+      atem: { connected: true, programInput: 3, elapsedSeconds: 650 },
+      obs: { connected: true, streaming: true, monitoringActive: false }
+    }
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const manuallyStopped = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  const stoppedDevice = manuallyStopped.body.rooms.find((item) => item.name === '品牌二号直播间').devices[0];
+  assert.equal(stoppedDevice.obs.liveActive, true);
+  assert.equal(stoppedDevice.obs.monitoringActive, false);
+  assert.equal(stoppedDevice.audio.ready, false);
+  assert.equal(stoppedDevice.audio.tone, 'idle');
+  assert.equal(stoppedDevice.audio.display, '检测已停止');
+  assert.equal(stoppedDevice.atem.tone, 'idle');
+
+  const sendActiveAudio = async (audio) => {
+    backup.socket.send(JSON.stringify({
+      type: 'state',
+      state: {
+        timestamp: Date.now(),
+        audio,
+        atem: { connected: false, elapsedSeconds: 0 },
+        obs: { connected: true, streaming: false, monitoringActive: true }
+      }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const current = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+    return current.body.rooms.find((item) => item.name === '品牌二号直播间').devices[0];
+  };
+  const noMeterDevice = await sendActiveAudio({
+    ready: false, phase: 'idle', inputName: '备用麦克风', levelDb: null,
+    silentForSeconds: 0, display: '等待音频数据', lastMeterReceivedAt: null
+  });
+  assert.equal(noMeterDevice.audio.tone, 'idle');
+  assert.equal(noMeterDevice.audio.display, '等待音频数据');
+
+  const meterState = (silentForSeconds) => ({
+    ready: true, phase: 'silent', tone: 'safe', inputName: '备用麦克风', levelDb: -72,
+    thresholdDb: -55, silentForSeconds, silenceDurationSeconds: 120, display: `${silentForSeconds}s`,
+    hint: `${120 - silentForSeconds}s 后报警`, lastMeterReceivedAt: Date.now(), meterAgeMs: 100
+  });
+  const quarterDevice = await sendActiveAudio(meterState(30));
+  assert.equal(quarterDevice.audio.tone, 'safe');
+  assert.equal(quarterDevice.audio.warningProgress, 0);
+  const halfwayDevice = await sendActiveAudio(meterState(60));
+  assert.equal(halfwayDevice.audio.tone, 'warning');
+  assert.equal(halfwayDevice.audio.warningProgress > 0, true);
+  const nearAlertDevice = await sendActiveAudio(meterState(109));
+  assert.equal(nearAlertDevice.audio.tone, 'danger');
+  assert.equal(nearAlertDevice.audio.dangerProgress > 0, true);
+  assert.equal(nearAlertDevice.audio.silentForSeconds < nearAlertDevice.audio.silenceDurationSeconds, true);
+
   primary.clear();
   const commandRequest = request(`/api/monitor/devices/${devices[0].uuid}/commands`, {
     method: 'POST',

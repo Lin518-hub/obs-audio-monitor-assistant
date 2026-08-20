@@ -309,7 +309,7 @@ function SettingsApp() {
                 <span>{pageTitle}</span>
               </h1>
               <p className="page-header-subtitle">
-                {snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName || '未选择音源'} · 检测中{search ? ` · 搜索 "${search}"` : ''}
+                {snapshot.activeInputName || snapshot.config.targetInputNames.join('、') || snapshot.config.targetInputName || '未选择音源'} · {snapshot.monitoringActive ? '检测中' : '检测已停止'}{search ? ` · 搜索 "${search}"` : ''}
               </p>
             </div>
           </div>
@@ -324,7 +324,7 @@ function SettingsApp() {
 
           <QuickActions
             snapshot={snapshot}
-            onTogglePause={() => void window.obsGuard.setPaused(!snapshot.config.paused)}
+            onTogglePause={() => void window.obsGuard.setMonitoringActive(!snapshot.monitoringActive)}
             onToggleFloating={() => void window.obsGuard.setFloatingWindowVisible(!snapshot.config.floatingWindowEnabled)}
             onReconnect={() => void window.obsGuard.reconnect()}
           />
@@ -415,6 +415,8 @@ function SettingsApp() {
         onChangeDraft={updateDraft}
         updateState={updateState}
         onCheckUpdate={() => void checkForUpdates()}
+        onDownloadUpdate={() => void window.obsGuard.downloadUpdate()}
+        onInstallUpdate={() => void window.obsGuard.installUpdate()}
         testingConnection={testingConnection}
         testResult={testResult}
         onTestConnection={() => void testConnection()}

@@ -129,6 +129,7 @@ describe('system proxy routing', () => {
 describe('remote audio telemetry', () => {
   const snapshot = (patch: Partial<AppSnapshot>): AppSnapshot => ({
     connected: true,
+    monitoringActive: true,
     streaming: true,
     recording: false,
     simulatedLive: false,

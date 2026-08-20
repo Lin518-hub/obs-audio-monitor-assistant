@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { BellRing, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
+import { Activity, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES = [
-  { icon: BellRing, title: '报警处理更直接', detail: '正式报警可直接确认或暂停检测，不再进入延后忽略状态。' },
-  { icon: MonitorUp, title: '浮窗显示更稳定', detail: '优化缩放过程、恢复尺寸后的文字比例，以及 Windows 圆角边缘。' },
-  { icon: Radio, title: '远程连接更平稳', detail: '监控中心断线后采用逐步退避重连，降低网络异常时的额外开销。' },
-  { icon: ShieldCheck, title: '现场问题更可追溯', detail: '主进程日志会安全保留，异常摘要可在监控中心查看；原有设置完整保留。' }
+  { icon: Activity, title: '检测可以手动控制', detail: '未开播时也能主动开始检测；OBS 开播、录制或虚拟摄像头仍会自动接管。' },
+  { icon: MonitorUp, title: '恢复状态更醒目', detail: '连续静音超过 3 秒后恢复讲话，小浮窗会显示一次绿色确认光晕。' },
+  { icon: Radio, title: '提醒节奏保持一致', detail: '小浮窗与监控中心统一使用渐黄、渐红的提醒进度，无数据时保持灰色等待。' },
+  { icon: ShieldCheck, title: '原有设置保持不变', detail: '更新不会清空音源、机位、窗口位置或直播间配置。' }
 ];
 
 export const ReleaseNotesDialog: React.FC<{

@@ -24,6 +24,7 @@ export interface ObsGuardApi {
   refreshInputs: () => Promise<InputOption[]>;
   reconnect: () => Promise<AppSnapshot>;
   testConnection: (patch: Partial<AppConfig>) => Promise<TestConnectionResult>;
+  setMonitoringActive: (active: boolean) => Promise<AppSnapshot>;
   setPaused: (paused: boolean) => Promise<AppSnapshot>;
   setSimulatedLive: (enabled: boolean) => Promise<AppSnapshot>;
   testAlert: () => Promise<AppSnapshot>;

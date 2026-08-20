@@ -1137,7 +1137,9 @@ export const UpdatesSection: React.FC<{
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   updateState: UpdateSnapshot | null;
   onCheck: () => void;
-}> = ({ draft, onChange, updateState, onCheck }) => {
+  onDownload: () => void;
+  onInstall: () => void;
+}> = ({ draft, onChange, updateState, onCheck, onDownload, onInstall }) => {
   if (!updateState) {
     return <Section id="settings-updates" icon={Download} title="软件更新" description="正在加载…"><div className="empty-block">正在加载更新信息</div></Section>;
   }
@@ -1174,6 +1176,17 @@ export const UpdatesSection: React.FC<{
           <div className="update-progress"><span style={{ width: `${updateState.percent ?? 0}%` }} /></div>
         )}
         <div className="update-actions">
+          {updateState.status === 'available' && (
+            <button type="button" className="btn-primary" onClick={onDownload} disabled={busy}>
+              <Download size={14} />
+              {updateState.installMode === 'manual' ? '立即下载' : '立即下载并准备安装'}
+            </button>
+          )}
+          {updateState.status === 'downloaded' && (
+            <button type="button" className="btn-primary" onClick={onInstall}>
+              {updateState.installMode === 'manual' ? '在 Finder 中显示安装包' : '立即安装并重启'}
+            </button>
+          )}
           <button type="button" className="btn-secondary" onClick={onCheck} disabled={!canCheck}>
             <RefreshCw size={14} />
             {updateState.status === 'checking'

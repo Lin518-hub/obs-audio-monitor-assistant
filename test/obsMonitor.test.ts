@@ -48,11 +48,13 @@ describe('OBSMonitor test alert', () => {
     const simulated = monitor.setSimulatedLive(true);
     expect(simulated.simulatedLive).toBe(true);
     expect(simulated.streaming).toBe(true);
+    expect(simulated.monitoringActive).toBe(true);
     expect(simulated.status).toBe('disconnected');
 
     const stopped = monitor.setSimulatedLive(false);
     expect(stopped.simulatedLive).toBe(false);
     expect(stopped.streaming).toBe(false);
+    expect(stopped.monitoringActive).toBe(false);
 
     await monitor.stop();
   });
@@ -114,7 +116,7 @@ describe('OBSMonitor test alert', () => {
   it('only establishes speaking after the meter crosses the configured threshold', async () => {
     const monitor = new OBSMonitor(config, displays);
     const internals = monitor as unknown as {
-      state: { connected: boolean; streaming: boolean };
+      state: { connected: boolean; streaming: boolean; monitoringActive: boolean };
       ensureInputState: (name: string, kind: string) => unknown;
       updateInputLevel: (state: unknown, levelDb: number, now: number) => void;
       recomputeAggregateState: (now: number) => void;
@@ -122,6 +124,7 @@ describe('OBSMonitor test alert', () => {
     const input = internals.ensureInputState('Mic', 'wasapi_input_capture');
     internals.state.connected = true;
     internals.state.streaming = true;
+    internals.state.monitoringActive = true;
     const now = Date.now();
 
     internals.updateInputLevel(input, -70, now);
@@ -174,11 +177,65 @@ describe('OBSMonitor test alert', () => {
     expect(input.silentSince).toBeNull();
     expect(monitor.getSnapshot(now)).toMatchObject({
       streaming: true,
+      monitoringActive: true,
       alertVisible: false,
       preAlertVisible: false,
       silentForSeconds: 0,
       readinessReason: 'no_target_meter'
     });
+    await monitor.stop();
+  });
+
+  it('keeps a manual stop for the current output session and lets the next output edge take over', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const internals = monitor as unknown as {
+      actualStreaming: boolean;
+      applyCurrentOutputState: (now: number) => void;
+    };
+    const now = Date.now();
+
+    internals.actualStreaming = true;
+    internals.applyCurrentOutputState(now);
+    expect(monitor.getSnapshot(now).monitoringActive).toBe(true);
+
+    monitor.setMonitoringActive(false);
+    internals.applyCurrentOutputState(now + 1_000);
+    expect(monitor.getSnapshot(now + 1_000).monitoringActive).toBe(false);
+
+    internals.actualStreaming = false;
+    internals.applyCurrentOutputState(now + 2_000);
+    expect(monitor.getSnapshot(now + 2_000).monitoringActive).toBe(false);
+
+    internals.actualStreaming = true;
+    internals.applyCurrentOutputState(now + 3_000);
+    expect(monitor.getSnapshot(now + 3_000).monitoringActive).toBe(true);
+    await monitor.stop();
+  });
+
+  it('starts again when another OBS output begins and stops only after every output ends', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const internals = monitor as unknown as {
+      actualStreaming: boolean;
+      actualRecording: boolean;
+      applyCurrentOutputState: (now: number) => void;
+    };
+    const now = Date.now();
+
+    internals.actualStreaming = true;
+    internals.applyCurrentOutputState(now);
+    monitor.setMonitoringActive(false);
+
+    internals.actualRecording = true;
+    internals.applyCurrentOutputState(now + 1_000);
+    expect(monitor.getSnapshot(now + 1_000).monitoringActive).toBe(true);
+
+    internals.actualStreaming = false;
+    internals.applyCurrentOutputState(now + 2_000);
+    expect(monitor.getSnapshot(now + 2_000).monitoringActive).toBe(true);
+
+    internals.actualRecording = false;
+    internals.applyCurrentOutputState(now + 3_000);
+    expect(monitor.getSnapshot(now + 3_000).monitoringActive).toBe(false);
     await monitor.stop();
   });
 
