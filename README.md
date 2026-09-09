@@ -20,6 +20,11 @@ OBS 音频检测助手通过连接 OBS WebSocket，读取 OBS 状态、输入源
 - Mac 用户下载 `OBS-Audio-Monitor-Assistant-*-arm64.zip`，解压后运行其中的 `.app`。当前仅支持 Apple Silicon Mac，不支持 Intel x86 Mac。
 - macOS 版本尚未进行 Apple Developer 签名和公证。若系统提示“文件已损坏”或无法打开，通常是 Gatekeeper 隔离标记导致，可在终端执行 `sudo xattr -cr /Applications/OBS\ 音频检测助手.app` 后再打开。正式商用分发建议配置 Apple Developer ID 签名与 notarization。
 
+## V3.9.10 版本说明
+
+- 修复已打开的普通软件窗口无法保存或恢复位置；保存结果明确显示失败软件及旧位置保留状态。
+- 原“固定位置”统计改为“已存布局”，避免与本次保存数量混淆。
+
 ## V3.9.9 版本说明
 
 - 一键开播增加毛玻璃动态进度弹窗，显示实际启动步骤、窗口恢复和投影状态。

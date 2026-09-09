@@ -267,14 +267,18 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       const captured = await window.obsGuard.capturePreflightLayout(settings);
       if (captured.captured.length > 0) onChange('preflightWindowPlacements', captured.placements);
       if (captured.captured.includes('obs_projector')) onChange('preflightProjector', { ...draft.preflightProjector, enabled: true, restoreWindowPosition: true });
-      const failures = Object.values(captured.failures).filter(Boolean);
+      const failures = Object.entries(captured.failures).filter(([, message]) => Boolean(message)).map(([id, message]) => {
+        const name = id === 'obs_projector' ? 'OBS 节目输出投影' : appDisplayName(id as PreflightAppId, draft.preflightApps[id as PreflightAppId]?.customLabel);
+        const retained = captured.placements[id as keyof typeof captured.placements] ? '（保留上次保存的位置）' : '';
+        return `${name}：${message}${retained}`;
+      });
       if (captured.captured.length === 0) {
         setNotice({
           tone: 'warning',
-          text: failures[0] || '没有可保存的窗口。请先打开软件，并选择下方需要恢复位置的项目。'
+          text: failures.join('；') || '没有可保存的窗口。请先打开软件，并选择下方需要恢复位置的项目。'
         });
       } else if (failures.length > 0) {
-        setNotice({ tone: 'warning', text: `已保存 ${captured.captured.length} 个窗口位置；${failures.join('；')}` });
+        setNotice({ tone: 'warning', text: `本次已保存 ${captured.captured.length}/${captured.captured.length + failures.length} 个窗口位置；${failures.join('；')}` });
       } else {
         setNotice({ tone: 'success', text: `已保存 ${captured.captured.length} 个窗口位置，下次由助手启动时会自动恢复。` });
       }
@@ -353,7 +357,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
         <div className="preflight-summary-stats">
           <div><strong>{configuredCount}/{enabledIds.length}</strong><span>已配置</span></div>
           <div><strong>{runningCount}/{enabledIds.length}</strong><span>运行中</span></div>
-          <div><strong>{savedLayoutCount}</strong><span>固定位置</span></div>
+          <div><strong>{savedLayoutCount}</strong><span title="已存储的位置数量，包含上次保存的位置；不代表本次识别到的窗口数量">已存布局</span></div>
           <small>{result ? `${platformName(result.platform)} · ${formatTime(result.checkedAt)}` : '正在读取系统状态'}</small>
         </div>
       </section>

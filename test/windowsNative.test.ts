@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { WindowsWindowManager, selectOBSProjectorWindow } from '../src/main/windowsWindowManager';
+import { WindowsWindowManager, selectMainWindow, selectOBSProjectorWindow } from '../src/main/windowsWindowManager';
 
 // Runs on the Windows release runner against real Win32 windows, not UI mocks.
 describe.skipIf(process.platform !== 'win32')('Windows native projector layout', () => {
@@ -19,7 +19,10 @@ $projector.SetBounds(100,100,480,300)
 $preview = New-Object System.Windows.Forms.Form
 $preview.Text = '投影 - 预览'
 $preview.SetBounds(200,200,480,300)
-$main.Show(); $projector.Show(); $preview.Show()
+$ordinary = New-Object System.Windows.Forms.Form
+$ordinary.Text = '直播工作台'
+$ordinary.SetBounds(300,300,960,540)
+$main.Show(); $projector.Show(); $preview.Show(); $ordinary.Show()
 [Console]::WriteLine('READY')
 $deadline = [DateTime]::UtcNow.AddSeconds(90)
 while ([DateTime]::UtcNow -lt $deadline) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
@@ -35,6 +38,10 @@ while ([DateTime]::UtcNow -lt $deadline) { [System.Windows.Forms.Application]::D
       const manager = new WindowsWindowManager();
       const before = await manager.listWindows([child.pid!]);
       console.log('Native fixture windows:', JSON.stringify(before));
+      const ordinary = selectMainWindow(before.filter(w => w.title === '直播工作台'));
+      expect(ordinary, JSON.stringify(before)).not.toBeNull();
+      const ordinaryBounds = { x: 40, y: 50, width: 800, height: 500 };
+      await manager.moveWindow(ordinary!.handle, ordinaryBounds, 'normal');
       const projector = selectOBSProjectorWindow(before);
       expect(projector?.title).toBe('投影 - 输出');
       const main = before.find(w => w.title.startsWith('OBS 32'));
@@ -43,6 +50,7 @@ while ([DateTime]::UtcNow -lt $deadline) { [System.Windows.Forms.Application]::D
       await manager.moveWindow(projector!.handle, bounds, 'normal');
       const after = await manager.listWindows([child.pid!]);
       expect(after.find(w => w.handle === projector!.handle)?.bounds).toEqual(bounds);
+      expect(after.find(w => w.handle === ordinary!.handle)?.bounds).toEqual(ordinaryBounds);
       expect(after.find(w => w.handle === main!.handle)?.bounds).toEqual(main!.bounds);
     } finally {
       if (child.exitCode === null && child.signalCode === null) {

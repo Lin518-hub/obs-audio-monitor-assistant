@@ -117,7 +117,9 @@ Start-Process -FilePath ([string]$payload.target) -Verb RunAs
   }
 }
 
-export function selectMainWindow(windows: WindowsTopLevelWindow[]): WindowsTopLevelWindow | null {
+export function selectMainWindow(windows: WindowsTopLevelWindow[], isOBS = false): WindowsTopLevelWindow | null {
+  // Only OBS windows can be excluded by projector heuristics.
+  if (!isOBS) return [...windows].sort((a, b) => b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height)[0] ?? null;
   const projector = selectOBSProjectorWindow(windows);
   // 优先选择标题明确标识 OBS 主窗口（版本号/配置文件/场景集合）的窗口，
   // 避免竖屏或超大投影窗口（面积可能大于主窗口）被误当成主窗口保存。

@@ -98,7 +98,7 @@ export class PreflightCheckService {
       if (!settings.apps[id].enabled || !settings.apps[id].restoreWindowPosition) continue;
       try {
         const windows = await this.windowsForApp(id, settings.apps, processes);
-        const mainWindow = selectMainWindow(windows);
+        const mainWindow = selectMainWindow(windows, id === 'obs');
         if (!mainWindow) throw new Error('未找到可保存的主窗口，请先打开该软件');
         placements[id] = captureWindowPlacement(mainWindow.bounds, mainWindow.windowState, displays, capturedAt);
         captured.push(id);
@@ -351,7 +351,7 @@ export class PreflightCheckService {
       const windows = await this.windowsForApp(id, configs, await readProcessList());
       const mainWindow = selectMainWindow(excludedHandles
         ? windows.filter((window) => !excludedHandles.has(window.handle))
-        : windows);
+        : windows, id === 'obs');
       if (mainWindow) {
         await this.restoreWindow(mainWindow, placement);
         return;

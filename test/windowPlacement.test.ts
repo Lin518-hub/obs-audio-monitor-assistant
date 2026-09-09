@@ -105,7 +105,7 @@ describe('preflight window placement', () => {
       { handle: 'projector', pid: 10, title: '直播画布', bounds: { x: 1920, y: 0, width: 960, height: 540 }, windowState: 'normal' as const }
     ];
     expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
-    expect(selectMainWindow(windows)?.handle).toBe('main');
+    expect(selectMainWindow(windows, true)?.handle).toBe('main');
   });
 
   it('recognizes portrait 9:16 projectors commonly used by e-commerce livestreams', () => {
@@ -125,7 +125,7 @@ describe('preflight window placement', () => {
       { handle: 'projector', pid: 10, title: 'Program', bounds: { x: 200, y: 0, width: 1080, height: 1920 }, windowState: 'normal' as const }
     ];
     expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
-    expect(selectMainWindow(windows)?.handle).toBe('main');
+    expect(selectMainWindow(windows, true)?.handle).toBe('main');
   });
 
   it('does not mistake a portrait projector for the main window when the title only says Program', () => {
@@ -133,7 +133,7 @@ describe('preflight window placement', () => {
       { handle: 'main', pid: 10, title: 'OBS 31.0.0 - 配置文件: 默认', bounds: { x: 0, y: 0, width: 1400, height: 800 }, windowState: 'normal' as const },
       { handle: 'projector', pid: 10, title: '节目', bounds: { x: 100, y: 0, width: 1080, height: 1920 }, windowState: 'normal' as const }
     ];
-    expect(selectMainWindow(windows)?.handle).toBe('main');
+    expect(selectMainWindow(windows, true)?.handle).toBe('main');
     expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
   });
 });
@@ -142,4 +142,17 @@ it('does not accept preview or the OBS main window as a newly opened output proj
   const base = { pid: 10, bounds: { x: 0, y: 0, width: 960, height: 540 }, windowState: 'normal' as const };
   expect(selectNewOBSProjectorWindow([{ ...base, handle: 'main', title: 'OBS 32.0' }])).toBeNull();
   expect(selectNewOBSProjectorWindow([{ ...base, handle: 'preview', title: '投影 - 预览' }])).toBeNull();
+});
+
+ it.each(['Google Chrome', '直播伴侣', '软件控制', 'Program'])('keeps a single ordinary application window: %s', (title) => {
+  const window = { handle: 'app', pid: 20, title, bounds: { x: 100, y: 200, width: 960, height: 540 }, windowState: 'normal' as const };
+  expect(selectMainWindow([window])).toEqual(window);
+});
+
+it('selects the largest ordinary app window without OBS title heuristics', () => {
+  const base = { pid: 20, windowState: 'normal' as const };
+  const main = { ...base, handle: 'main', title: '直播画布', bounds: { x: 0, y: 0, width: 1280, height: 720 } };
+  const dialog = { ...base, handle: 'dialog', title: '设置', bounds: { x: 0, y: 0, width: 400, height: 300 } };
+  expect(selectMainWindow([dialog, main])).toEqual(main);
+  expect(selectMainWindow([])).toBeNull();
 });
