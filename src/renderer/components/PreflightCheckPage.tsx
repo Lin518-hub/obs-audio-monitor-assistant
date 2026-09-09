@@ -266,6 +266,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     try {
       const captured = await window.obsGuard.capturePreflightLayout(settings);
       if (captured.captured.length > 0) onChange('preflightWindowPlacements', captured.placements);
+      if (captured.captured.includes('obs_projector')) onChange('preflightProjector', { ...draft.preflightProjector, enabled: true, restoreWindowPosition: true });
       const failures = Object.values(captured.failures).filter(Boolean);
       if (captured.captured.length === 0) {
         setNotice({

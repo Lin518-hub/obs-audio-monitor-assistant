@@ -605,7 +605,10 @@ function registerIpc(): void {
       const current = monitor.getSnapshot().config;
       const placements = { ...current.preflightWindowPlacements };
       for (const target of captured.captured) placements[target] = captured.placements[target];
-      const config = await configStore.update({ preflightWindowPlacements: placements });
+      const config = await configStore.update({
+        preflightWindowPlacements: placements,
+        ...(captured.captured.includes('obs_projector') ? { preflightProjector: { ...current.preflightProjector, enabled: true, restoreWindowPosition: true } } : {})
+      });
       await monitor.updateConfig(config);
       captured.placements = config.preflightWindowPlacements;
     }
