@@ -34,14 +34,16 @@ while ([DateTime]::UtcNow -lt $deadline) { [System.Windows.Forms.Application]::D
       });
       const manager = new WindowsWindowManager();
       const before = await manager.listWindows([child.pid!]);
+      console.log('Native fixture windows:', JSON.stringify(before));
       const projector = selectOBSProjectorWindow(before);
       expect(projector?.title).toBe('投影 - 输出');
-      const main = before.find(w => w.title.startsWith('OBS 32'))!;
+      const main = before.find(w => w.title.startsWith('OBS 32'));
+      expect(main, JSON.stringify(before)).toBeDefined();
       const bounds = { x: 60, y: 80, width: 520, height: 340 };
       await manager.moveWindow(projector!.handle, bounds, 'normal');
       const after = await manager.listWindows([child.pid!]);
       expect(after.find(w => w.handle === projector!.handle)?.bounds).toEqual(bounds);
-      expect(after.find(w => w.handle === main.handle)?.bounds).toEqual(main.bounds);
+      expect(after.find(w => w.handle === main!.handle)?.bounds).toEqual(main!.bounds);
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, 'exit'); child.kill(); await exited;
