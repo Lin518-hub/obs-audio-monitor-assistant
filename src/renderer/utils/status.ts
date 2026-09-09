@@ -60,6 +60,15 @@ export const shouldFlashAudioRecovery = (
   && current.kind === 'normal'
 );
 
+export const shouldFlashAudioSilence = (
+  previous: AudioRecoveryState | null,
+  current: AudioRecoveryState
+): boolean => Boolean(
+  previous?.monitoringActive && current.monitoringActive
+  && (previous.kind === 'normal' || previous.kind === 'confirming')
+  && current.kind === 'silent' && current.silentForSeconds >= 3
+);
+
 // =====================================================================
 // 状态文字
 // =====================================================================

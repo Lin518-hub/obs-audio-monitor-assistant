@@ -18,6 +18,10 @@ import type {
 } from './types.js';
 
 export interface ObsGuardApi {
+  floatingResize: (phase: 'start' | 'move' | 'end', edge?: string) => Promise<void>;
+  respondMonitoringPrompt: (accept: boolean) => Promise<void>;
+  onWindowShown: (callback: () => void) => () => void;
+  onPreflightProgress: (callback: (progress: import('./types.js').PreflightProgress) => void) => () => void;
   getSnapshot: () => Promise<AppSnapshot>;
   saveConfig: (patch: Partial<AppConfig>) => Promise<AppSnapshot>;
   resetConfig: () => Promise<AppSnapshot>;

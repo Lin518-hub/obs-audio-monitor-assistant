@@ -88,7 +88,7 @@ export class PreflightCheckService {
       };
     }
 
-    const processes = await readProcessList();
+    const processes = await readProcessList(true);
     const displays = await this.placementDisplays();
     const placements = { ...settings.windowPlacements };
     const captured: PreflightPlacementTarget[] = [];
@@ -158,7 +158,7 @@ export class PreflightCheckService {
     return { ...(await this.check(settings.apps, true)), launched, failures, restored, restoreFailures, projector: null };
   }
 
-  async launchAll(settings: PreflightSettings): Promise<PreflightLaunchResult> {
+  async launchAll(settings: PreflightSettings, report: (message: string, percent: number) => void = () => {}): Promise<PreflightLaunchResult> {
     const before = await this.check(settings.apps, true);
     const failures: Partial<Record<PreflightAppId, string>> = {};
     const launched: PreflightAppId[] = [];
@@ -166,9 +166,14 @@ export class PreflightCheckService {
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
     const existingWindowHandles: Partial<Record<PreflightAppId, Set<string>>> = {};
     let shouldResolveOBSStartupDialogs = false;
+    const enabledCount = PREFLIGHT_APP_IDS.filter(id => settings.apps[id].enabled).length;
+    let processed = 0;
+    const names = { obs: 'OBS', douyin: '直播平台', browser: '浏览器', cosmic_cat: '宇宙猫', software_control: '软件控制'  };
 
     for (const id of PREFLIGHT_APP_IDS) {
       if (!settings.apps[id].enabled) continue;
+      const label = settings.apps[id].customLabel || names[id];
+      report(`正在检查并启动 ${label}`, Math.round(processed++ / Math.max(1, enabledCount) * 60));
       const alreadyRunning = before.apps.find((app) => app.id === id)?.state === 'running';
       if (id === 'obs' && alreadyRunning) {
         shouldResolveOBSStartupDialogs = true;
@@ -189,10 +194,14 @@ export class PreflightCheckService {
     }
 
     if (shouldResolveOBSStartupDialogs) {
+      report('正在等待 OBS 主窗口就绪', 62);
       await this.resolveOBSStartupDialogs(settings.apps);
     }
 
-    await Promise.all(launched.map(async (id) => {
+    report('正在恢复已保存的窗口布局', 70);
+    const restoreTargets = PREFLIGHT_APP_IDS.filter((id) => settings.apps[id].enabled && !failures[id]
+      && (launched.includes(id) || before.apps.some((app) => app.id === id && app.state === 'running')));
+    await Promise.all(restoreTargets.map(async (id) => {
       const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
       if (!placement) return;
       try {
@@ -232,8 +241,18 @@ export class PreflightCheckService {
       processes = await readProcessList(true);
       pids = findPreflightProcesses('obs', processes, configs.obs.path, resolvedPath).map((process) => process.pid);
     }
-    const windows = await this.windows.waitForNewWindows(pids, existingHandles, timeoutMs);
-    return this.rememberOBSProjector(selectNewOBSProjectorWindow(windows));
+    const deadline = Date.now() + timeoutMs;
+    const ignoredHandles = new Set(existingHandles);
+    while (Date.now() < deadline) {
+      const windows = await this.windows.waitForNewWindows(pids, ignoredHandles, Math.max(250, deadline - Date.now()));
+      const projector = selectNewOBSProjectorWindow(windows);
+      if (projector) return this.rememberOBSProjector(projector);
+      // A startup dialog or preview window may appear before the output projector.
+      // Ignore only those handles and continue waiting within the same deadline.
+      for (const window of windows) ignoredHandles.add(window.handle);
+      if (windows.length === 0) break;
+    }
+    return null;
   }
 
   async listOBSWindowHandles(configs: PreflightAppConfigs): Promise<Set<string>> {

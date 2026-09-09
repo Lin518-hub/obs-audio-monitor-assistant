@@ -13,6 +13,7 @@ import './styles/windows.css';
 import './styles/dialogs.css';
 import './styles/onboarding.css';
 import './styles/preflight.css';
+import './styles/themes.css';
 
 import { Activity, ArrowRight, BarChart3, Cable, Clock3, Download, Gauge, Info, ListChecks, Mic2, TestTube2, Timer, Video } from 'lucide-react';
 import { Sidebar, type SidebarPage } from './components/Sidebar';
@@ -33,6 +34,7 @@ import { AlertApp } from './components/AlertApp';
 import { AlertBackdropApp } from './components/AlertBackdropApp';
 import { PreAlertApp } from './components/PreAlertApp';
 import { FloatingApp } from './components/FloatingApp';
+import { MonitoringPromptApp } from './components/MonitoringPromptApp';
 import { ToastAlertApp } from './components/ToastAlertApp';
 import { StyledSelect } from './components/StyledSelect';
 import { PreflightCheckPage } from './components/PreflightCheckPage';
@@ -61,6 +63,7 @@ const route =
     : window.location.hash === '#alert-backdrop' ? 'alert-backdrop'
     : window.location.hash === '#toast-alert' ? 'toast-alert'
     : window.location.hash === '#prealert' ? 'prealert'
+    : window.location.hash === '#monitor-prompt' ? 'monitor-prompt'
     : window.location.hash === '#floating' ? 'floating'
     : 'settings';
 
@@ -68,6 +71,17 @@ const initialSettingsPage = new URLSearchParams(window.location.hash.split('?')[
 
 document.body.dataset.route = route;
 document.documentElement.dataset.route = route;
+if (route !== 'settings') {
+  const applyTheme = (snapshot: AppSnapshot) => { document.documentElement.dataset.theme = snapshot.config.themeColor ?? 'green'; };
+  void window.obsGuard.getSnapshot().then(applyTheme);
+  const disposeTheme = window.obsGuard.onSnapshot(applyTheme);
+  if (import.meta.hot) import.meta.hot.dispose(disposeTheme);
+}
+const disposeWindowShown = window.obsGuard.onWindowShown(() => {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  rootElement.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+});
+if (import.meta.hot) import.meta.hot.dispose(disposeWindowShown);
 
 class RendererErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -104,6 +118,7 @@ root.render(
       : route === 'alert-backdrop' ? <AlertBackdropApp />
       : route === 'toast-alert' ? <ToastAlertApp />
       : route === 'prealert' ? <PreAlertApp />
+      : route === 'monitor-prompt' ? <MonitoringPromptApp />
       : route === 'floating' ? <FloatingApp />
       : <SettingsApp />}
   </RendererErrorBoundary>
@@ -164,6 +179,9 @@ function SettingsApp() {
   const [page, setPage] = useState<SidebarPage>(initialSettingsPage === 'preflight' ? 'preflight' : 'dashboard');
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  React.useLayoutEffect(() => {
+    document.documentElement.dataset.theme = draft?.themeColor ?? 'green';
+  }, [draft?.themeColor]);
   const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const [showManual, setShowManual] = useState(false);
@@ -1015,7 +1033,12 @@ function SettingsShortcutCards({ onPick }: { onPick: (section: string) => void }
       {SHORTCUT_CARDS.map((c) => {
         const Icon = c.icon;
         return (
-          <div className="event-item shortcut-card" key={c.id} onClick={() => onPick(c.id)} role="button" tabIndex={0}>
+          <div className="event-item shortcut-card" key={c.id} onClick={() => onPick(c.id)} role="button" tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault(); onPick(c.id);
+              }
+            }}>
             <div className="event-time tone-green shortcut-card-icon">
               <Icon size={20} />
             </div>

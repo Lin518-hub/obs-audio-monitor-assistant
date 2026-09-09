@@ -137,3 +137,9 @@ describe('preflight window placement', () => {
     expect(selectOBSProjectorWindow(windows)?.handle).toBe('projector');
   });
 });
+
+it('does not accept preview or the OBS main window as a newly opened output projector', () => {
+  const base = { pid: 10, bounds: { x: 0, y: 0, width: 960, height: 540 }, windowState: 'normal' as const };
+  expect(selectNewOBSProjectorWindow([{ ...base, handle: 'main', title: 'OBS 32.0' }])).toBeNull();
+  expect(selectNewOBSProjectorWindow([{ ...base, handle: 'preview', title: '投影 - 预览' }])).toBeNull();
+});

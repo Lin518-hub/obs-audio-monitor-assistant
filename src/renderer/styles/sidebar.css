@@ -29,10 +29,10 @@
   border-radius: var(--r-md);
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--green-300) 0%, var(--green-600) 100%);
-  color: var(--neutral-0);
+  background: linear-gradient(135deg, var(--brand-200) 0%, var(--brand-500) 100%);
+  color: var(--neutral-900);
   flex-shrink: 0;
-  box-shadow: 0 14px 28px rgba(15, 118, 110, 0.18);
+  box-shadow: 0 14px 28px rgba(var(--theme-shadow-rgb), 0.18);
 }
 
 .sidebar-brand-name {
@@ -94,8 +94,8 @@
 .sidebar-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); transform: translateX(2px); }
 .sidebar-nav-item:active { transform: translateX(2px) scale(0.98); }
 .sidebar-nav-item.active {
-  background: var(--green-100);
-  color: var(--green-700);
+  background: var(--brand-100);
+  color: var(--brand-700);
 }
 .sidebar-nav-item.active::before {
   content: '';
@@ -105,7 +105,7 @@
   bottom: 8px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: var(--green-500);
+  background: var(--brand-500);
 }
 .sidebar-nav-item .icon {
   width: 20px;

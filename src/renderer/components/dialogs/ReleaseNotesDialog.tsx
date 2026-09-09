@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { Activity, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES = [
-  { icon: Activity, title: '检测可以手动控制', detail: '未开播时也能主动开始检测；OBS 开播、录制或虚拟摄像头仍会自动接管。' },
-  { icon: MonitorUp, title: '恢复状态更醒目', detail: '连续静音超过 3 秒后恢复讲话，小浮窗会显示一次绿色确认光晕。' },
-  { icon: Radio, title: '提醒节奏保持一致', detail: '小浮窗与监控中心统一使用渐黄、渐红的提醒进度，无数据时保持灰色等待。' },
-  { icon: ShieldCheck, title: '原有设置保持不变', detail: '更新不会清空音源、机位、窗口位置或直播间配置。' }
+  { icon: Activity, title: '开播准备进度可见', detail: '新增毛玻璃动态进度弹窗，显示当前启动步骤、恢复位置和输出投影状态；支持收起后台继续。' },
+  { icon: MonitorUp, title: '一键开播与投影位置修复', detail: '改善中文输出投影识别，保存布局立即写入配置，等待 OBS 就绪后打开并恢复投影位置。' },
+  { icon: Activity, title: '默认恢复经典绿色', detail: '设置 → 系统与更新中可切换经典绿和暖黄色，导航、图标和按钮同步变色。' },
+  { icon: Radio, title: '浮窗缩放与反馈', detail: '拖动边角实时按比例缩放；静音满 3 秒闪红色描边，恢复讲话闪绿色。' },
+  { icon: ShieldCheck, title: '虚拟摄像头确认检测', detail: '开启虚拟摄像头后先显示 5 秒确认提示，点击开始检测后才启动音频与机位检测。' }
 ];
 
 export const ReleaseNotesDialog: React.FC<{

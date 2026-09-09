@@ -860,3 +860,68 @@
   -webkit-app-region: no-drag;
 }
 .toast-alert-confirm:hover { background: rgba(255, 255, 255, 0.20); }
+
+/* Every auxiliary renderer must keep all backing surfaces transparent. */
+html:not([data-route="settings"]),
+body:not([data-route="settings"]),
+body:not([data-route="settings"]) #root {
+  background: transparent !important;
+  overflow: hidden;
+}
+.floating-silence-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(248,113,113,.95), inset 0 0 30px rgba(239,68,68,.45);
+  animation: floating-recovery-confirm 920ms cubic-bezier(.22,.76,.24,1) both;
+}
+.floating-resize { position: absolute; z-index: 20; -webkit-app-region: no-drag; touch-action: none; }
+.floating-resize-n, .floating-resize-s { left: 18px; right: 18px; height: 5px; cursor: ns-resize; }
+.floating-resize-n { top: 0; }
+.floating-resize-s { bottom: 0; }
+.floating-resize-e, .floating-resize-w { top: 18px; bottom: 18px; width: 5px; cursor: ew-resize; }
+.floating-resize-e { right: 0; }
+.floating-resize-w { left: 0; }
+.floating-resize-ne, .floating-resize-nw, .floating-resize-se, .floating-resize-sw { width: 18px; height: 18px; }
+.floating-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.floating-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.floating-resize-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.floating-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.monitoring-prompt {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid var(--brand-200);
+  background: #fffcf1;
+  color: #332b1b;
+  font-size: 14px;
+  animation: surface-enter 240ms ease-out both, surface-exit 180ms ease-in 4820ms forwards;
+}
+.monitoring-prompt p { margin: 0; font-size: 12px; color: #6b6048; }
+.monitoring-prompt > div { display: flex; justify-content: flex-end; align-items: center; gap: 16px; }
+.monitoring-prompt button { min-height: 34px; }
+@keyframes surface-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes surface-exit { to { opacity: 0; transform: translateY(8px); } }
+/* Animate the outer surface so alarm pulses on its children remain independent. */
+body[data-route="floating"] #root,
+body[data-route="alert"] #root,
+body[data-route="prealert"] #root,
+body[data-route="toast-alert"] #root,
+body[data-route="alert-backdrop"] #root,
+body[data-route="settings"] #root {
+  animation: surface-enter 240ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  body #root { animation-duration: 1ms !important; }
+  .floating-silence-flash { animation-duration: 260ms; }
+  .monitoring-prompt { animation: fade-in 1ms both; }
+}
+.floating-shell.tone-idle .floating-status > span { background: #94a3b8; }
+.floating-meter-track { flex-shrink: 0; }
+.floating-time > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

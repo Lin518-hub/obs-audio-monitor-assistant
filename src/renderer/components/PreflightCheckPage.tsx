@@ -1,3 +1,4 @@
+import { LaunchProgressDialog, type LaunchProgressState } from './LaunchProgressDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
@@ -62,6 +63,10 @@ type BusyState = 'discover' | 'all' | 'layout' | 'projector' | PreflightAppId | 
 
 export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange }) => {
   const [result, setResult] = useState<PreflightCheckResult | null>(null);
+  const [launchProgress, setLaunchProgress] = useState<LaunchProgressState | null>(null);
+  useEffect(() => window.obsGuard.onPreflightProgress((next) => {
+    setLaunchProgress(current => current && !current.finished ? { ...current, percent: Math.max(current.percent, next.percent), message: next.message, steps: current.steps.at(-1) === next.message ? current.steps : [...current.steps, next.message].slice(-4) } : current);
+  }), []);
   const [busy, setBusy] = useState<BusyState>(null);
   const [expanded, setExpanded] = useState<Set<PreflightAppId>>(() => new Set());
   const [draggingId, setDraggingId] = useState<PreflightAppId | null>(null);
@@ -202,6 +207,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
   };
 
   const launchAll = async () => {
+    setLaunchProgress({ percent: 0, message: '正在检查启动路径与运行状态', steps: ['正在检查启动路径与运行状态'], finished: false, failed: false });
     setBusy('all');
     setNotice(null);
     try {
@@ -215,9 +221,15 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
         launchSettings = merged.settings;
         if (merged.added.length > 0) onChange('preflightApps', merged.settings.apps);
       }
-      applyLaunchResult(await window.obsGuard.launchPreflightApps(launchSettings), '一键开播准备');
+      const launched = await window.obsGuard.launchPreflightApps(launchSettings);
+      applyLaunchResult(launched, '一键开播准备');
+      const errors = [...Object.values(launched.failures), ...Object.values(launched.restoreFailures), launched.projector?.state === 'failed' ? launched.projector.message : null].filter(Boolean);
+      setLaunchProgress(current => current && ({ ...current, percent: 100, finished: true, failed: errors.length > 0,
+        message: errors.length > 0 ? errors.join('；') : '程序与窗口准备完成，可以开始直播。' }));
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '一键开播准备失败' });
+      const message = error instanceof Error ? error.message : '一键开播准备失败';
+      setNotice({ tone: 'error', text: message });
+      setLaunchProgress(current => current && ({ ...current, finished: true, failed: true, message }));
     } finally {
       setBusy(null);
     }
@@ -253,7 +265,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     setNotice(null);
     try {
       const captured = await window.obsGuard.capturePreflightLayout(settings);
-      onChange('preflightWindowPlacements', captured.placements);
+      if (captured.captured.length > 0) onChange('preflightWindowPlacements', captured.placements);
       const failures = Object.values(captured.failures).filter(Boolean);
       if (captured.captured.length === 0) {
         setNotice({
@@ -317,6 +329,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
 
   return (
     <div className="preflight-page">
+      {launchProgress && <LaunchProgressDialog state={launchProgress} onClose={() => setLaunchProgress(null)} />}
       <header className="page-header preflight-page-header">
         <div className="page-header-title">
           <h1><span>开播检查</span></h1>
@@ -380,10 +393,10 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
             role="switch"
             aria-checked={draft.preflightProjector.restoreWindowPosition}
             className={`preflight-layout-option ${draft.preflightProjector.restoreWindowPosition ? 'active' : ''}`}
-            onClick={() => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition: !draft.preflightProjector.restoreWindowPosition })}
+            onClick={() => onChange('preflightProjector', { ...draft.preflightProjector, restoreWindowPosition: !draft.preflightProjector.restoreWindowPosition, enabled: !draft.preflightProjector.restoreWindowPosition || draft.preflightProjector.enabled })}
           >
             <span className="preflight-layout-check">{draft.preflightProjector.restoreWindowPosition && <Check size={13} />}</span>
-            <span>OBS 节目投影</span>
+            <span>OBS 投影－输出（启动并恢复）</span>
             <small>{draft.preflightWindowPlacements.obs_projector ? `已保存 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : draft.preflightProjector.restoreWindowPosition ? '打开投影后保存' : '不恢复'}</small>
           </button>
         </div>

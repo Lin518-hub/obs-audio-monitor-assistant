@@ -499,6 +499,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
             {active === 'system' && (
               <>
+                <section className="theme-setting" aria-labelledby="theme-title">
+                  <h3 id="theme-title">主题颜色</h3>
+                  <p>切换界面和图标颜色，自动保存。</p>
+                  <div className="theme-options" role="group" aria-label="主题颜色">
+                    {([{ value: 'green', label: '经典绿（默认）' }, { value: 'yellow', label: '暖黄色' }] as const).map((theme) => (
+                      <button type="button" key={theme.value} aria-pressed={draft.themeColor === theme.value}
+                        className={`theme-option theme-option-${theme.value}`}
+                        onClick={() => onChangeDraft('themeColor', theme.value)}>
+                        <span aria-hidden="true" />{theme.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
                 <SettingsDisclosure
                   {...disclosureState('system-background')}
                   icon={Settings2}

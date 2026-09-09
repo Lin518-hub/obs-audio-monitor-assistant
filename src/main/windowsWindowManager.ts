@@ -160,7 +160,7 @@ export function selectNewOBSProjectorWindow(windows: WindowsTopLevelWindow[]): W
   if (exact) return exact;
 
   return [...windows]
-    .filter(isLikelyOBSProjectorWindow)
+    .filter((window) => isLikelyOBSProjectorWindow(window) && !isLikelyOBSMainWindow(window))
     .sort(compareProjectorCandidates)[0] ?? null;
 }
 
@@ -201,7 +201,8 @@ function isAnyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
 
 function isLikelyOBSProjectorWindow(window: WindowsTopLevelWindow): boolean {
   const title = window.title.toLocaleLowerCase('zh-CN');
-  if (/multiview|多画面|scene|场景|source|来源|missing\s+files|缺少文件|缺失文件|safe\s+mode|安全模式|settings?|设置|properties|属性|filters?|滤镜/.test(title)) {
+  if (isLikelyOBSMainWindow(window)) return false;
+  if (/preview|预览|multiview|多画面|scene|场景|source|来源|missing\s+files|缺少文件|缺失文件|safe\s+mode|安全模式|settings?|设置|properties|属性|filters?|滤镜/.test(title)) {
     return false;
   }
   const { width, height } = window.bounds;
@@ -300,7 +301,10 @@ function windowsTopLevelWindowValue(value: unknown): WindowsTopLevelWindow[] {
   }];
 }
 
-const WINDOW_API_SOURCE = `
+const WINDOW_API_SOURCE = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -336,7 +340,7 @@ public static class OBSGuardWindowApi {
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
-  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextLength(IntPtr hWnd);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);

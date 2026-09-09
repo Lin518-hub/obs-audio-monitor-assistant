@@ -5,7 +5,7 @@ import type { AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
 import {
   audioRecoveryState, audioStateKind, dbLevelPercent, displayStatusText, floatingEmphasis, floatingHint, floatingTone,
-  floatingWarningProgress, formatDb, shouldFlashAudioRecovery, thresholdPercent, type AudioRecoveryState
+  floatingWarningProgress, formatDb, shouldFlashAudioRecovery, shouldFlashAudioSilence, thresholdPercent, type AudioRecoveryState
 } from '../utils/status';
 
 const AUDIO_FLOATING_BASE = { width: 340, height: 178 };
@@ -18,6 +18,8 @@ export const FloatingApp: React.FC = () => {
     localStorage.getItem('floatingTheme') === 'light' ? 'light' : 'dark'
   );
   const [recoveryFlashId, setRecoveryFlashId] = useState<number | null>(null);
+  const [silenceFlashId, setSilenceFlashId] = useState<number | null>(null);
+  const flashSequence = useRef(0);
   const stageRef = useRef<HTMLElement>(null);
   const previousAudioState = useRef<AudioRecoveryState | null>(null);
   const meter = useAudioMeter(snapshot);
@@ -37,7 +39,16 @@ export const FloatingApp: React.FC = () => {
     if (!snapshot) return;
     const current = audioRecoveryState(snapshot);
     if (shouldFlashAudioRecovery(previousAudioState.current, current)) {
-      setRecoveryFlashId((value) => (value ?? 0) + 1);
+      setSilenceFlashId(null);
+      setRecoveryFlashId(++flashSequence.current);
+    }
+    if (shouldFlashAudioSilence(previousAudioState.current, current)) {
+      setRecoveryFlashId(null);
+      setSilenceFlashId(++flashSequence.current);
+    }
+    if (current.kind === 'other') {
+      setRecoveryFlashId(null);
+      setSilenceFlashId(null);
     }
     previousAudioState.current = current;
   }, [snapshot?.audioSpeaking, snapshot?.monitoringActive, snapshot?.readinessReason, snapshot?.silentForSeconds]);
@@ -51,7 +62,7 @@ export const FloatingApp: React.FC = () => {
 
     const updateScale = () => {
       const base = isMulti ? MULTI_FLOATING_BASE : isAudioAtem ? AUDIO_ATEM_FLOATING_BASE : AUDIO_FLOATING_BASE;
-      const bounds = stage.getBoundingClientRect();
+      const bounds = { width: stage.clientWidth, height: stage.clientHeight };
       // Fixed-ratio modes follow width only. During a native Windows resize the
       // reported height can lag by a frame, which previously caused all text to
       // jump in size before the OS completed the drag.
@@ -110,7 +121,7 @@ export const FloatingApp: React.FC = () => {
 
   return (
     <main ref={stageRef} className="floating-stage" style={scaleStyle}>
-      <section className={`floating-shell floating-${mode.replace('_', '-')}-mode tone-${tone} theme-${theme} ${emphasis}`}>
+      <section className={`floating-shell floating-${isMulti ? 'multi' : mode.replace('_', '-')}-mode tone-${tone} theme-${theme} ${emphasis}`}>
         <div className="floating-ambient" />
         {recoveryFlashId !== null && (
           <div
@@ -119,6 +130,8 @@ export const FloatingApp: React.FC = () => {
             onAnimationEnd={() => setRecoveryFlashId(null)}
           />
         )}
+        {silenceFlashId !== null && <div key={`silence-${silenceFlashId}`}
+          className="floating-silence-flash" onAnimationEnd={() => setSilenceFlashId(null)} />}
         <header className="floating-header">
           <div className="floating-status">
             <span />
@@ -141,6 +154,25 @@ export const FloatingApp: React.FC = () => {
         {isAudioAtem && <AudioAtemFloatingCard snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
         {isMulti && <MultiFunctionGrid snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
       </section>
+      {['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map((edge) => (
+        <div key={edge} className={`floating-resize floating-resize-${edge}`}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            void window.obsGuard.floatingResize('start', edge);
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) void window.obsGuard.floatingResize('move');
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            void window.obsGuard.floatingResize('end');
+          }}
+          onLostPointerCapture={() => void window.obsGuard.floatingResize('end')}
+          onPointerCancel={() => void window.obsGuard.floatingResize('end')}
+        />
+      ))}
     </main>
   );
 };
@@ -204,7 +236,7 @@ const AudioFloatingCard: React.FC<{ snapshot: AppSnapshot; inputName: string; me
     <>
       <section className="floating-time">
         <span>{isAudioNormal ? '检测中' : displayStatusText(snapshot)}</span>
-        <strong>{isAudioNormal ? '正在讲话' : `${snapshot.silentForSeconds}s`}</strong>
+        <strong>{isAudioNormal ? '正在讲话' : audioState === 'silent' ? `${snapshot.silentForSeconds}s` : displayStatusText(snapshot)}</strong>
         <em>{floatingHint(snapshot)}</em>
       </section>
       <section className="floating-meter">
@@ -236,9 +268,9 @@ const MultiFunctionGrid: React.FC<{ snapshot: AppSnapshot; inputName: string; me
     <section className={`floating-multi-grid modules-${Math.max(1, moduleCount)}`}>
       {modules.audio && (
         <article className="floating-multi-card floating-multi-audio">
-          <header><span><Mic2 size={13} /> 音频守护</span><strong>{isAudioNormal ? '音频正常' : '静音计时中'}</strong></header>
+          <header><span><Mic2 size={13} /> 音频守护</span><strong>{isAudioNormal ? '音频正常' : audioState === 'silent' ? '静音计时中' : displayStatusText(snapshot)}</strong></header>
           <div className="floating-multi-primary-value">
-            <strong>{isAudioNormal ? '正在讲话' : `${snapshot.silentForSeconds}s`}</strong>
+            <strong>{isAudioNormal ? '正在讲话' : audioState === 'silent' ? `${snapshot.silentForSeconds}s` : displayStatusText(snapshot)}</strong>
             <b>{inputName}</b>
           </div>
           <div className="floating-meter-track">
@@ -288,7 +320,7 @@ const atemTimerState = (snapshot: AppSnapshot): {
   style?: React.CSSProperties;
 } => {
   if (!snapshot.atemConnected) return { tone: '', label: '未连接', hint: '等待 ATEM 连接' };
-  if (!isLiveSession(snapshot)) return { tone: '', label: '等待开播', hint: '等待直播/录制' };
+  if (!isLiveSession(snapshot)) return { tone: '', label: '未检测', hint: '等待开始检测' };
   if (!snapshot.config.atemCameraTimeAlertEnabled) return { tone: '', label: '计时关闭', hint: '机位计时已关闭' };
   if (snapshot.atemProgramInputExempt) return { tone: 'safe', label: '出镜机位', hint: '已豁免计时与提醒' };
   const limit = CAMERA_ALERT_SECONDS;
@@ -309,7 +341,7 @@ const atemTimerState = (snapshot: AppSnapshot): {
 };
 
 const isLiveSession = (snapshot: AppSnapshot): boolean =>
-  snapshot.streaming || snapshot.recording || snapshot.simulatedLive || snapshot.virtualCameraActive;
+  snapshot.monitoringActive;
 
 const interpolateRgb = (from: [number, number, number], to: [number, number, number], progress: number): string => {
   const amount = Math.max(0, Math.min(1, progress));

@@ -1,3 +1,4 @@
+import { resizeFloatingBounds } from '../shared/floatingResize.js';
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import { fileURLToPath } from 'node:url';
@@ -121,6 +122,9 @@ let updateDownloadMode: 'manual' | 'background' | 'startup' = 'manual';
 let startupUpdateInProgress = false;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
+let monitoringPromptWindow: BrowserWindow | null = null;
+let monitoringPromptDeadline = 0;
+let floatingDrag: { bounds: Electron.Rectangle; cursor: Electron.Point; edge: string } | null = null;
 let isAdjustingFloatingWindowSize = false;
 let floatingTopmostTimer: NodeJS.Timeout | null = null;
 let floatingResizeSettleTimer: NodeJS.Timeout | null = null;
@@ -267,6 +271,11 @@ async function initializeApp(): Promise<void> {
     remoteBridge.updateSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
+    if (!snapshot.virtualCameraActive || !snapshot.connected || snapshot.monitoringActive) {
+      monitoringPromptWindow?.close();
+    } else if (!previousSnapshot?.virtualCameraActive) {
+      showMonitoringPrompt();
+    }
     syncATEMLiveSession(snapshot);
     syncPreAlertSurfaces(latestSnapshot);
     syncAlertSurfaces(previousSnapshot, latestSnapshot);
@@ -523,6 +532,29 @@ function registerIpc(): void {
     syncFloatingWindow(snapshot);
     return snapshot;
   });
+  ipcMain.handle('monitor:prompt-response', (event, accept: boolean) => {
+    if (event.sender !== monitoringPromptWindow?.webContents) return;
+    const valid = Date.now() < monitoringPromptDeadline && latestSnapshot?.connected && latestSnapshot.virtualCameraActive;
+    monitoringPromptWindow?.close();
+    if (accept === true && valid) monitor.setMonitoringActive(true);
+  });
+  ipcMain.handle('floating:resize', (event, phase: string, edge?: string) => {
+    const target = floatingWindow;
+    if (!target || target.isDestroyed() || event.sender !== target.webContents) return;
+    if (phase === 'start' && edge && /^(n|s|e|w|ne|nw|se|sw)$/.test(edge)) {
+      floatingDrag = { bounds: target.getBounds(), cursor: screen.getCursorScreenPoint(), edge };
+    } else if ((phase === 'move' || phase === 'end') && floatingDrag) {
+      const { bounds, cursor, edge: direction } = floatingDrag;
+      const point = screen.getCursorScreenPoint();
+      const mode = latestSnapshot?.config.floatingWindowMode ?? 'audio';
+      const ratio = floatingWindowAspectRatio(mode) ?? bounds.width / bounds.height;
+      target.setBounds(resizeFloatingBounds(bounds,
+        { x: point.x - cursor.x, y: point.y - cursor.y }, direction, ratio,
+        target.getMinimumSize(), target.getMaximumSize()), false);
+      applyFloatingWindowShape();
+      if (phase === 'end') { floatingDrag = null; saveFloatingWindowBoundsFromWindow(); }
+    }
+  });
   ipcMain.handle('floating:set-visible', async (_event, visible: boolean) => setFloatingWindowVisible(visible));
   ipcMain.handle('settings:show', () => {
     showSettingsWindow();
@@ -548,13 +580,16 @@ function registerIpc(): void {
   ipcMain.handle('preflight:check', (_event, settings: unknown) => {
     return preflightCheckService.check(preflightSettingsValue(settings).apps);
   });
-  ipcMain.handle('preflight:launch-all', async (_event, settings: unknown) => {
+  ipcMain.handle('preflight:launch-all', async (event, settings: unknown) => {
     const resolvedSettings = preflightSettingsValue(settings);
-    // Projector readiness depends only on OBS. Start waiting in parallel with
-    // the other launch items so it is not placed at the end of the full list.
-    const projectorPromise = executePreflightProjector(resolvedSettings, false);
-    const result = await preflightCheckService.launchAll(resolvedSettings);
-    result.projector = await projectorPromise;
+    const report = (message: string, percent: number) => {
+      if (!event.sender.isDestroyed()) event.sender.send('preflight:progress', { message, percent });
+    };
+    const result = await preflightCheckService.launchAll(resolvedSettings, report);
+    report('正在准备 OBS 输出投影', 78);
+    result.projector = result.failures.obs
+      ? { state: 'failed', message: `OBS 启动失败：${result.failures.obs}`, positionRestored: false }
+      : await executePreflightProjector(resolvedSettings, false, report);
     return result;
   });
   ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown) => {
@@ -564,8 +599,17 @@ function registerIpc(): void {
   ipcMain.handle('preflight:discover', () => {
     return preflightCheckService.discover();
   });
-  ipcMain.handle('preflight:capture-layout', (_event, settings: unknown) => {
-    return preflightCheckService.captureLayout(preflightSettingsValue(settings));
+  ipcMain.handle('preflight:capture-layout', async (_event, settings: unknown) => {
+    const captured = await preflightCheckService.captureLayout(preflightSettingsValue(settings));
+    if (captured.captured.length > 0) {
+      const current = monitor.getSnapshot().config;
+      const placements = { ...current.preflightWindowPlacements };
+      for (const target of captured.captured) placements[target] = captured.placements[target];
+      const config = await configStore.update({ preflightWindowPlacements: placements });
+      await monitor.updateConfig(config);
+      captured.placements = config.preflightWindowPlacements;
+    }
+    return captured;
   });
   ipcMain.handle('preflight:open-projector', (_event, settings: unknown) => {
     return executePreflightProjector(preflightSettingsValue(settings), true);
@@ -710,7 +754,7 @@ function preflightPathSourceValue(value: unknown, fallback: PreflightPathSource)
     : fallback;
 }
 
-async function executePreflightProjector(settings: PreflightSettings, force: boolean): Promise<PreflightProjectorResult> {
+async function executePreflightProjector(settings: PreflightSettings, force: boolean, report: (message: string, percent: number) => void = () => {}): Promise<PreflightProjectorResult> {
   if (!force && !settings.projector.enabled) {
     return { state: 'disabled', message: '节目输出投影未启用', positionRestored: false };
   }
@@ -743,7 +787,13 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       if (beforeConnection.result) return beforeConnection.result;
     }
 
-    const connected = await waitForOBSConnection(30_000);
+    if (force && !monitor.getSnapshot().connected) {
+      const launch = await preflightCheckService.launch('obs', settings);
+      if (launch.failures.obs) throw new Error(`OBS 启动失败：${launch.failures.obs}`);
+    }
+    if (!monitor.getSnapshot().connected) void monitor.reconnect().catch((error) => console.error('[preflight] reconnect failed', error));
+    report('正在等待 OBS WebSocket 连接', 82);
+    const connected = await waitForOBSConnection(60_000);
     if (!connected) throw new Error('等待 OBS WebSocket 连接超时，请检查端口和密码');
     let existingHandles = new Set<string>();
     if (process.platform === 'win32') {
@@ -751,6 +801,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       if (inspection.result) return inspection.result;
       existingHandles = inspection.handles;
     }
+    report('正在打开 OBS 投影－输出', 88);
     await monitor.openProgramProjector();
 
     let positionRestored = false;
@@ -761,6 +812,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       }
       const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
       if (placement) {
+        report('正在恢复投影窗口的位置与大小', 94);
         await preflightCheckService.restoreWindow(projector, placement);
         scheduleProjectorPlacementStabilization(settings, placement);
         positionRestored = true;
@@ -1834,6 +1886,36 @@ function showSettingsWindow(): void {
   settingsWindow?.focus();
 }
 
+function showMonitoringPrompt(): void {
+  monitoringPromptWindow?.close();
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const width = Math.min(380, area.width);
+  const height = Math.min(156, area.height);
+  const target = new BrowserWindow({
+    x: area.x + area.width - width - Math.min(16, area.width - width),
+    y: area.y + area.height - height - Math.min(16, area.height - height),
+    width, height, frame: false, transparent: true, backgroundColor: '#00000000',
+    resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
+    alwaysOnTop: true, skipTaskbar: true, show: false, hasShadow: false,
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true,
+      nodeIntegration: false, sandbox: true, backgroundThrottling: false }
+  });
+  monitoringPromptWindow = target;
+  let timer: NodeJS.Timeout | undefined;
+  attachWindowDiagnostics(target, 'monitor-prompt');
+  target.once('ready-to-show', () => {
+    if (!latestSnapshot?.virtualCameraActive || latestSnapshot.monitoringActive) { target.close(); return; }
+    monitoringPromptDeadline = Date.now() + 5000;
+    target.showInactive();
+    timer = setTimeout(() => { if (!target.isDestroyed()) target.close(); }, 5000);
+  });
+  target.once('closed', () => {
+    clearTimeout(timer);
+    if (monitoringPromptWindow === target) { monitoringPromptWindow = null; monitoringPromptDeadline = 0; }
+  });
+  loadRendererSafely(target, '#monitor-prompt', 'monitor-prompt');
+}
+
 function showFloatingWindow(snapshot: AppSnapshot): void {
   if (floatingWindow && !floatingWindow.isDestroyed()) {
     return;
@@ -1852,7 +1934,7 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     minHeight: floatingWindowHeightForMode(mode, minWidth, snapshot.config.floatingWindowModules),
     maxWidth: FLOATING_WINDOW_MAX_WIDTH,
     maxHeight: fixedAspectRatio ? floatingWindowHeightForMode(mode, FLOATING_WINDOW_MAX_WIDTH, snapshot.config.floatingWindowModules) : 520,
-    resizable: true,
+    resizable: false,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -1893,12 +1975,13 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
   floatingWindow.on('moved', () => {
     saveFloatingWindowBoundsFromWindow();
   });
-  floatingWindow.on('resized', () => {
+  floatingWindow.on('resize', () => {
     scheduleFloatingWindowShape();
     scheduleFloatingWindowResizeSettled();
   });
   floatingWindow.on('closed', () => {
     stopFloatingWindowTimers();
+    floatingDrag = null;
     floatingWindow = null;
   });
 
@@ -2484,6 +2567,7 @@ function sendToWindow(window: BrowserWindow, channel: string, payload: unknown):
 }
 
 function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
+  window.on('show', () => sendToWindow(window, 'window:shown', null));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
     if (url !== window.webContents.getURL()) event.preventDefault();
@@ -2731,6 +2815,7 @@ function scheduleFloatingWindowResizeSettled(): void {
   if (floatingResizeSettleTimer) clearTimeout(floatingResizeSettleTimer);
   floatingResizeSettleTimer = setTimeout(() => {
     floatingResizeSettleTimer = null;
+    if (floatingDrag) return;
     keepFloatingWindowAspectRatio();
     applyFloatingWindowShape();
     saveFloatingWindowBoundsFromWindow();

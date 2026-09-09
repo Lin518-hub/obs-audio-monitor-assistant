@@ -28,6 +28,16 @@ afterAll(() => {
 });
 
 describe('ConfigStore', () => {
+  it('defaults old configurations to green and persists the selected theme', async () => {
+    const store = new ConfigStore();
+    const legacy = { ...DEFAULT_CONFIG } as Partial<AppConfig>;
+    delete legacy.themeColor;
+    expect((await store.save(legacy as AppConfig)).themeColor).toBe('green');
+    await store.update({ themeColor: 'yellow' });
+    expect((await new ConfigStore().load()).themeColor).toBe('yellow');
+    expect((await store.update({ themeColor: 'invalid' } as unknown as Partial<AppConfig>)).themeColor).toBe('green');
+  });
+
   it('normalizes unsafe numeric and display values before saving', async () => {
     const store = new ConfigStore();
     const saved = await store.save({

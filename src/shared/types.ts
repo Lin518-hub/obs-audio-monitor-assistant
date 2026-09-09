@@ -365,6 +365,7 @@ export interface AppConfig {
   alertSoundEnabled: boolean;
   alertSoundPreset: AlertSoundPreset;
   paused: boolean;
+  themeColor: 'green' | 'yellow';
   hasSeenGuide: boolean;
   guideSeenVersion: string;
   releaseNotesSeenVersion: string;
@@ -528,6 +529,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertSoundEnabled: false,
   alertSoundPreset: 'strong',
   paused: false,
+  themeColor: 'green',
   hasSeenGuide: false,
   guideSeenVersion: '',
   releaseNotesSeenVersion: '',
@@ -582,3 +584,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   preflightWindowPlacements: {},
   preflightConfigRevision: 1
 };
+
+export interface PreflightProgress {
+  percent: number;
+  message: string;
+}

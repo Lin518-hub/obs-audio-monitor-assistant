@@ -59,7 +59,7 @@ describe('OBSMonitor test alert', () => {
     await monitor.stop();
   });
 
-  it('treats the OBS virtual camera as an active live session', async () => {
+  it('reports a virtual camera session without automatically starting detection', async () => {
     const monitor = new OBSMonitor(config, displays);
     const call = vi.fn(async (request: string) => {
       if (request === 'GetVirtualCamStatus') return { outputActive: true };
@@ -81,8 +81,36 @@ describe('OBSMonitor test alert', () => {
     expect(monitor.getSnapshot()).toMatchObject({
       streaming: true,
       recording: false,
-      virtualCameraActive: true
+      virtualCameraActive: true,
+      monitoringActive: false
     });
+    await monitor.stop();
+  });
+
+  it('keeps virtual camera detection opt-in across polling and resets', async () => {
+    const monitor = new OBSMonitor(config, displays);
+    const internals = monitor as unknown as {
+      actualVirtualCamera: boolean; actualStreaming: boolean;
+      applyCurrentOutputState: (now: number) => void;
+    };
+    internals.actualVirtualCamera = true;
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(false);
+    expect(monitor.resetTransientState().monitoringActive).toBe(false);
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(false);
+    monitor.setMonitoringActive(true);
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(true);
+    internals.actualVirtualCamera = false;
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(false);
+    internals.actualVirtualCamera = true;
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(false);
+    internals.actualStreaming = true;
+    internals.applyCurrentOutputState(Date.now());
+    expect(monitor.getSnapshot().monitoringActive).toBe(true);
     await monitor.stop();
   });
 

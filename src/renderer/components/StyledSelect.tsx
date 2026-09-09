@@ -45,7 +45,7 @@ function popoverPosition(element: HTMLElement, preferredWidth?: number): Popover
   const availableBelow = viewportHeight - rect.bottom - margin;
   const availableAbove = rect.top - margin;
   const placeAbove = availableBelow < 180 && availableAbove > availableBelow;
-  const maxHeight = Math.max(120, Math.min(300, placeAbove ? availableAbove - 6 : availableBelow - 6));
+  const maxHeight = Math.max(0, Math.min(300, placeAbove ? availableAbove - 8 : availableBelow - 8));
   const left = Math.min(viewportWidth - width - margin, Math.max(margin, rect.left));
   return {
     top: placeAbove ? rect.top - 8 : rect.bottom + 8,
@@ -126,7 +126,7 @@ export function StyledSelect<T extends string | number>({
           role="listbox"
           aria-label={ariaLabel}
           style={{
-            top: position.placeAbove ? position.top : position.top,
+            top: position.top,
             left: position.left,
             width: position.width,
             maxHeight: position.maxHeight,
@@ -296,8 +296,15 @@ export function MorandiColorPicker({ value, onChange, ariaLabel }: {
       const target = event.target as Node;
       if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); }
+    };
     document.addEventListener('pointerdown', close, true);
-    return () => document.removeEventListener('pointerdown', close, true);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      document.removeEventListener('keydown', escape);
+    };
   }, [open]);
 
   return (
@@ -321,6 +328,8 @@ export function MorandiColorPicker({ value, onChange, ariaLabel }: {
             top: position.top,
             left: position.left,
             width: position.width,
+            maxHeight: position.maxHeight,
+            overflowY: 'auto',
             transform: position.placeAbove ? 'translateY(-100%)' : undefined
           }}
         >

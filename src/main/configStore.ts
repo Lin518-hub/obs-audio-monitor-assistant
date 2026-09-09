@@ -158,6 +158,7 @@ export class ConfigStore {
       alertSoundEnabled: booleanValue(merged.alertSoundEnabled, DEFAULT_CONFIG.alertSoundEnabled),
       alertSoundPreset: alertSoundPresetValue(merged.alertSoundPreset),
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
+      themeColor: merged.themeColor === 'yellow' ? 'yellow' : 'green',
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
       releaseNotesSeenVersion: stringValue(merged.releaseNotesSeenVersion, DEFAULT_CONFIG.releaseNotesSeenVersion).trim(),

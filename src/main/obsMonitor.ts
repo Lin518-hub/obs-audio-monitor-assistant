@@ -264,7 +264,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const now = Date.now();
     const resetState: MonitorRuntimeState = {
       ...this.state,
-      monitoringActive: this.actualStreaming || this.actualVirtualCamera || this.actualRecording,
+      monitoringActive: this.state.monitoringActive,
       streaming: this.actualStreaming || this.actualVirtualCamera,
       recording: this.actualRecording,
       lastLevelDb: null,
@@ -660,7 +660,6 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const outputActive = this.simulatedLive || this.actualStreaming || this.actualVirtualCamera || this.actualRecording;
     const hasStartEdge = (!this.observedSimulatedLive && this.simulatedLive)
       || (!this.observedStreaming && this.actualStreaming)
-      || (!this.observedVirtualCamera && this.actualVirtualCamera)
       || (!this.observedRecording && this.actualRecording);
     this.state = reduceOutputState(
       this.state,
