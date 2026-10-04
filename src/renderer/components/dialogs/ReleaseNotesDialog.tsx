@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Activity, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES = [
+  { icon: ShieldCheck, title: '首次使用逐项验证', detail: '连接 OBS、说话验证、确认报警，再按需配置工作台并试运行。未完成的项目可暂存后继续，保存失败可重试。' },
   { icon: MonitorUp, title: '开播准备可以随时接手', detail: '全屏浅绿遮罩显示当前步骤和耗时，点击交回操作权或按 Esc 停止后续自动操作。' },
   { icon: ShieldCheck, title: '逐项结果与失败重试', detail: '窗口可以单独保存、恢复和重试；恢复后核对实际位置，已成功项目不重复启动。' },
   { icon: Activity, title: '浮窗锁定与透明度', detail: '设置中支持锁定位置和大小、调整不透明度，浮窗上也可快速锁定和解锁。' },

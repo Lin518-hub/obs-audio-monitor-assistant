@@ -131,15 +131,17 @@ root.render(
 function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unknown> }) {
   const [roomName, setRoomName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const normalized = roomName.trim().replace(/[\u0000-\u001f]/g, '').slice(0, 60);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!normalized || saving) return;
+    if (normalized.length < 2 || saving) return;
+    setError('');
     setSaving(true);
     try {
       await onSave(normalized);
-    } finally {
+    } catch { setError('保存失败，请检查磁盘是否可写后重试。'); } finally {
       setSaving(false);
     }
   };
@@ -164,10 +166,11 @@ function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unkno
             autoComplete="organization"
           />
         </label>
-        <button type="submit" className="btn-primary" disabled={!normalized || saving}>
+        <button type="submit" className="btn-primary" disabled={normalized.length < 2 || saving}>
           {saving ? '正在保存…' : '确认并继续'} <ArrowRight size={17} />
         </button>
-        <small>以后可以在“设置 → 连接与设备 → 监控中心”中修改。</small>
+        {error && <p role="alert">{error}</p>}
+        <small>请输入 2～60 个字符。以后可以在“设置 → 连接与设备 → 监控中心”中修改。</small>
       </form>
     </main>
   );
@@ -235,6 +238,7 @@ function SettingsApp() {
 
   const updateDraft = useCallback(
     <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
+      if (key === 'obsHost' || key === 'obsPort' || key === 'obsPassword') setTestResult(null);
       setDraft((current) => (current ? { ...current, [key]: value } : current));
       scheduleSave({ [key]: value } as Partial<AppConfig>);
     },
@@ -258,15 +262,16 @@ function SettingsApp() {
     if (!draft) return;
     setTestingConnection(true);
     try {
+      setTestResult(null);
       setTestResult(await window.obsGuard.testConnection(draft));
-    } finally {
+    } catch { setTestResult({ ok: false, stage: 'connect', inputCount: 0, message: '连接测试未完成，请检查 OBS 是否已打开、WebSocket 端口和密码是否正确，再重试。' }); } finally {
       setTestingConnection(false);
     }
   }, [draft]);
 
   const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
-  const completeOnboarding = useCallback(() => {
-    void flushSave({ hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION });
+  const completeOnboarding = useCallback(async (ready: boolean) => {
+    await flushSave({ setupChecklistPending: !ready, hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION });
   }, [flushSave]);
   const confirmReleaseNotes = useCallback(async () => {
     await flushSave({ releaseNotesSeenVersion: APP_VERSION });
@@ -427,6 +432,7 @@ function SettingsApp() {
           onNotifications={() => openSettings('updates')}
           hasUpdateNotice={hasUpdateNotice}
         />
+        {draft.setupChecklistPending && <div className="preflight-notice" data-tone="warning"><strong>首次配置尚未验证完成。</strong> 检测与开播准备是否可用，需要完成音源、报警和工作台验证。<button type="button" className="btn-secondary" onClick={() => void flushSave({ hasSeenGuide: false }).catch(() => window.alert('保存失败，请重试'))}>继续配置</button></div>}
         <div className="page-transition" key={page}>{mainContent}</div>
       </section>
       <SettingsPanel

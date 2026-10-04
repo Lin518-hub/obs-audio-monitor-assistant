@@ -58,13 +58,14 @@ const POSITIONABLE_APP_IDS = new Set<PreflightAppId>(['obs', 'douyin', 'browser'
 interface PreflightCheckPageProps {
   draft: AppConfig;
   search: string;
+  onTrialResult?: (result: PreflightLaunchResult) => void;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }
 
 type WindowOutcome = { message: string; failed: boolean; retry: 'launch' | 'restore' | 'projector' | 'capture' };
 type BusyState = 'discover' | 'all' | 'layout' | 'projector' | PreflightAppId | null;
 
-export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange }) => {
+export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange, onTrialResult }) => {
   const cancelledRef = useRef(false);
   const [outcomes, setOutcomes] = useState<Partial<Record<PreflightPlacementTarget, WindowOutcome>>>({});
   const targetName = (id: PreflightPlacementTarget) => id === 'obs_projector' ? 'OBS 输出投影' : appDisplayName(id, draft.preflightApps[id].customLabel);
@@ -234,9 +235,10 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     try {
       const launched = await window.obsGuard.launchPreflightApps(settings);
       applyLaunchResult(launched, '一键开播准备');
+      onTrialResult?.(launched);
       const errors = [...Object.values(launched.failures), ...Object.values(launched.restoreFailures), launched.projector?.state === 'failed' ? launched.projector.message : null].filter(Boolean);
       setLaunchProgress(current => current && ({ ...current, percent: 100, finished: true, failed: errors.length > 0,
-        message: errors.length > 0 ? '部分步骤未完成，请查看逐项结果；可仅重试失败步骤。' : '程序与窗口准备完成，可以开始直播。' }));
+        message: errors.length > 0 ? '部分步骤未完成，请查看逐项结果；可仅重试失败步骤。' : '工作台准备完成；此操作不会开始推流，请确认检测状态后在 OBS 开始直播。' }));
     } catch (error) {
       const message = preflightError(error, '一键开播准备失败');
       setNotice({ tone: 'error', text: message });

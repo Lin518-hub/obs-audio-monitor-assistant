@@ -29,6 +29,8 @@ export class ConfigStore {
         obsPassword: rememberObsPassword ? await this.decryptPassword(parsed.obsPasswordEncrypted) : ''
       };
 
+      if (parsed.setupChecklistPending === undefined && parsed.hasSeenGuide) config.setupChecklistPending = false;
+
       // Move previous built-in defaults to the shared ten-minute value.
       if ([180, 300, 480, 720].includes(parsed.atemCameraTimeLimitSeconds ?? 0)) {
         config.atemCameraTimeLimitSeconds = DEFAULT_CONFIG.atemCameraTimeLimitSeconds;
@@ -159,6 +161,7 @@ export class ConfigStore {
       alertSoundPreset: alertSoundPresetValue(merged.alertSoundPreset),
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       themeColor: merged.themeColor === 'yellow' ? 'yellow' : 'green',
+      setupChecklistPending: booleanValue(merged.setupChecklistPending, true),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
       releaseNotesSeenVersion: stringValue(merged.releaseNotesSeenVersion, DEFAULT_CONFIG.releaseNotesSeenVersion).trim(),

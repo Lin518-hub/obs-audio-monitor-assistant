@@ -39,6 +39,18 @@ describe('ConfigStore', () => {
     expect((await store.update({ floatingWindowOpacity: Number.NaN })).floatingWindowOpacity).toBe(1);
   });
 
+  it('preserves existing preflight selections and does not reopen the checklist for established users', async () => {
+    const store = new ConfigStore();
+    const previous = { ...DEFAULT_CONFIG, hasSeenGuide: true, preflightApps: { ...DEFAULT_CONFIG.preflightApps, browser: { ...DEFAULT_CONFIG.preflightApps.browser, enabled: true, path: 'browser.exe' } } } as Partial<AppConfig>;
+    delete previous.setupChecklistPending;
+    mkdirSync(electronMock.userData, { recursive: true });
+    writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify(previous));
+    const loaded = await store.load();
+    expect(loaded.setupChecklistPending).toBe(false);
+    expect(loaded.preflightApps.browser.enabled).toBe(true);
+    expect(loaded.preflightApps.browser.path).toBe('browser.exe');
+  });
+
   it('defaults old configurations to green and persists the selected theme', async () => {
     const store = new ConfigStore();
     const legacy = { ...DEFAULT_CONFIG } as Partial<AppConfig>;
@@ -180,7 +192,7 @@ describe('ConfigStore', () => {
     expect(saved.preflightApps.obs).toEqual({
       enabled: false,
       path: 'C:\\Live\\OBS.lnk',
-      restoreWindowPosition: true,
+      restoreWindowPosition: false,
       pathSource: 'unknown',
       customLabel: '',
       launchUrl: ''

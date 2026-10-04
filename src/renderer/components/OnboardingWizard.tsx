@@ -1,3 +1,6 @@
+import { setupChecks, workspaceTrialPassed } from '../../shared/setupReadiness';
+import { PreflightCheckPage } from './PreflightCheckPage';
+import { SetupVerification } from './SetupVerification';
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
@@ -10,7 +13,6 @@ import {
   Mic2,
   Power,
   RefreshCw,
-  ShieldCheck,
   TestTube2
 } from 'lucide-react';
 import type { AppConfig, AppSnapshot, TestConnectionResult } from '../../shared/types';
@@ -19,7 +21,7 @@ import { readableInputKind } from '../utils/status';
 // =============================================================================
 // 步骤定义
 // =============================================================================
-type StepKey = 'welcome' | 'connection' | 'source' | 'rules' | 'startup' | 'complete';
+type StepKey = 'welcome' | 'connection' | 'source' | 'rules' | 'startup' | 'verify' | 'workspace' | 'complete';
 
 interface StepDef {
   key: StepKey;
@@ -30,9 +32,11 @@ const STEPS: StepDef[] = [
   { key: 'welcome', label: '欢迎' },
   { key: 'connection', label: '连接' },
   { key: 'source', label: '音源' },
+  { key: 'verify', label: '验证' },
   { key: 'rules', label: '规则' },
   { key: 'startup', label: '启动' },
-  { key: 'complete', label: '完成' }
+  { key: 'workspace', label: '工作台' },
+  { key: 'complete', label: '检查结果' }
 ];
 
 const STEP_KEYS: StepKey[] = STEPS.map((s) => s.key);
@@ -44,7 +48,7 @@ interface OnboardingWizardProps {
   draft: AppConfig;
   snapshot: AppSnapshot;
   onUpdateDraft: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-  onComplete: () => void;
+  onComplete: (ready: boolean) => Promise<void>;
   onTestConnection: () => void;
   onRefreshInputs: () => void;
   testResult: TestConnectionResult | null;
@@ -60,14 +64,16 @@ const StepIndicator: React.FC<{ currentIndex: number }> = memo(({ currentIndex }
       <React.Fragment key={step.key}>
         <div
           className={`onboarding-step-dot ${
-            i < currentIndex ? 'done' : i === currentIndex ? 'current' : 'pending'
+            i === currentIndex ? 'current' : 'pending'
           }`}
           aria-current={i === currentIndex ? 'step' : undefined}
+          aria-label={step.label}
+          title={step.label}
         >
-          {i < currentIndex ? <Check size={16} /> : i + 1}
+          {i + 1}
         </div>
         {i < STEPS.length - 1 && (
-          <div className={`onboarding-step-line ${i < currentIndex ? 'done' : 'pending'}`} />
+          <div className="onboarding-step-line pending" />
         )}
       </React.Fragment>
     ))}
@@ -98,7 +104,7 @@ const WelcomeStep: React.FC<{ onNext: () => void }> = memo(({ onNext }) => {
           <div className="onboarding-welcome-blur">
             <h2>欢迎使用 OBS 音频检测助手</h2>
             <p className="welcome-sub">实时监测 OBS 直播中的麦克风与音频源，</p>
-            <p className="welcome-sub">在静音或掉线时立即弹窗报警，守护每一场直播。</p>
+            <p className="welcome-sub">达到设定静音时间时提醒，帮助你及时发现音频异常。</p>
           </div>
         </div>
         {reducedMotion && (
@@ -399,57 +405,6 @@ const StartupStep: React.FC<{
 // =============================================================================
 // 步骤 6：完成
 // =============================================================================
-const CompleteStep: React.FC<{
-  draft: AppConfig;
-  snapshot: AppSnapshot;
-  testResult: TestConnectionResult | null;
-}> = memo(({ draft, snapshot, testResult }) => {
-  const connected = testResult?.ok ?? snapshot.connected;
-  const sourceLabel = draft.targetInputName || '未选择';
-
-  return (
-    <div className="onboarding-card-body step-enter">
-      <div className="onboarding-complete">
-        <div className="onboarding-complete-check">
-          <Check size={40} strokeWidth={3} />
-        </div>
-        <h2>设置完成！</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
-          你的 OBS 音频检测助手已配置完毕，以下是你的设置摘要：
-        </p>
-        <div className="complete-summary">
-          <div className="summary-row">
-            <span className="sr-label">OBS 连接</span>
-            <span className="sr-value" style={{ color: connected ? 'var(--green-600)' : 'var(--red-text)' }}>
-              {connected ? '已连接' : '未连接'}
-            </span>
-          </div>
-          <div className="summary-row">
-            <span className="sr-label">守护音源</span>
-            <span className="sr-value">{sourceLabel}</span>
-          </div>
-          <div className="summary-row">
-            <span className="sr-label">静音报警</span>
-            <span className="sr-value">{draft.silenceDurationSeconds} 秒</span>
-          </div>
-          <div className="summary-row">
-            <span className="sr-label">静音阈值</span>
-            <span className="sr-value">{draft.silenceThresholdDb} dB</span>
-          </div>
-          <div className="summary-row">
-            <span className="sr-label">预警提醒</span>
-            <span className="sr-value">{draft.preAlertEnabled ? '已开启' : '已关闭'}</span>
-          </div>
-          <div className="summary-row">
-            <span className="sr-label">开机启动</span>
-            <span className="sr-value">{draft.autoLaunch ? '已开启' : '已关闭'}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-});
-
 // =============================================================================
 // 步骤内容渲染器（按 stepKey 路由到对应组件）
 // =============================================================================
@@ -479,7 +434,7 @@ const StepContent: React.FC<{
         <React.Fragment key={contentKey}>
           <ConnectionStep draft={draft} onUpdateDraft={onUpdateDraft} onTestConnection={onTestConnection} testResult={testResult} testingConnection={testingConnection} />
           <div className="onboarding-card-footer">
-            <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
+            <button type="button" className="btn-ghost" onClick={onSkip}>稍后配置</button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
               <button type="button" className="btn-primary" onClick={onNext}>下一步 <ChevronRight size={16} /></button>
@@ -493,7 +448,7 @@ const StepContent: React.FC<{
         <React.Fragment key={contentKey}>
           <SourceStep draft={draft} snapshot={snapshot} onUpdateDraft={onUpdateDraft} onRefreshInputs={onRefreshInputs} />
           <div className="onboarding-card-footer">
-            <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
+            <button type="button" className="btn-ghost" onClick={onSkip}>稍后配置</button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
               <button type="button" className="btn-primary" onClick={onNext}>下一步 <ChevronRight size={16} /></button>
@@ -507,7 +462,7 @@ const StepContent: React.FC<{
         <React.Fragment key={contentKey}>
           <RulesStep draft={draft} onUpdateDraft={onUpdateDraft} />
           <div className="onboarding-card-footer">
-            <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
+            <button type="button" className="btn-ghost" onClick={onSkip}>稍后配置</button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
               <button type="button" className="btn-primary" onClick={onNext}>下一步 <ChevronRight size={16} /></button>
@@ -521,7 +476,7 @@ const StepContent: React.FC<{
         <React.Fragment key={contentKey}>
           <StartupStep draft={draft} onUpdateDraft={onUpdateDraft} />
           <div className="onboarding-card-footer">
-            <button type="button" className="btn-ghost" onClick={onSkip}>跳过全部</button>
+            <button type="button" className="btn-ghost" onClick={onSkip}>稍后配置</button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
               <button type="button" className="btn-primary" onClick={onNext}>下一步 <ChevronRight size={16} /></button>
@@ -531,15 +486,9 @@ const StepContent: React.FC<{
       );
 
     case 'complete':
-      return (
-        <React.Fragment key={contentKey}>
-          <CompleteStep draft={draft} snapshot={snapshot} testResult={testResult} />
-          <div className="onboarding-card-footer">
-            <button type="button" className="btn-secondary" onClick={onPrev}><ChevronLeft size={16} /> 上一步</button>
-            <button type="button" className="btn-primary" onClick={onNext}><ShieldCheck size={16} /> 开始使用</button>
-          </div>
-        </React.Fragment>
-      );
+    case 'verify':
+    case 'workspace':
+      return null;
   }
 });
 
@@ -549,6 +498,22 @@ const StepContent: React.FC<{
 const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
   const { draft, snapshot, onUpdateDraft, onComplete, onTestConnection, onRefreshInputs, testResult, testingConnection } = props;
 
+  const [verifiedSource, setVerifiedSource] = useState('');
+  const [alertConfirmed, setAlertConfirmed] = useState(false);
+  const [trialPassed, setTrialPassed] = useState(false);
+  const [workspaceSkipped, setWorkspaceSkipped] = useState(false);
+  useEffect(() => { setVerifiedSource(''); setTrialPassed(false); }, [draft.obsHost, draft.obsPort, draft.obsPassword, draft.targetInputName]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const checks = setupChecks(draft, snapshot, verifiedSource, alertConfirmed, trialPassed, workspaceSkipped);
+  const ready = checks.every(check => check.ready);
+  const finish = async () => {
+    if (saving) return;
+    setSaving(true); setSaveError('');
+    try { await onComplete(ready); }
+    catch { setSaveError('保存配置失败，请重试；当前步骤和输入已保留。'); }
+    finally { setSaving(false); }
+  };
   const [stepIndex, setStepIndex] = useState(0);
   const [stepDirection, setStepDirection] = useState<'forward' | 'backward'>('forward');
   const currentKey = STEP_KEYS[stepIndex];
@@ -556,7 +521,7 @@ const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
 
   const goNext = useCallback(() => {
     if (isLast) {
-      onComplete();
+      setStepIndex(STEP_KEYS.length - 1);
     } else {
       setStepDirection('forward');
       setStepIndex((i) => Math.min(i + 1, STEP_KEYS.length - 1));
@@ -569,18 +534,7 @@ const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
   }, []);
 
   const handleSkip = useCallback(() => {
-    onComplete();
-  }, [onComplete]);
-
-  // 阻止滚轮穿透
-  useEffect(() => {
-    const block = (e: Event) => e.preventDefault();
-    window.addEventListener('wheel', block, { capture: true, passive: false });
-    window.addEventListener('touchmove', block, { capture: true, passive: false });
-    return () => {
-      window.removeEventListener('wheel', block, { capture: true });
-      window.removeEventListener('touchmove', block, { capture: true });
-    };
+    setStepIndex(STEP_KEYS.length - 1);
   }, []);
 
   return (
@@ -588,8 +542,11 @@ const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
       <StepIndicator currentIndex={stepIndex} />
 
       {/* 卡片 key 稳定，不随步骤切换 remount */}
-      <div className="onboarding-card" data-step-direction={stepDirection}>
-        <StepContent
+      <div className={`onboarding-card ${currentKey === "workspace" ? "onboarding-workspace" : ""}`} data-step-direction={stepDirection}>
+        {currentKey === 'verify' ? <><SetupVerification draft={draft} snapshot={snapshot} verifiedSource={verifiedSource} onVerified={setVerifiedSource} confirmed={alertConfirmed} onConfirmed={() => setAlertConfirmed(true)} /><div className="onboarding-card-footer"><button className="btn-secondary" onClick={goPrev}>上一步</button><button className="btn-primary" onClick={goNext}>{checks.find(c => c.step === 'verify')?.ready ? '验证完成，下一步' : '稍后验证，下一步'}</button></div></>
+        : currentKey === 'workspace' ? <><div className="onboarding-card-body"><h2>准备第一次开播工作台</h2><p>① 选择实际使用的软件，配置启动路径并打开 → ② 按需打开 OBS 输出投影 → ③ 摆放窗口，勾选需要恢复的位置并保存 → ④ 点击“一键开播准备”试运行。</p><p>只需要音频检测时，可先跳过工作台配置；试运行不会开始推流。</p><PreflightCheckPage draft={draft} search="" onChange={(key, value) => { setWorkspaceSkipped(false); setTrialPassed(false); onUpdateDraft(key, value); }} onTrialResult={result => { setWorkspaceSkipped(false); setTrialPassed(workspaceTrialPassed(draft, result)); }} /><p role="status">{trialPassed ? '工作台试运行通过' : '尚未通过试运行；请确认每个已选软件有启动路径，并检查逐项结果。位置保存不是必选项。'}</p></div><div className="onboarding-card-footer"><button className="btn-secondary" onClick={goPrev}>上一步</button><button className="btn-secondary" onClick={() => { setWorkspaceSkipped(true); goNext(); }}>仅使用音频检测</button><button className="btn-primary" onClick={goNext}>查看配置结果</button></div></>
+        : currentKey === 'complete' ? <><div className="onboarding-card-body"><h2>{ready ? '首次配置验证通过' : '配置尚未验证完成'}</h2><p>工作台准备、音频检测和 OBS 推流是独立状态；完成设置不会自动推流。</p><ul className="setup-checklist">{checks.map(check => <li key={check.step}><span>{check.ready ? '✓' : '待完成'} · {check.label}</span>{!check.ready && <button className="btn-secondary" onClick={() => setStepIndex(STEP_KEYS.indexOf(check.step as StepKey))}>前往处理</button>}</li>)}</ul><p>当前：OBS {snapshot.connected ? '已连接' : '未连接'} · 检测{snapshot.monitoringActive ? '进行中' : '未开启'} · {snapshot.streaming ? '正在推流' : '尚未推流'}</p>{saveError && <p role="alert">{saveError}</p>}</div><div className="onboarding-card-footer"><button className="btn-secondary" disabled={saving} onClick={goPrev}>上一步</button><button className="btn-primary" disabled={saving} onClick={() => void finish()}>{saving ? '正在保存…' : ready ? '完成并进入主界面' : '暂存并进入主界面'}</button></div></>
+        : <StepContent
           stepKey={currentKey}
           draft={draft}
           snapshot={snapshot}
@@ -602,7 +559,7 @@ const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
           onPrev={goPrev}
           onSkip={handleSkip}
           isLast={isLast}
-        />
+        />}
       </div>
     </div>
   );
@@ -612,6 +569,11 @@ export const OnboardingWizard = memo(OnboardingWizardComponent, (previous, next)
   previous.draft === next.draft &&
   previous.snapshot.connected === next.snapshot.connected &&
   previous.snapshot.inputs === next.snapshot.inputs &&
+  previous.snapshot.lastLevelDb === next.snapshot.lastLevelDb &&
+  previous.snapshot.lastAudioMeterReceivedAt === next.snapshot.lastAudioMeterReceivedAt &&
+  previous.snapshot.activeInputName === next.snapshot.activeInputName &&
+  previous.snapshot.monitoringActive === next.snapshot.monitoringActive &&
+  previous.snapshot.streaming === next.snapshot.streaming &&
   previous.onUpdateDraft === next.onUpdateDraft &&
   previous.onComplete === next.onComplete &&
   previous.onTestConnection === next.onTestConnection &&

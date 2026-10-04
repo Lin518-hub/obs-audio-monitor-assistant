@@ -772,3 +772,12 @@
   color: var(--text-muted);
   text-align: center;
 }
+
+.onboarding-card.onboarding-workspace { width:min(1120px,calc(100vw - 32px)); height:calc(100vh - 140px); }
+.onboarding-card-body { overflow-y:auto; overscroll-behavior:contain; }
+.setup-verification meter { display:block; width:100%; height:26px; }
+.setup-verification button { margin:6px 8px 6px 0; }
+.setup-checklist { display:grid; gap:14px; padding:0; list-style:none; }
+.setup-checklist li { display:flex; gap:12px; align-items:center; justify-content:space-between; }
+.onboarding-workspace .preflight-page { padding:0; }
+.onboarding-workspace .preflight-page-header { flex-wrap:wrap; }

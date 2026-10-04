@@ -366,6 +366,7 @@ export interface AppConfig {
   alertSoundPreset: AlertSoundPreset;
   paused: boolean;
   themeColor: 'green' | 'yellow';
+  setupChecklistPending: boolean;
   hasSeenGuide: boolean;
   guideSeenVersion: string;
   releaseNotesSeenVersion: string;
@@ -532,6 +533,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   alertSoundPreset: 'strong',
   paused: false,
   themeColor: 'green',
+  setupChecklistPending: true,
   hasSeenGuide: false,
   guideSeenVersion: '',
   releaseNotesSeenVersion: '',
@@ -575,15 +577,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   atemPrimaryInputIds: [],
   atemInputCustomizations: {},
   preflightApps: {
-    obs: { enabled: true, path: '', restoreWindowPosition: true, pathSource: 'unknown', customLabel: '', launchUrl: '' },
-    douyin: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
-    browser: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
-    software_control: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
-    cosmic_cat: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' }
+    obs: { enabled: true, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    douyin: { enabled: false, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    browser: { enabled: false, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    software_control: { enabled: false, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' },
+    cosmic_cat: { enabled: false, path: '', restoreWindowPosition: false, pathSource: 'unknown', customLabel: '', launchUrl: '' }
   },
   preflightProjector: {
     enabled: false,
-    restoreWindowPosition: true
+    restoreWindowPosition: false
   },
   preflightWindowPlacements: {},
   preflightConfigRevision: 1
