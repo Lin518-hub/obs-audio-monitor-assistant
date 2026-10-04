@@ -1,3 +1,4 @@
+import { LaunchOverlayApp } from './components/LaunchOverlayApp';
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -59,7 +60,8 @@ const root = rootElement.__obsGuardReactRoot ?? createRoot(rootElement);
 rootElement.__obsGuardReactRoot = root;
 
 const route =
-  window.location.hash === '#alert' ? 'alert'
+  window.location.hash === '#launch-overlay' ? 'launch-overlay'
+    : window.location.hash === '#alert' ? 'alert'
     : window.location.hash === '#alert-backdrop' ? 'alert-backdrop'
     : window.location.hash === '#toast-alert' ? 'toast-alert'
     : window.location.hash === '#prealert' ? 'prealert'
@@ -72,7 +74,7 @@ const initialSettingsPage = new URLSearchParams(window.location.hash.split('?')[
 document.body.dataset.route = route;
 document.documentElement.dataset.route = route;
 if (route !== 'settings') {
-  const applyTheme = (snapshot: AppSnapshot) => { document.documentElement.dataset.theme = snapshot.config.themeColor ?? 'green'; };
+  const applyTheme = (snapshot: AppSnapshot) => { document.documentElement.dataset.theme = route === 'launch-overlay' ? 'green' : snapshot.config.themeColor ?? 'green'; };
   void window.obsGuard.getSnapshot().then(applyTheme);
   const disposeTheme = window.obsGuard.onSnapshot(applyTheme);
   if (import.meta.hot) import.meta.hot.dispose(disposeTheme);
@@ -94,6 +96,7 @@ class RendererErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
+    if (route === 'launch-overlay') void window.obsGuard.releasePreflightControl();
     console.error('[renderer] unhandled render error', error, info.componentStack);
   }
 
@@ -114,7 +117,8 @@ class RendererErrorBoundary extends React.Component<
 
 root.render(
   <RendererErrorBoundary>
-    {route === 'alert' ? <AlertApp />
+    {route === 'launch-overlay' ? <LaunchOverlayApp />
+      : route === 'alert' ? <AlertApp />
       : route === 'alert-backdrop' ? <AlertBackdropApp />
       : route === 'toast-alert' ? <ToastAlertApp />
       : route === 'prealert' ? <PreAlertApp />

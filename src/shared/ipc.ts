@@ -21,6 +21,10 @@ export interface ObsGuardApi {
   floatingResize: (phase: 'start' | 'move' | 'end', edge?: string) => Promise<void>;
   respondMonitoringPrompt: (accept: boolean) => Promise<void>;
   onWindowShown: (callback: () => void) => () => void;
+  onPreflightControlReleased: (callback: () => void) => () => void;
+  releasePreflightControl: () => Promise<void>;
+  getPreflightOverlayState: () => Promise<import('./types.js').PreflightProgress>;
+  restorePreflightTarget: (target: import('./types.js').PreflightPlacementTarget, settings: PreflightSettings) => Promise<void>;
   onPreflightProgress: (callback: (progress: import('./types.js').PreflightProgress) => void) => () => void;
   getSnapshot: () => Promise<AppSnapshot>;
   saveConfig: (patch: Partial<AppConfig>) => Promise<AppSnapshot>;
@@ -47,9 +51,9 @@ export interface ObsGuardApi {
   installUpdate: () => Promise<UpdateSnapshot>;
   checkPreflightApps: (settings: PreflightSettings) => Promise<PreflightCheckResult>;
   launchPreflightApps: (settings: PreflightSettings) => Promise<PreflightLaunchResult>;
-  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings) => Promise<PreflightLaunchResult>;
+  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings, retry?: boolean) => Promise<PreflightLaunchResult>;
   discoverPreflightApps: () => Promise<PreflightDiscoveryResult>;
-  capturePreflightLayout: (settings: PreflightSettings) => Promise<PreflightLayoutCaptureResult>;
+  capturePreflightLayout: (settings: PreflightSettings, target?: import('./types.js').PreflightPlacementTarget) => Promise<PreflightLayoutCaptureResult>;
   openPreflightProjector: (settings: PreflightSettings) => Promise<PreflightProjectorResult>;
   pickPreflightTarget: (id: PreflightAppId) => Promise<string | null>;
   getDroppedPreflightPath: (file: File) => string;

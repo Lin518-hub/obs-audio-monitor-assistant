@@ -10,6 +10,14 @@ const obsGuardApi = {
     ipcRenderer.on('window:shown', listener);
     return () => ipcRenderer.off('window:shown', listener);
   },
+  onPreflightControlReleased: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('preflight:control-released', listener);
+    return () => ipcRenderer.off('preflight:control-released', listener);
+  },
+  releasePreflightControl: () => ipcRenderer.invoke('preflight:release-control') as Promise<void>,
+  getPreflightOverlayState: () => ipcRenderer.invoke('preflight:overlay-state') as Promise<import('../shared/types.js').PreflightProgress>,
+  restorePreflightTarget: (target: import('../shared/types.js').PreflightPlacementTarget, settings: PreflightSettings) => ipcRenderer.invoke('preflight:restore-target', target, settings) as Promise<void>,
   onPreflightProgress: (callback: (progress: import('../shared/types.js').PreflightProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: import('../shared/types.js').PreflightProgress) => callback(progress);
     ipcRenderer.on('preflight:progress', listener);
@@ -42,9 +50,9 @@ const obsGuardApi = {
   installUpdate: () => ipcRenderer.invoke('update:install') as Promise<UpdateSnapshot>,
   checkPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:check', settings) as Promise<PreflightCheckResult>,
   launchPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:launch-all', settings) as Promise<PreflightLaunchResult>,
-  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings) => ipcRenderer.invoke('preflight:launch', id, settings) as Promise<PreflightLaunchResult>,
+  launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings, retry = false) => ipcRenderer.invoke('preflight:launch', id, settings, retry) as Promise<PreflightLaunchResult>,
   discoverPreflightApps: () => ipcRenderer.invoke('preflight:discover') as Promise<PreflightDiscoveryResult>,
-  capturePreflightLayout: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:capture-layout', settings) as Promise<PreflightLayoutCaptureResult>,
+  capturePreflightLayout: (settings: PreflightSettings, target?: import('../shared/types.js').PreflightPlacementTarget) => ipcRenderer.invoke('preflight:capture-layout', settings, target) as Promise<PreflightLayoutCaptureResult>,
   openPreflightProjector: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:open-projector', settings) as Promise<PreflightProjectorResult>,
   pickPreflightTarget: (id: PreflightAppId) => ipcRenderer.invoke('preflight:pick-target', id) as Promise<string | null>,
   getDroppedPreflightPath: (file: File) => webUtils.getPathForFile(file),

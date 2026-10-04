@@ -815,6 +815,10 @@ export const FloatingWindowSection: React.FC<{
     {draft.floatingWindowEnabled && (
       <div className="settings-progressive-block">
         <div className="settings-field">
+          <ToggleRow id="floating-lock" title="锁定浮窗位置和大小" description="锁定后禁止拖动和缩放，按钮仍可操作" checked={draft.floatingWindowLocked} onChange={v => onChange('floatingWindowLocked', v)} />
+          <label className="settings-field-label">浮窗不透明度 · {Math.round(draft.floatingWindowOpacity * 100)}%
+            <input type="range" min="30" max="100" step="5" value={Math.round(draft.floatingWindowOpacity * 100)} onChange={e => onChange('floatingWindowOpacity', Number(e.target.value) / 100)} />
+          </label>
           <span className="settings-field-label">小浮窗模式</span>
           <FloatingModePicker
             value={draft.floatingWindowMode}

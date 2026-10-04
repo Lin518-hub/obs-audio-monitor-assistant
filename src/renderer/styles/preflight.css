@@ -439,3 +439,23 @@
 @keyframes launch-breathe { 50% { transform:scale(.92); opacity:.7; } }
 @keyframes launch-shimmer { from { transform:translateX(-100%); } to { transform:translateX(100%); } }
 @media (prefers-reduced-motion:reduce) { .launch-progress-overlay, .launch-progress-card, .launch-progress-card *, .launch-progress-card *::after { animation:none !important; transition:none !important; } }
+
+html[data-route="launch-overlay"], body[data-route="launch-overlay"], body[data-route="launch-overlay"] #root { background:transparent !important; }
+.desktop-launch-cover { background:rgba(192,242,211,.84); backdrop-filter:blur(14px); color:#143d29; }
+.desktop-launch-cover .launch-progress-card { background:rgba(247,255,249,.9); }
+.preflight-window-results { display:grid; gap:10px; margin:16px 0; }
+.preflight-window-result { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px; border:1px solid var(--border-subtle); border-radius:14px; background:var(--glass-bg-strong); }
+.preflight-window-result > div { flex:1; min-width:180px; }
+.preflight-window-result small { display:block; margin-top:5px; overflow-wrap:anywhere; }
+.preflight-window-result[data-failed="true"] small { color:var(--red-text); }
+.launch-progress-message { overflow-wrap:anywhere; }
+
+.preflight-results-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.preflight-results-heading strong { white-space:nowrap; }
+.launch-cover-emphasis { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.launch-cover-emphasis .alert-backdrop-edge.left { background:linear-gradient(90deg,rgba(74,222,128,.28),transparent); }
+.launch-cover-emphasis .alert-backdrop-edge.right { background:linear-gradient(270deg,rgba(74,222,128,.28),transparent); }
+.launch-cover-emphasis .alert-backdrop-edge.top { background:linear-gradient(180deg,rgba(74,222,128,.28),transparent); }
+.launch-cover-emphasis .alert-backdrop-edge.bottom { background:linear-gradient(0deg,rgba(74,222,128,.28),transparent); }
+.launch-cover-emphasis .alert-backdrop-outline { border-color:rgba(74,222,128,.48); box-shadow:inset 0 0 40px rgba(34,197,94,.15); }
+@media (prefers-reduced-motion:reduce) { .launch-cover-emphasis * { animation:none !important; } }

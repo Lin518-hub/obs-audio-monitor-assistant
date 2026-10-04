@@ -1,3 +1,4 @@
+import { preflightError } from '../shared/preflightErrors.js';
 import { screen, shell, type ShortcutDetails } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -28,6 +29,21 @@ let processListCache: { expiresAt: number; promise: Promise<ProcessEntry[]> } | 
 
 export class PreflightCheckService {
   private readonly windows = new WindowsWindowManager();
+  private cancelled = false;
+  begin(): void { this.cancelled = false; this.windows.reset(); }
+  cancel(): void { this.cancelled = true; this.windows.cancel(); }
+  assertActive(): void { if (this.cancelled) throw new Error('已取消自动操作'); }
+  async restoreTarget(id: PreflightPlacementTarget, settings: PreflightSettings): Promise<void> {
+    this.assertActive();
+    const placement = settings.windowPlacements[id];
+    if (!placement) throw new Error('尚未保存位置，请先保存此窗口');
+    if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
+    if (id === 'obs_projector') {
+      const window = await this.findOBSProjector(settings.apps);
+      if (!window) throw new Error('未找到输出投影，请先打开投影');
+      await this.restoreWindow(window, placement);
+    } else await this.waitAndRestoreApp(id, settings.apps, placement);
+  }
   private knownOBSProjectorHandle: string | null = null;
 
   async check(configs: PreflightAppConfigs, forceRefresh = false): Promise<PreflightCheckResult> {
@@ -75,7 +91,7 @@ export class PreflightCheckService {
     return discoverPreflightApps();
   }
 
-  async captureLayout(settings: PreflightSettings): Promise<PreflightLayoutCaptureResult> {
+  async captureLayout(settings: PreflightSettings, target?: PreflightPlacementTarget): Promise<PreflightLayoutCaptureResult> {
     const capturedAt = Date.now();
     const failures: Partial<Record<PreflightPlacementTarget, string>> = {};
     if (process.platform !== 'win32') {
@@ -94,7 +110,7 @@ export class PreflightCheckService {
     const captured: PreflightPlacementTarget[] = [];
 
     for (const id of PREFLIGHT_APP_IDS) {
-      if (id === 'cosmic_cat') continue;
+      if (id === 'cosmic_cat' || (target && target !== id)) continue;
       if (!settings.apps[id].enabled || !settings.apps[id].restoreWindowPosition) continue;
       try {
         const windows = await this.windowsForApp(id, settings.apps, processes);
@@ -107,7 +123,7 @@ export class PreflightCheckService {
       }
     }
 
-    if (settings.projector.restoreWindowPosition) {
+    if ((!target || target === 'obs_projector') && settings.projector.restoreWindowPosition) {
       try {
         const projector = await this.findOBSProjector(settings.apps, processes);
         if (!projector) throw new Error('未找到已打开的节目输出投影');
@@ -121,7 +137,7 @@ export class PreflightCheckService {
     return { platform: 'windows', placements, captured, failures, capturedAt };
   }
 
-  async launch(id: PreflightAppId, settings: PreflightSettings): Promise<PreflightLaunchResult> {
+  async launch(id: PreflightAppId, settings: PreflightSettings, retry = false): Promise<PreflightLaunchResult> {
     const before = await this.check(settings.apps, true);
     const current = before.apps.find((app) => app.id === id);
     const failures: Partial<Record<PreflightAppId, string>> = {};
@@ -129,7 +145,7 @@ export class PreflightCheckService {
     const restored: PreflightPlacementTarget[] = [];
     const restoreFailures: Partial<Record<PreflightPlacementTarget, string>> = {};
 
-    const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
+    const shouldOpenBrowserPage = !retry && id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
     if (id === 'obs' && current?.state === 'running') {
       await this.resolveOBSStartupDialogs(settings.apps);
     }
@@ -154,8 +170,12 @@ export class PreflightCheckService {
       }
     }
 
-    await delay(700);
-    return { ...(await this.check(settings.apps, true)), launched, failures, restored, restoreFailures, projector: null };
+    if (current?.state === 'running' && !shouldOpenBrowserPage && id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition && settings.windowPlacements[id]) {
+      try { await this.restoreTarget(id, settings); restored.push(id); }
+      catch (error) { restoreFailures[id] = errorMessage(error, '窗口位置恢复失败'); }
+    }
+    const after = await this.confirmStarted(settings.apps, launched, failures);
+    return { ...after, launched, failures, restored, restoreFailures, projector: null };
   }
 
   async launchAll(settings: PreflightSettings, report: (message: string, percent: number) => void = () => {}): Promise<PreflightLaunchResult> {
@@ -171,6 +191,7 @@ export class PreflightCheckService {
     const names = { obs: 'OBS', douyin: '直播平台', browser: '浏览器', cosmic_cat: '宇宙猫', software_control: '软件控制'  };
 
     for (const id of PREFLIGHT_APP_IDS) {
+      this.assertActive();
       if (!settings.apps[id].enabled) continue;
       const label = settings.apps[id].customLabel || names[id];
       report(`正在检查并启动 ${label}`, Math.round(processed++ / Math.max(1, enabledCount) * 60));
@@ -195,7 +216,8 @@ export class PreflightCheckService {
 
     if (shouldResolveOBSStartupDialogs) {
       report('正在等待 OBS 主窗口就绪', 62);
-      await this.resolveOBSStartupDialogs(settings.apps);
+      try { await this.resolveOBSStartupDialogs(settings.apps); }
+      catch (error) { failures.obs = errorMessage(error, 'OBS 主窗口未就绪'); }
     }
 
     report('正在恢复已保存的窗口布局', 70);
@@ -212,8 +234,25 @@ export class PreflightCheckService {
       }
     }));
 
-    await delay(500);
-    return { ...(await this.check(settings.apps, true)), launched, failures, restored, restoreFailures, projector: null };
+    report('正在确认程序运行状态', 75);
+    const after = await this.confirmStarted(settings.apps, launched, failures);
+    return { ...after, launched, failures, restored, restoreFailures, projector: null };
+  }
+
+  private async confirmStarted(configs: PreflightAppConfigs, launched: PreflightAppId[], failures: Partial<Record<PreflightAppId, string>>): Promise<PreflightCheckResult> {
+    const deadline = Date.now() + 15_000;
+    let after: PreflightCheckResult;
+    while (true) {
+      this.assertActive();
+      after = await this.check(configs, true);
+      const pending = launched.filter(id => id !== 'cosmic_cat' && !failures[id] && after.apps.find(app => app.id === id)?.state !== 'running');
+      if (!pending.length) return after;
+      if (Date.now() >= deadline) {
+        for (const id of pending) failures[id] = '启动请求已发送，但 15 秒内未检测到程序就绪，请检查软件弹窗后重试';
+        return after;
+      }
+      await delay(600);
+    }
   }
 
   async findOBSProjector(configs: PreflightAppConfigs, processes?: ProcessEntry[]): Promise<WindowsTopLevelWindow | null> {
@@ -244,6 +283,7 @@ export class PreflightCheckService {
     const deadline = Date.now() + timeoutMs;
     const ignoredHandles = new Set(existingHandles);
     while (Date.now() < deadline) {
+      this.assertActive();
       const windows = await this.windows.waitForNewWindows(pids, ignoredHandles, Math.max(250, deadline - Date.now()));
       const projector = selectNewOBSProjectorWindow(windows);
       if (projector) return this.rememberOBSProjector(projector);
@@ -267,12 +307,20 @@ export class PreflightCheckService {
     stable = true
   ): Promise<void> {
     if (process.platform !== 'win32') return;
+    this.assertActive();
     const resolved = resolveWindowPlacement(placement, await this.placementDisplays());
+    this.assertActive();
     if (stable) {
       await this.windows.moveWindow(window.handle, resolved.bounds, resolved.windowState);
     } else {
       await this.windows.moveWindowOnce(window.handle, resolved.bounds, resolved.windowState);
     }
+    this.assertActive();
+    const actual = (await this.windows.listWindows([window.pid])).find(item => item.handle === window.handle);
+    if (!actual) throw new Error('恢复后窗口已关闭，请重新打开后重试');
+    const correct = resolved.windowState === 'maximized' ? actual.windowState === 'maximized'
+      : actual.windowState === 'normal' && (['x', 'y', 'width', 'height'] as const).every(key => Math.abs(actual.bounds[key] - resolved.bounds[key]) <= 8);
+    if (!correct) throw new Error('窗口未保持在目标位置，可能受软件最小尺寸或权限限制，请调整后重新保存');
   }
 
   private rememberOBSProjector(window: WindowsTopLevelWindow | null): WindowsTopLevelWindow | null {
@@ -286,6 +334,7 @@ export class PreflightCheckService {
     placement?: PreflightWindowPlacement,
     waitForOBSStartup = true
   ): Promise<void> {
+    this.assertActive();
     const config = configs[id];
     const target = config.path.trim();
     if (id === 'cosmic_cat' && process.platform !== 'win32') throw new Error('宇宙猫检测的管理员启动仅支持 Windows');
@@ -345,9 +394,10 @@ export class PreflightCheckService {
     placement: PreflightWindowPlacement,
     excludedHandles?: Set<string>
   ): Promise<void> {
-    if (process.platform !== 'win32') return;
+    if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
+      this.assertActive();
       const windows = await this.windowsForApp(id, configs, await readProcessList());
       const mainWindow = selectMainWindow(excludedHandles
         ? windows.filter((window) => !excludedHandles.has(window.handle))
@@ -373,6 +423,7 @@ export class PreflightCheckService {
     let pids: number[] = [];
     let lastProcessRefreshAt = 0;
     while (Date.now() < deadline) {
+      this.assertActive();
       const now = Date.now();
       if (pids.length === 0 || now - lastProcessRefreshAt >= 1_500) {
         const processes = await readProcessList(true);
@@ -548,7 +599,8 @@ function platformLabel(): PreflightCheckResult['platform'] {
 }
 
 function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
+  console.error('[preflight]', error);
+  return preflightError(error, fallback + '，请检查软件状态后重试；详情已写入日志');
 }
 
 function delay(ms: number): Promise<void> {

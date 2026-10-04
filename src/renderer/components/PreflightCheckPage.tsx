@@ -1,3 +1,4 @@
+import { preflightError } from '../../shared/preflightErrors';
 import { LaunchProgressDialog, type LaunchProgressState } from './LaunchProgressDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import type {
   AppConfig,
+  PreflightPlacementTarget,
   PreflightAppId,
   PreflightAppStatus,
   PreflightCheckResult,
@@ -59,15 +61,22 @@ interface PreflightCheckPageProps {
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
 }
 
+type WindowOutcome = { message: string; failed: boolean; retry: 'launch' | 'restore' | 'projector' | 'capture' };
 type BusyState = 'discover' | 'all' | 'layout' | 'projector' | PreflightAppId | null;
 
 export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange }) => {
+  const cancelledRef = useRef(false);
+  const [outcomes, setOutcomes] = useState<Partial<Record<PreflightPlacementTarget, WindowOutcome>>>({});
+  const targetName = (id: PreflightPlacementTarget) => id === 'obs_projector' ? 'OBS 输出投影' : appDisplayName(id, draft.preflightApps[id].customLabel);
   const [result, setResult] = useState<PreflightCheckResult | null>(null);
   const [launchProgress, setLaunchProgress] = useState<LaunchProgressState | null>(null);
+  useEffect(() => window.obsGuard.onPreflightControlReleased(() => { cancelledRef.current = true; setLaunchProgress(null); }), []);
   useEffect(() => window.obsGuard.onPreflightProgress((next) => {
     setLaunchProgress(current => current && !current.finished ? { ...current, percent: Math.max(current.percent, next.percent), message: next.message, steps: current.steps.at(-1) === next.message ? current.steps : [...current.steps, next.message].slice(-4) } : current);
   }), []);
   const [busy, setBusy] = useState<BusyState>(null);
+  const busyRef = useRef<BusyState>(null);
+  busyRef.current = busy;
   const [expanded, setExpanded] = useState<Set<PreflightAppId>>(() => new Set());
   const [draggingId, setDraggingId] = useState<PreflightAppId | null>(null);
   const [checking, setChecking] = useState(true);
@@ -83,7 +92,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
   settingsRef.current = settings;
 
   const runCheck = useCallback(async (nextSettings?: PreflightSettings, showProgress = false) => {
-    if (checkInFlightRef.current) return;
+    if (checkInFlightRef.current || busyRef.current) return;
     checkInFlightRef.current = true;
     if (showProgress) setChecking(true);
     try {
@@ -91,7 +100,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       if (mountedRef.current) setResult(next);
     } catch (error) {
       if (showProgress && mountedRef.current) {
-        setNotice({ tone: 'error', text: error instanceof Error ? error.message : '检测系统进程失败' });
+        setNotice({ tone: 'error', text: preflightError(error, '检测系统进程失败') });
       }
     } finally {
       checkInFlightRef.current = false;
@@ -178,13 +187,23 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
         setNotice({ tone: 'success', text: merged.added.length > 0 ? `已自动添加 ${merged.added.length} 个软件路径。` : discovery.message });
       }
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '自动扫描软件失败' });
+      setNotice({ tone: 'error', text: preflightError(error, '自动扫描软件失败') });
     } finally {
       setBusy(null);
     }
   };
 
-  const applyLaunchResult = (next: PreflightLaunchResult, actionName: string) => {
+  const applyLaunchResult = (next: PreflightLaunchResult, actionName: string, targets = enabledIds) => {
+    setOutcomes(current => {
+      const updated = { ...current };
+      for (const id of targets) {
+        const failure = next.failures[id] || next.restoreFailures[id];
+        updated[id] = { failed: Boolean(failure), retry: next.failures[id] ? 'launch' : 'restore',
+          message: failure ? preflightError(failure) : next.restored.includes(id) ? '窗口已识别 · 恢复成功' : next.apps.find(app => app.id === id)?.state === 'running' ? settings.apps[id].restoreWindowPosition && !settings.windowPlacements[id] ? '进程已识别 · 尚未保存布局' : '进程已识别 · 无需恢复布局' : '启动请求已发送，等待软件就绪' };
+      }
+      if (next.projector && next.projector.state !== 'disabled') updated.obs_projector = { failed: next.projector.state === 'failed', retry: 'projector', message: preflightError(next.projector.message) };
+      return updated;
+    });
     setResult(next);
     const failed = Object.keys(next.failures) as PreflightAppId[];
     if (failed.length > 0) {
@@ -200,6 +219,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       setNotice({ tone: 'warning', text: `开播软件已启动；节目输出投影未打开：${next.projector.message}` });
       return;
     }
+    if (Object.keys(next.restoreFailures).length) { setNotice({ tone: 'warning', text: '部分窗口位置未恢复，请查看下方逐项结果并重试。' }); return; }
     const notReady = enabledIds.filter((id) => next.apps.find((app) => app.id === id)?.state !== 'running');
     setNotice(notReady.length > 0
       ? { tone: 'warning', text: `${actionName}已执行，部分程序仍在启动，可稍后重新检测。` }
@@ -207,27 +227,18 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
   };
 
   const launchAll = async () => {
-    setLaunchProgress({ percent: 0, message: '正在检查启动路径与运行状态', steps: ['正在检查启动路径与运行状态'], finished: false, failed: false });
+    cancelledRef.current = false;
+    setLaunchProgress({ startedAt: Date.now(), percent: 0, message: '正在检查启动路径与运行状态', steps: ['正在检查启动路径与运行状态'], finished: false, failed: false });
     setBusy('all');
     setNotice(null);
     try {
-      let launchSettings = settings;
-      const missingPath = enabledIds.some((id) => !settings.apps[id].path.trim()
-        && (result?.apps.find((app) => app.id === id)?.state !== 'running'
-          || (id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim()))));
-      if (missingPath) {
-        const discovery = await window.obsGuard.discoverPreflightApps();
-        const merged = mergeDiscoveredPaths(settings, discovery.discovered, false);
-        launchSettings = merged.settings;
-        if (merged.added.length > 0) onChange('preflightApps', merged.settings.apps);
-      }
-      const launched = await window.obsGuard.launchPreflightApps(launchSettings);
+      const launched = await window.obsGuard.launchPreflightApps(settings);
       applyLaunchResult(launched, '一键开播准备');
       const errors = [...Object.values(launched.failures), ...Object.values(launched.restoreFailures), launched.projector?.state === 'failed' ? launched.projector.message : null].filter(Boolean);
       setLaunchProgress(current => current && ({ ...current, percent: 100, finished: true, failed: errors.length > 0,
-        message: errors.length > 0 ? errors.join('；') : '程序与窗口准备完成，可以开始直播。' }));
+        message: errors.length > 0 ? '部分步骤未完成，请查看逐项结果；可仅重试失败步骤。' : '程序与窗口准备完成，可以开始直播。' }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : '一键开播准备失败';
+      const message = preflightError(error, '一键开播准备失败');
       setNotice({ tone: 'error', text: message });
       setLaunchProgress(current => current && ({ ...current, finished: true, failed: true, message }));
     } finally {
@@ -239,9 +250,9 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     setBusy(id);
     setNotice(null);
     try {
-      applyLaunchResult(await window.obsGuard.launchPreflightApp(id, settings), appDisplayName(id, draft.preflightApps[id].customLabel));
+      applyLaunchResult(await window.obsGuard.launchPreflightApp(id, settings), appDisplayName(id, draft.preflightApps[id].customLabel), [id]);
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : `${appDisplayName(id)}启动失败` });
+      setNotice({ tone: 'error', text: preflightError(error, `${appDisplayName(id)}启动失败`) });
     } finally {
       setBusy(null);
     }
@@ -252,19 +263,31 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
     setNotice(null);
     try {
       const projector = await window.obsGuard.openPreflightProjector(settings);
+      setOutcomes(current => ({ ...current, obs_projector: { failed: projector.state === 'failed', retry: 'projector', message: preflightError(projector.message) } }));
       setNotice({ tone: projector.state === 'failed' ? 'error' : 'success', text: projector.message });
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '打开节目输出投影失败' });
+      setNotice({ tone: 'error', text: preflightError(error, '打开节目输出投影失败') });
     } finally {
       setBusy(null);
     }
   };
 
-  const captureLayout = async () => {
+  const captureLayout = async (target?: PreflightPlacementTarget) => {
     setBusy('layout');
     setNotice(null);
     try {
-      const captured = await window.obsGuard.capturePreflightLayout(settings);
+      const captured = await window.obsGuard.capturePreflightLayout(target ? {
+        ...settings,
+        apps: target === 'obs_projector' ? settings.apps : { ...settings.apps, [target]: { ...settings.apps[target], enabled: true, restoreWindowPosition: true } },
+        projector: target === 'obs_projector' ? { ...settings.projector, restoreWindowPosition: true } : settings.projector
+      } : settings, target);
+      setOutcomes(current => {
+        const next = { ...current };
+        for (const id of captured.captured) next[id] = { failed: false, retry: 'capture', message: '窗口已识别 · 已保存' };
+        for (const [id, message] of Object.entries(captured.failures)) next[id as PreflightPlacementTarget] = { failed: true, retry: 'capture', message: preflightError(message) };
+        return next;
+      });
+      if (target && target !== 'obs_projector' && captured.captured.includes(target)) updateApps(target, { restoreWindowPosition: true });
       if (captured.captured.length > 0) onChange('preflightWindowPlacements', captured.placements);
       if (captured.captured.includes('obs_projector')) onChange('preflightProjector', { ...draft.preflightProjector, enabled: true, restoreWindowPosition: true });
       const failures = Object.entries(captured.failures).filter(([, message]) => Boolean(message)).map(([id, message]) => {
@@ -283,10 +306,65 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
         setNotice({ tone: 'success', text: `已保存 ${captured.captured.length} 个窗口位置，下次由助手启动时会自动恢复。` });
       }
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '保存当前布局失败' });
+      setNotice({ tone: 'error', text: preflightError(error, '保存当前布局失败') });
     } finally {
       setBusy(null);
     }
+  };
+
+  const retryTargets = async (targets: PreflightPlacementTarget[]) => {
+    cancelledRef.current = false;
+    setBusy('all');
+    setNotice(null);
+    setLaunchProgress({ startedAt: Date.now(), percent: 0, message: '正在重试未完成步骤', steps: [], finished: false, failed: false });
+    let failed = false;
+    try {
+      for (const [index, target] of targets.entries()) {
+        if (cancelledRef.current) { failed = true; break; }
+        const previous = outcomes[target];
+        setLaunchProgress(current => current && ({ ...current, message: `正在处理 ${targetName(target)}`, percent: Math.round(index / targets.length * 100) }));
+        try {
+          if (previous?.retry === 'capture') {
+            const captured = await window.obsGuard.capturePreflightLayout(settings, target);
+            if (captured.failures[target]) throw new Error(captured.failures[target]);
+            if (!captured.captured.includes(target)) throw new Error('此项目尚未启用位置保存，请点击单独保存');
+            onChange('preflightWindowPlacements', captured.placements);
+          } else if (target === 'obs_projector') {
+            const projector = await window.obsGuard.openPreflightProjector(settings);
+            if (projector.state === 'failed') throw new Error(projector.message);
+          } else if (previous?.retry === 'launch') {
+            const launched = await window.obsGuard.launchPreflightApp(target, settings, true);
+            setResult(launched);
+            if (launched.failures[target]) throw new Error(launched.failures[target]);
+            if (launched.restoreFailures[target]) {
+              failed = true;
+              setOutcomes(current => ({ ...current, [target]: { failed: true, retry: 'restore', message: preflightError(launched.restoreFailures[target]) } }));
+              continue;
+            }
+          } else await window.obsGuard.restorePreflightTarget(target, settings);
+          setOutcomes(current => ({ ...current, [target]: { failed: false, retry: previous?.retry ?? 'restore', message: previous?.retry === 'capture' ? '窗口已识别 · 已保存' : previous?.retry === 'launch' ? '程序已就绪' : target === 'obs_projector' ? '输出投影已就绪' : '窗口已识别 · 恢复成功' } }));
+        } catch (error) {
+          failed = true;
+          const message = preflightError(error);
+          setOutcomes(current => ({ ...current, [target]: { failed: true, retry: previous?.retry ?? 'restore', message } }));
+          if (message.includes('交回操作权')) break;
+        }
+      }
+    } finally {
+      setBusy(null);
+      setNotice({ tone: failed ? 'warning' : 'success', text: failed ? '仍有步骤未完成，请查看逐项结果。' : '所选步骤重试成功。' });
+      setLaunchProgress(current => current && ({ ...current, finished: true, percent: 100, failed, message: failed ? '仍有步骤需要处理，请查看逐项结果。' : '重试完成，已成功的其他项目未重复启动。' }));
+    }
+  };
+  const failedTargets = (Object.keys(outcomes) as PreflightPlacementTarget[]).filter(id => outcomes[id]?.failed);
+  const restoreOne = async (target: PreflightPlacementTarget) => {
+    setBusy('layout');
+    try {
+      await window.obsGuard.restorePreflightTarget(target, settings);
+      setOutcomes(current => ({ ...current, [target]: { failed: false, retry: 'restore', message: '窗口已识别 · 恢复成功' } }));
+    } catch (error) {
+      setOutcomes(current => ({ ...current, [target]: { failed: true, retry: 'restore', message: preflightError(error) } }));
+    } finally { setBusy(null); }
   };
 
   const applyManualPath = async (id: PreflightAppId, path: string) => {
@@ -302,7 +380,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       if (!path) return;
       await applyManualPath(id, path);
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '无法选择快捷方式' });
+      setNotice({ tone: 'error', text: preflightError(error, '无法选择快捷方式') });
     }
   };
 
@@ -319,7 +397,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
       }
       await applyManualPath(id, path);
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : '无法读取拖入的程序路径' });
+      setNotice({ tone: 'error', text: preflightError(error, '无法读取拖入的程序路径') });
     }
   };
 
@@ -334,7 +412,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
 
   return (
     <div className="preflight-page">
-      {launchProgress && <LaunchProgressDialog state={launchProgress} onClose={() => setLaunchProgress(null)} />}
+      {launchProgress?.finished && <LaunchProgressDialog key={launchProgress.startedAt} state={launchProgress} onClose={() => { if (!launchProgress.finished) { cancelledRef.current = true; void window.obsGuard.releasePreflightControl(); } setLaunchProgress(null); }} onRetry={failedTargets.length ? () => void retryTargets(failedTargets) : undefined} />}
       <header className="page-header preflight-page-header">
         <div className="page-header-title">
           <h1><span>开播检查</span></h1>
@@ -367,7 +445,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
           <div className="preflight-layout-icon"><MapPin size={20} /></div>
           <div>
             <strong>固定窗口位置</strong>
-            <span>选择要恢复的软件，摆好当前窗口后保存一次；只移动之后由助手新启动的窗口。</span>
+            <span>选择要恢复的软件，摆好当前窗口后保存一次；一键开播会恢复已运行及新启动的窗口；接手操作可停止后续自动调整。</span>
           </div>
           <button type="button" className="preflight-layout-save" onClick={() => void captureLayout()} disabled={busy !== null || selectedLayoutCount === 0}>
             {busy === 'layout' ? <LoaderCircle size={16} className="spinning" /> : <Save size={16} />}
@@ -405,6 +483,21 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
             <small>{draft.preflightWindowPlacements.obs_projector ? `已保存 ${formatShortTime(draft.preflightWindowPlacements.obs_projector.capturedAt)}` : draft.preflightProjector.restoreWindowPosition ? '打开投影后保存' : '不恢复'}</small>
           </button>
         </div>
+      </section>
+
+      <section className="preflight-window-results" aria-label="窗口布局逐项结果">
+        <div className="preflight-results-heading"><strong>窗口布局逐项结果</strong><button type="button" className="btn-secondary" disabled={busy !== null || !failedTargets.length} onClick={() => void retryTargets(failedTargets)}>仅重试失败步骤（{failedTargets.length}）</button></div>
+        {([...enabledIds.filter(id => POSITIONABLE_APP_IDS.has(id)), 'obs_projector'] as PreflightPlacementTarget[]).map(id => {
+          const outcome = outcomes[id];
+          const placement = draft.preflightWindowPlacements[id];
+          return <div className="preflight-window-result" key={id} data-failed={outcome?.failed ?? false}>
+            <div><strong>{targetName(id)}</strong><small role="status">{outcome?.message ?? (placement ? '已保存位置 · 本次窗口尚未验证' : '尚未保存位置')}</small>
+              {placement && <small>保存于 {formatShortTime(placement.capturedAt)} · {placement.displayLabel || "已保存屏幕"}</small>}</div>
+            <button type="button" className="btn-secondary" disabled={busy !== null} onClick={() => void captureLayout(id)}>单独保存</button>
+            <button type="button" className="btn-secondary" disabled={busy !== null || !placement} onClick={() => void restoreOne(id)}>恢复位置</button>
+            {outcome?.failed && <button type="button" className="btn-primary" disabled={busy !== null} onClick={() => void retryTargets([id])}>重试此步骤</button>}
+          </div>;
+        })}
       </section>
 
       {notice && <div className="preflight-notice" data-tone={notice.tone}>{notice.text}</div>}

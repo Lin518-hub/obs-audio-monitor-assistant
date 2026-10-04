@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, AlertTriangle, Sparkles } from 'lucide-react';
 
 export interface LaunchProgressState {
+  startedAt?: number;
   percent: number;
   message: string;
   steps: string[];
@@ -10,7 +11,15 @@ export interface LaunchProgressState {
   failed: boolean;
 }
 
-export const LaunchProgressDialog: React.FC<{ state: LaunchProgressState; onClose: () => void }> = ({ state, onClose }) => {
+export const LaunchProgressDialog: React.FC<{ state: LaunchProgressState; onClose: () => void; onRetry?: () => void; desktop?: boolean }> = ({ state, onClose, onRetry, desktop = false }) => {
+  const startRef = useRef(state.startedAt ?? Date.now());
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (state.finished) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - (state.startedAt ?? startRef.current)) / 1000));
+    tick(); const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [state.finished, state.startedAt]);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -25,11 +34,16 @@ export const LaunchProgressDialog: React.FC<{ state: LaunchProgressState; onClos
     return () => window.clearTimeout(timer);
   }, [state.finished, state.failed]);
   return createPortal(
-    <div className="launch-progress-overlay" role="dialog" aria-modal="true" aria-labelledby="launch-progress-title"
+    <div className={`launch-progress-overlay ${desktop ? "desktop-launch-cover" : ""}`} role="dialog" aria-modal="true" aria-labelledby="launch-progress-title"
       onKeyDown={event => {
         if (event.key === 'Escape') onClose();
-        if (event.key === 'Tab') { event.preventDefault(); closeRef.current?.focus(); }
+        if (event.key === 'Tab') {
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          event.preventDefault(); buttons[(index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus();
+        }
       }}>
+      {desktop && <div className="launch-cover-emphasis" aria-hidden="true"><span className="alert-backdrop-edge top" /><span className="alert-backdrop-edge right" /><span className="alert-backdrop-edge bottom" /><span className="alert-backdrop-edge left" /><span className="alert-backdrop-outline" /></div>}
       <section className={`launch-progress-card ${state.finished ? 'finished' : ''} ${state.failed ? 'failed' : ''}`}>
         <div className="launch-progress-orbit" aria-hidden="true"><i /><i /><span>{state.finished ? state.failed ? <AlertTriangle size={30} /> : <Check size={30} /> : <Sparkles size={30} />}</span></div>
         <span className="launch-progress-eyebrow">直播工作站 · 启动准备</span>
@@ -38,9 +52,10 @@ export const LaunchProgressDialog: React.FC<{ state: LaunchProgressState; onClos
         <div className="launch-progress-track" role="progressbar" aria-label="启动步骤进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={state.percent}>
           <span style={{ width: `${state.percent}%` }} />
         </div>
-        <div className="launch-progress-caption"><span>{state.finished ? '启动流程已结束' : '按实际步骤推进'}</span><strong>{state.percent}%</strong></div>
+        <div className="launch-progress-caption"><span>{state.finished ? '启动流程已结束' : `已用时 ${elapsed} 秒 · 正在等待此步骤完成`}</span><strong>{state.percent}%</strong></div>
         {!state.finished && <ol className="launch-progress-steps" aria-hidden="true">{state.steps.map((step,index) => <li key={step}><span>{index === state.steps.length - 1 ? '·' : '○'}</span>{step}</li>)}</ol>}
-        <button ref={closeRef} type="button" className="btn-secondary" onClick={onClose}>{state.finished ? '知道了' : '收起，后台继续'}</button>
+        {state.finished && state.failed && onRetry && <button type="button" className="btn-primary" onClick={onRetry}>仅重试失败步骤</button>}
+        <button ref={closeRef} type="button" className="btn-secondary" onClick={onClose}>{state.finished ? '知道了' : '交回操作权，停止后续自动操作'}</button>
       </section>
     </div>, document.body
   );

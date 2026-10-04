@@ -1,3 +1,5 @@
+import { LaunchOverlay } from './launchOverlay.js';
+import { preflightError } from '../shared/preflightErrors.js';
 import { resizeFloatingBounds } from '../shared/floatingResize.js';
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
@@ -34,6 +36,30 @@ const __dirname = dirname(__filename);
 const isDev = !app.isPackaged;
 const shouldUseDevServer = isDev && process.env.npm_lifecycle_event === 'dev';
 const rendererUrl = 'http://127.0.0.1:5173';
+let preflightBusy = false;
+const launchOverlay = new LaunchOverlay(join(__dirname, 'preload.cjs'), window => loadRendererSafely(window, '#launch-overlay', 'launch-overlay'), releasePreflightControl);
+function releasePreflightControl(): void {
+  preflightCheckService.cancel();
+  launchOverlay.close();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('preflight:control-released');
+  }
+}
+async function runPreflight<T>(action: () => Promise<T>, cover = false): Promise<T> {
+  if (preflightBusy) throw new Error('已有开播操作正在执行，请等待结束');
+  preflightBusy = true;
+  preflightCheckService.begin();
+  try {
+    if (cover) launchOverlay.show();
+    const result = await action();
+    preflightCheckService.assertActive();
+    return result;
+  } catch (error) {
+    console.error('[preflight]', error);
+    throw new Error(preflightError(error));
+  } finally { launchOverlay.close(); preflightBusy = false; }
+}
+
 const appIconPngPath = join(__dirname, '../../../build/icon.png');
 const appIconIcoPath = join(__dirname, '../../../build/icon.ico');
 const trayMacTemplatePath = join(__dirname, '../../../build/tray-macTemplate.png');
@@ -418,6 +444,8 @@ function registerIpc(): void {
     syncPreAlertSurfaces(latestSnapshot);
     syncAlertSurfaces(previousSnapshot, latestSnapshot);
     const floatingWindowChanged =
+      Object.hasOwn(patch, 'floatingWindowLocked') ||
+      Object.hasOwn(patch, 'floatingWindowOpacity') ||
       Object.hasOwn(patch, 'floatingWindowEnabled') ||
       Object.hasOwn(patch, 'floatingWindowBounds') ||
       Object.hasOwn(patch, 'floatingWindowMode') ||
@@ -539,6 +567,7 @@ function registerIpc(): void {
     if (accept === true && valid) monitor.setMonitoringActive(true);
   });
   ipcMain.handle('floating:resize', (event, phase: string, edge?: string) => {
+    if (latestSnapshot?.config.floatingWindowLocked) { floatingDrag = null; return; }
     const target = floatingWindow;
     if (!target || target.isDestroyed() || event.sender !== target.webContents) return;
     if (phase === 'start' && edge && /^(n|s|e|w|ne|nw|se|sw)$/.test(edge)) {
@@ -577,30 +606,63 @@ function registerIpc(): void {
   ipcMain.handle('update:check', () => checkAndStageUpdate(true));
   ipcMain.handle('update:download', () => downloadUpdate('manual'));
   ipcMain.handle('update:install', () => installDownloadedUpdate());
+  ipcMain.handle('preflight:release-control', () => releasePreflightControl());
+  ipcMain.handle('preflight:overlay-state', () => launchOverlay.state());
+  ipcMain.handle('preflight:restore-target', (_event, target: unknown, settings: unknown) => {
+    if (target !== 'obs_projector' && (!isPreflightAppId(target) || target === 'cosmic_cat')) throw new Error('未知窗口');
+    return runPreflight(() => { launchOverlay.report('正在恢复并验证目标窗口位置', 50); return preflightCheckService.restoreTarget(target, preflightSettingsValue(settings)); }, true);
+  });
   ipcMain.handle('preflight:check', (_event, settings: unknown) => {
     return preflightCheckService.check(preflightSettingsValue(settings).apps);
   });
-  ipcMain.handle('preflight:launch-all', async (event, settings: unknown) => {
+  ipcMain.handle('preflight:launch-all', async (event, settings: unknown) => runPreflight(async () => {
     const resolvedSettings = preflightSettingsValue(settings);
     const report = (message: string, percent: number) => {
+      preflightCheckService.assertActive();
+      launchOverlay.report(message, percent);
       if (!event.sender.isDestroyed()) event.sender.send('preflight:progress', { message, percent });
     };
+    if (PREFLIGHT_APP_IDS.some(id => resolvedSettings.apps[id].enabled && !resolvedSettings.apps[id].path.trim())) {
+      report('正在自动查找尚未配置的软件路径', 0);
+      try {
+        const discovery = await preflightCheckService.discover();
+        preflightCheckService.assertActive();
+        const savedApps = { ...monitor.getSnapshot().config.preflightApps };
+        let changed = false;
+        for (const item of discovery.discovered) {
+          if (!resolvedSettings.apps[item.id].enabled || resolvedSettings.apps[item.id].path.trim()) continue;
+          resolvedSettings.apps[item.id] = { ...resolvedSettings.apps[item.id], path: item.path, pathSource: item.source };
+          if (!savedApps[item.id].path.trim()) {
+            savedApps[item.id] = { ...savedApps[item.id], path: item.path, pathSource: item.source };
+            changed = true;
+          }
+        }
+        if (changed) await monitor.updateConfig(await configStore.update({ preflightApps: savedApps }));
+      } catch (error) {
+        preflightCheckService.assertActive();
+        console.error('[preflight] automatic discovery failed', error);
+        // Missing targets receive their own actionable launch failures below.
+      }
+    }
     const result = await preflightCheckService.launchAll(resolvedSettings, report);
     report('正在准备 OBS 输出投影', 78);
-    result.projector = result.failures.obs
+    result.projector = !resolvedSettings.projector.enabled
+      ? { state: 'disabled', message: '节目输出投影未启用', positionRestored: false }
+      : result.failures.obs
       ? { state: 'failed', message: `OBS 启动失败：${result.failures.obs}`, positionRestored: false }
       : await executePreflightProjector(resolvedSettings, false, report);
     return result;
-  });
-  ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown) => {
+  }, true));
+  ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown, retry = false) => {
     if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
-    return preflightCheckService.launch(id, preflightSettingsValue(settings));
+    return runPreflight(() => { launchOverlay.report('正在启动并恢复目标软件', 25); return preflightCheckService.launch(id, preflightSettingsValue(settings), retry === true); }, true);
   });
   ipcMain.handle('preflight:discover', () => {
     return preflightCheckService.discover();
   });
-  ipcMain.handle('preflight:capture-layout', async (_event, settings: unknown) => {
-    const captured = await preflightCheckService.captureLayout(preflightSettingsValue(settings));
+  ipcMain.handle('preflight:capture-layout', async (_event, settings: unknown, target: unknown) => runPreflight(async () => {
+    if (target !== undefined && target !== 'obs_projector' && (!isPreflightAppId(target) || target === 'cosmic_cat')) throw new Error('未知窗口');
+    const captured = await preflightCheckService.captureLayout(preflightSettingsValue(settings), target as import('../shared/types.js').PreflightPlacementTarget | undefined);
     if (captured.captured.length > 0) {
       const current = monitor.getSnapshot().config;
       const placements = { ...current.preflightWindowPlacements };
@@ -613,9 +675,9 @@ function registerIpc(): void {
       captured.placements = config.preflightWindowPlacements;
     }
     return captured;
-  });
+  }));
   ipcMain.handle('preflight:open-projector', (_event, settings: unknown) => {
-    return executePreflightProjector(preflightSettingsValue(settings), true);
+    return runPreflight(() => executePreflightProjector(preflightSettingsValue(settings), true, (message, percent) => launchOverlay.report(message, percent)), true);
   });
   ipcMain.handle('preflight:pick-target', async (_event, id: unknown) => {
     if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
@@ -769,7 +831,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       const placement = settings.projector.restoreWindowPosition ? settings.windowPlacements.obs_projector : undefined;
       if (placement) {
         await preflightCheckService.restoreWindow(inspection.projector, placement);
-        scheduleProjectorPlacementStabilization(settings, placement);
+
         return {
           result: { state: 'already_open', message: '节目输出投影已打开并恢复到固定位置', positionRestored: true } as PreflightProjectorResult,
           handles: inspection.handles
@@ -805,6 +867,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       existingHandles = inspection.handles;
     }
     report('正在打开 OBS 投影－输出', 88);
+    preflightCheckService.assertActive();
     await monitor.openProgramProjector();
 
     let positionRestored = false;
@@ -817,7 +880,7 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       if (placement) {
         report('正在恢复投影窗口的位置与大小', 94);
         await preflightCheckService.restoreWindow(projector, placement);
-        scheduleProjectorPlacementStabilization(settings, placement);
+
         positionRestored = true;
       }
     }
@@ -828,32 +891,15 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
       positionRestored
     };
   } catch (error) {
-    return { state: 'failed', message: error instanceof Error ? error.message : '打开节目输出投影失败', positionRestored: false };
+    console.error('[preflight projector]', error);
+    return { state: 'failed', message: preflightError(error, '打开节目输出投影失败，请检查 OBS 连接后重试'), positionRestored: false };
   }
-}
-
-function scheduleProjectorPlacementStabilization(
-  settings: PreflightSettings,
-  placement: PreflightWindowPlacement
-): void {
-  if (process.platform !== 'win32') return;
-  void (async () => {
-    for (const delayMs of [1_200, 3_000, 6_000]) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      try {
-        const { projector } = await preflightCheckService.inspectOBSWindows(settings.apps);
-        if (!projector) continue;
-        await preflightCheckService.restoreWindow(projector, placement, false);
-      } catch (error) {
-        console.error(`[preflight] failed to stabilize projector placement: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-  })();
 }
 
 async function waitForOBSConnection(timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    preflightCheckService.assertActive();
     if (monitor.getSnapshot().connected) return true;
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
@@ -1958,6 +2004,8 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     }
   });
 
+  floatingWindow.setOpacity(snapshot.config.floatingWindowOpacity);
+  floatingWindow.setMovable(!snapshot.config.floatingWindowLocked);
   attachWindowDiagnostics(floatingWindow, 'floating');
   reinforceFloatingWindowTopmost();
   if (fixedAspectRatio) {
@@ -2002,6 +2050,11 @@ function closeFloatingWindow(mode: 'close' | 'destroy' = 'destroy'): void {
 }
 
 function syncFloatingWindow(snapshot: AppSnapshot): void {
+  if (floatingWindow && !floatingWindow.isDestroyed()) {
+    floatingWindow.setOpacity(snapshot.config.floatingWindowOpacity);
+    floatingWindow.setMovable(!snapshot.config.floatingWindowLocked);
+    if (snapshot.config.floatingWindowLocked) floatingDrag = null;
+  }
   if (snapshot.config.floatingWindowEnabled) {
     if (!floatingWindow || floatingWindow.isDestroyed()) {
       showFloatingWindow(snapshot);
@@ -2787,6 +2840,7 @@ function configureFloatingWindowForMode(snapshot: AppSnapshot): void {
 }
 
 function reinforceFloatingWindowTopmost(moveToFront = false): void {
+  if (preflightBusy) return;
   if (!floatingWindow || floatingWindow.isDestroyed()) return;
 
   try {

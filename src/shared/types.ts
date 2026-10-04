@@ -373,6 +373,8 @@ export interface AppConfig {
   preAlertRatio: number;
   rememberAlertPosition: boolean;
   alertPositions: Record<string, AlertPosition>;
+  floatingWindowLocked: boolean;
+  floatingWindowOpacity: number;
   floatingWindowEnabled: boolean;
   floatingWindowMode: FloatingWindowMode;
   floatingWindowLayoutVersion: number;
@@ -537,6 +539,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   preAlertRatio: 0.75,
   rememberAlertPosition: true,
   alertPositions: {},
+  floatingWindowLocked: false,
+  floatingWindowOpacity: 1,
   floatingWindowEnabled: false,
   floatingWindowMode: 'audio',
   floatingWindowLayoutVersion: 3,
@@ -586,6 +590,7 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 export interface PreflightProgress {
+  startedAt?: number;
   percent: number;
   message: string;
 }

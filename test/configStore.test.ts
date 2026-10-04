@@ -28,6 +28,17 @@ afterAll(() => {
 });
 
 describe('ConfigStore', () => {
+  it('persists float locking and clamps opacity without making the window invisible', async () => {
+    const store = new ConfigStore();
+    await store.save({ ...DEFAULT_CONFIG, floatingWindowLocked: true, floatingWindowOpacity: 0.65 });
+    const loaded = await new ConfigStore().load();
+    expect(loaded.floatingWindowLocked).toBe(true);
+    expect(loaded.floatingWindowOpacity).toBe(0.65);
+    expect((await store.update({ floatingWindowOpacity: 0 })).floatingWindowOpacity).toBe(0.3);
+    expect((await store.update({ floatingWindowOpacity: 5 })).floatingWindowOpacity).toBe(1);
+    expect((await store.update({ floatingWindowOpacity: Number.NaN })).floatingWindowOpacity).toBe(1);
+  });
+
   it('defaults old configurations to green and persists the selected theme', async () => {
     const store = new ConfigStore();
     const legacy = { ...DEFAULT_CONFIG } as Partial<AppConfig>;

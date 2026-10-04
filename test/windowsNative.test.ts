@@ -52,6 +52,12 @@ while ([DateTime]::UtcNow -lt $deadline) { [System.Windows.Forms.Application]::D
       expect(after.find(w => w.handle === projector!.handle)?.bounds).toEqual(bounds);
       expect(after.find(w => w.handle === ordinary!.handle)?.bounds).toEqual(ordinaryBounds);
       expect(after.find(w => w.handle === main!.handle)?.bounds).toEqual(main!.bounds);
+      const waiting = manager.waitForNewWindows([child.pid!], new Set(after.map(w => w.handle)), 30_000);
+      const stopped = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      setTimeout(() => manager.cancel(), 100);
+      await stopped;
+      manager.reset();
+      expect((await manager.listWindows([child.pid!])).some(w => w.handle === main!.handle)).toBe(true);
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, 'exit'); child.kill(); await exited;

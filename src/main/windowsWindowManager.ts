@@ -16,9 +16,15 @@ export interface WindowsTopLevelWindow {
 export type OBSStartupDialogAction = 'normal_mode' | 'missing_files' | null;
 
 export class WindowsWindowManager {
+  private controller = new AbortController();
+  cancel(): void { this.controller.abort(); }
+  reset(): void { this.controller = new AbortController(); }
+  private runPowerShell(script: string, payload: unknown, timeout = 20_000): Promise<string> {
+    return runPowerShell(script, payload, timeout, this.controller.signal);
+  }
   async listDisplays(): Promise<PlacementDisplay[]> {
     if (process.platform !== 'win32') return [];
-    const output = await runPowerShell(`
+    const output = await this.runPowerShell(`
 [OBSGuardWindowApi]::ListDisplays() | ConvertTo-Json -Compress
 `, {});
     return parseWindowsDisplayList(output);
@@ -26,7 +32,7 @@ export class WindowsWindowManager {
 
   async listWindows(pids: number[]): Promise<WindowsTopLevelWindow[]> {
     if (process.platform !== 'win32' || pids.length === 0) return [];
-    const output = await runPowerShell(`
+    const output = await this.runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 [OBSGuardWindowApi]::ListWindows(($payload.pids -join ',')) | ConvertTo-Json -Compress
 `, { pids: [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))] });
@@ -35,7 +41,7 @@ $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 
   async waitForNewWindows(pids: number[], existingHandles: Set<string>, timeoutMs: number): Promise<WindowsTopLevelWindow[]> {
     if (process.platform !== 'win32' || pids.length === 0) return [];
-    const output = await runPowerShell(`
+    const output = await this.runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 $known = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($handle in @($payload.existingHandles)) { [void]$known.Add([string]$handle) }
@@ -58,7 +64,7 @@ do {
 
   async moveWindow(handle: string, bounds: PreflightRect, windowState: PreflightWindowState): Promise<void> {
     if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
-    await runPowerShell(`
+    await this.runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 $ok = [OBSGuardWindowApi]::MoveWindowStable([long]$payload.handle, [int]$payload.x, [int]$payload.y, [int]$payload.width, [int]$payload.height, [bool]$payload.maximized)
 if (-not $ok) { throw '无法移动目标窗口' }
@@ -74,7 +80,7 @@ if (-not $ok) { throw '无法移动目标窗口' }
 
   async moveWindowOnce(handle: string, bounds: PreflightRect, windowState: PreflightWindowState): Promise<void> {
     if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
-    await runPowerShell(`
+    await this.runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 $ok = [OBSGuardWindowApi]::MoveWindow([long]$payload.handle, [int]$payload.x, [int]$payload.y, [int]$payload.width, [int]$payload.height, [bool]$payload.maximized)
 if (-not $ok) { throw '无法移动目标窗口' }
@@ -90,7 +96,7 @@ if (-not $ok) { throw '无法移动目标窗口' }
 
   async resolveOBSStartupDialog(pids: number[]): Promise<OBSStartupDialogAction> {
     if (process.platform !== 'win32' || pids.length === 0) return null;
-    const output = await runPowerShell(`
+    const output = await this.runPowerShell(`
 $payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_PAYLOAD
 [OBSGuardWindowApi]::ResolveOBSStartupDialog(($payload.pids -join ','))
 `, { pids: [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))] });
@@ -232,9 +238,10 @@ function compareProjectorCandidates(left: WindowsTopLevelWindow, right: WindowsT
   return right.bounds.width * right.bounds.height - left.bounds.width * left.bounds.height;
 }
 
-async function runPowerShell(script: string, payload: unknown, timeout = 20_000): Promise<string> {
+async function runPowerShell(script: string, payload: unknown, timeout = 20_000, signal?: AbortSignal): Promise<string> {
   const encoded = Buffer.from(`${WINDOW_API_SOURCE}\n${script}`, 'utf16le').toString('base64');
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+    signal,
     windowsHide: true,
     maxBuffer: 2 * 1024 * 1024,
     timeout,

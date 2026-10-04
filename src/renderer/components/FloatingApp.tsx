@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, Mic2, Moon, Settings, Sun, Video } from 'lucide-react';
+import { Activity, Mic2, LockKeyhole, UnlockKeyhole, Moon, Settings, Sun, Video } from 'lucide-react';
 import { CAMERA_ALERT_SECONDS, reminderVisualState } from '../../shared/reminderTiming';
 import type { AppSnapshot } from '../../shared/types';
 import { useAudioMeter } from '../hooks/useAudioMeter';
@@ -120,7 +120,7 @@ export const FloatingApp: React.FC = () => {
   const floatingTitle = mode === 'audio' ? displayStatusText(snapshot) : mode === 'audio_atem' ? '音频与机位' : '多功能监看';
 
   return (
-    <main ref={stageRef} className="floating-stage" style={scaleStyle}>
+    <main ref={stageRef} className={`floating-stage ${snapshot.config.floatingWindowLocked ? "floating-locked" : ""}`} style={scaleStyle}>
       <section className={`floating-shell floating-${isMulti ? 'multi' : mode.replace('_', '-')}-mode tone-${tone} theme-${theme} ${emphasis}`}>
         <div className="floating-ambient" />
         {recoveryFlashId !== null && (
@@ -138,6 +138,7 @@ export const FloatingApp: React.FC = () => {
             <strong>{floatingTitle}</strong>
           </div>
           <div className="floating-window-actions">
+            <button aria-label={snapshot.config.floatingWindowLocked ? '解锁浮窗' : '锁定浮窗'} onClick={() => void window.obsGuard.saveConfig({ floatingWindowLocked: !snapshot.config.floatingWindowLocked })}>{snapshot.config.floatingWindowLocked ? <LockKeyhole size={14} /> : <UnlockKeyhole size={14} />}</button>
             <button aria-label={theme === 'dark' ? '切换浅色小浮窗' : '切换深色小浮窗'} onClick={toggleTheme}>
               {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             </button>
@@ -154,7 +155,7 @@ export const FloatingApp: React.FC = () => {
         {isAudioAtem && <AudioAtemFloatingCard snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
         {isMulti && <MultiFunctionGrid snapshot={snapshot} inputName={inputName} meterLevelDb={meter.levelDb} />}
       </section>
-      {['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map((edge) => (
+      {!snapshot.config.floatingWindowLocked && ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map((edge) => (
         <div key={edge} className={`floating-resize floating-resize-${edge}`}
           onPointerDown={(event) => {
             if (event.button !== 0) return;

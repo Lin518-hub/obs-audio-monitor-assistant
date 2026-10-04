@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Activity, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES = [
+  { icon: MonitorUp, title: '开播准备可以随时接手', detail: '全屏浅绿遮罩显示当前步骤和耗时，点击交回操作权或按 Esc 停止后续自动操作。' },
+  { icon: ShieldCheck, title: '逐项结果与失败重试', detail: '窗口可以单独保存、恢复和重试；恢复后核对实际位置，已成功项目不重复启动。' },
+  { icon: Activity, title: '浮窗锁定与透明度', detail: '设置中支持锁定位置和大小、调整不透明度，浮窗上也可快速锁定和解锁。' },
   { icon: MonitorUp, title: '窗口布局保存修复', detail: '修复已打开的普通软件窗口无法保存和恢复位置；失败提示显示软件名称，已存布局与本次保存数量分开说明。' },
   { icon: Activity, title: '开播准备进度可见', detail: '新增毛玻璃动态进度弹窗，显示当前启动步骤、恢复位置和输出投影状态；支持收起后台继续。' },
   { icon: MonitorUp, title: '一键开播与投影位置修复', detail: '改善中文输出投影识别，保存布局立即写入配置，等待 OBS 就绪后打开并恢复投影位置。' },

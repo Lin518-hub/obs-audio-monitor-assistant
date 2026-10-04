@@ -925,3 +925,5 @@ body[data-route="settings"] #root {
 .floating-shell.tone-idle .floating-status > span { background: #94a3b8; }
 .floating-meter-track { flex-shrink: 0; }
 .floating-time > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.floating-locked, .floating-locked * { -webkit-app-region: no-drag !important; }

@@ -166,6 +166,8 @@ export class ConfigStore {
       preAlertRatio: clamp(numberValue(merged.preAlertRatio, DEFAULT_CONFIG.preAlertRatio), 0.1, 0.95),
       rememberAlertPosition: booleanValue(merged.rememberAlertPosition, DEFAULT_CONFIG.rememberAlertPosition),
       alertPositions: alertPositionsValue(merged.alertPositions),
+      floatingWindowLocked: booleanValue(merged.floatingWindowLocked, false),
+      floatingWindowOpacity: clamp(numberValue(merged.floatingWindowOpacity, 1), 0.3, 1),
       floatingWindowEnabled: booleanValue(merged.floatingWindowEnabled, DEFAULT_CONFIG.floatingWindowEnabled),
       floatingWindowMode: floatingWindowModeValue(merged.floatingWindowMode, floatingWindowModules),
       floatingWindowLayoutVersion: clamp(Math.round(numberValue(merged.floatingWindowLayoutVersion, DEFAULT_CONFIG.floatingWindowLayoutVersion)), 1, DEFAULT_CONFIG.floatingWindowLayoutVersion),
