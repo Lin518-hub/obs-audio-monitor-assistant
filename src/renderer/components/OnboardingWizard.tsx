@@ -502,7 +502,7 @@ const OnboardingWizardComponent: React.FC<OnboardingWizardProps> = (props) => {
   const [alertConfirmed, setAlertConfirmed] = useState(false);
   const [trialPassed, setTrialPassed] = useState(false);
   const [workspaceSkipped, setWorkspaceSkipped] = useState(false);
-  useEffect(() => { setVerifiedSource(''); setTrialPassed(false); }, [draft.obsHost, draft.obsPort, draft.obsPassword, draft.targetInputName]);
+  useEffect(() => { setVerifiedSource(''); setTrialPassed(false); }, [draft.obsHost, draft.obsPort, draft.obsPassword, draft.targetInputName, draft.silenceThresholdDb]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const checks = setupChecks(draft, snapshot, verifiedSource, alertConfirmed, trialPassed, workspaceSkipped);

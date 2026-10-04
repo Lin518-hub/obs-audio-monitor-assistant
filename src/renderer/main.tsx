@@ -271,8 +271,16 @@ function SettingsApp() {
 
   const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
   const completeOnboarding = useCallback(async (ready: boolean) => {
-    await flushSave({ setupChecklistPending: !ready, hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION });
-  }, [flushSave]);
+    if (!draft) throw new Error('配置尚未加载');
+    await flushSave({
+      obsHost: draft.obsHost, obsPort: draft.obsPort, obsPassword: draft.obsPassword,
+      targetInputName: draft.targetInputName, targetInputNames: draft.targetInputNames,
+      silenceThresholdDb: draft.silenceThresholdDb, preAlertEnabled: draft.preAlertEnabled,
+      autoLaunch: draft.autoLaunch, preflightApps: draft.preflightApps,
+      preflightProjector: draft.preflightProjector, preflightWindowPlacements: draft.preflightWindowPlacements,
+      setupChecklistPending: !ready, hasSeenGuide: true, guideSeenVersion: APP_VERSION, releaseNotesSeenVersion: APP_VERSION
+    });
+  }, [flushSave, draft]);
   const confirmReleaseNotes = useCallback(async () => {
     await flushSave({ releaseNotesSeenVersion: APP_VERSION });
   }, [flushSave]);
