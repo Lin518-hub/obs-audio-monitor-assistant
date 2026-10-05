@@ -23,6 +23,13 @@ export const FloatingApp: React.FC = () => {
   const stageRef = useRef<HTMLElement>(null);
   const previousAudioState = useRef<AudioRecoveryState | null>(null);
   const meter = useAudioMeter(snapshot);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!snapshot?.alertsMutedUntil) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [snapshot?.alertsMutedUntil]);
 
   useEffect(() => {
     let mounted = true;
@@ -135,7 +142,7 @@ export const FloatingApp: React.FC = () => {
         <header className="floating-header">
           <div className="floating-status">
             <span />
-            <strong>{floatingTitle}</strong>
+            <strong>{snapshot.alertsMutedUntil && snapshot.alertsMutedUntil > now ? `提醒静音 · 剩余 ${Math.ceil((snapshot.alertsMutedUntil - now) / 1000)} 秒` : floatingTitle}</strong>
           </div>
           <div className="floating-window-actions">
             <button aria-label={snapshot.config.floatingWindowLocked ? '解锁浮窗' : '锁定浮窗'} onClick={() => void window.obsGuard.saveConfig({ floatingWindowLocked: !snapshot.config.floatingWindowLocked })}>{snapshot.config.floatingWindowLocked ? <LockKeyhole size={14} /> : <UnlockKeyhole size={14} />}</button>

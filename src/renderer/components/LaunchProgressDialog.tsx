@@ -53,7 +53,6 @@ export const LaunchProgressDialog: React.FC<{ state: LaunchProgressState; onClos
           <span style={{ width: `${state.percent}%` }} />
         </div>
         <div className="launch-progress-caption"><span>{state.finished ? '启动流程已结束' : `已用时 ${elapsed} 秒 · 正在等待此步骤完成`}</span><strong>{state.percent}%</strong></div>
-        {!state.finished && <ol className="launch-progress-steps" aria-hidden="true">{state.steps.map((step,index) => <li key={step}><span>{index === state.steps.length - 1 ? '·' : '○'}</span>{step}</li>)}</ol>}
         {state.finished && state.failed && onRetry && <button type="button" className="btn-primary" onClick={onRetry}>仅重试失败步骤</button>}
         <button ref={closeRef} type="button" className="btn-secondary" onClick={onClose}>{state.finished ? '知道了' : '交回操作权，停止后续自动操作'}</button>
       </section>

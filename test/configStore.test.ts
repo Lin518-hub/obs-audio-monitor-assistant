@@ -28,6 +28,22 @@ afterAll(() => {
 });
 
 describe('ConfigStore', () => {
+  it('ignores malformed and duplicate workspace identities without losing valid profiles', async () => {
+    const store = new ConfigStore();
+    const valid = { id: 'daily', name: '日常', settings: { apps: DEFAULT_CONFIG.preflightApps, projector: DEFAULT_CONFIG.preflightProjector, windowPlacements: {} } };
+    const saved = await store.save({ ...DEFAULT_CONFIG, preflightProfiles: [null, { ...valid, id: '' }, { ...valid, name: ' ' }, { ...valid, settings: 'invalid' }, valid, { ...valid, name: '重复' }] as any });
+    expect(saved.preflightProfiles).toHaveLength(1);
+    expect(saved.preflightProfiles[0].name).toBe('日常');
+  });
+  it('round trips independent workspaces and normalizes their settings', async () => {
+    const store = new ConfigStore();
+    await store.save({ ...DEFAULT_CONFIG, preflightProfiles: [{ id: 'daily', name: '日常直播', settings: { apps: structuredClone(DEFAULT_CONFIG.preflightApps), projector: { enabled: true, restoreWindowPosition: false }, windowPlacements: {} } }] });
+    const loaded = await new ConfigStore().load();
+    expect(loaded.preflightProfiles[0].name).toBe('日常直播');
+    expect(loaded.preflightProfiles[0].settings.projector.enabled).toBe(true);
+    expect(loaded.preflightProjector.enabled).toBe(false);
+    expect(loaded.preflightProfiles[0].settings.apps).not.toBe(loaded.preflightApps);
+  });
   it('persists float locking and clamps opacity without making the window invisible', async () => {
     const store = new ConfigStore();
     await store.save({ ...DEFAULT_CONFIG, floatingWindowLocked: true, floatingWindowOpacity: 0.65 });

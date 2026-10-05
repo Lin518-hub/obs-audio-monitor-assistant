@@ -50,4 +50,31 @@ describe('preflight recovery', () => {
     const promise = service.launch('browser', config, true); await vi.runAllTimersAsync(); const result = await promise;
     expect(result.failures).toEqual({}); expect(result.restoreFailures.browser).toContain('窗口位置');
   });
+  it('reports unsaved requested layouts instead of a successful preparation', async () => {
+    const service = new PreflightCheckService(); const config = settings();
+    config.apps.obs.restoreWindowPosition = true;
+    vi.spyOn(service, 'check').mockResolvedValue(checked());
+    vi.spyOn(service as any, 'resolveOBSStartupDialogs').mockResolvedValue(undefined);
+    const result = await service.launchAll(config);
+    expect(result.restoreFailures.obs).toContain('尚未保存布局');
+    expect(result.restored).toEqual([]);
+    expect(result.failures).toEqual({});
+  });
+
+
+  it('opens each workspace page once and reuses it on repeated preparation', async () => {
+    const service = new PreflightCheckService(); const config = settings();
+    config.apps.browser.enabled = true; config.apps.browser.launchUrl = 'https://example.com/live';
+    vi.spyOn(service, 'check').mockResolvedValue(checked());
+    vi.spyOn(service as any, 'resolveOBSStartupDialogs').mockResolvedValue(undefined);
+    const launch = vi.spyOn(service as any, 'launchConfiguredApp').mockResolvedValue(undefined);
+    await service.launchAll(config);
+    const result = await service.launchAll(config);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(result.launched).toEqual([]);
+    config.apps.browser.launchUrl = 'https://example.com/other';
+    await service.launchAll(config);
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
 });

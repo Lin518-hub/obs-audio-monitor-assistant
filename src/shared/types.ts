@@ -279,6 +279,7 @@ export interface PreflightRect {
 }
 
 export interface PreflightWindowPlacement {
+  windowTitle?: string;
   displayId: number | null;
   displayLabel: string;
   capturedWorkArea: PreflightRect;
@@ -417,6 +418,7 @@ export interface AppConfig {
   preflightApps: PreflightAppConfigs;
   preflightProjector: PreflightProjectorConfig;
   preflightWindowPlacements: PreflightWindowPlacements;
+  preflightProfiles: { id: string; name: string; settings: PreflightSettings }[];
   preflightConfigRevision: number;
 }
 
@@ -438,6 +440,7 @@ export interface DisplayInfo {
 }
 
 export interface AppSnapshot {
+  alertsMutedUntil?: number;
   config: AppConfig;
   status: MonitorStatus;
   /** Current session detection switch. OBS output edges and manual actions both control it. */
@@ -588,6 +591,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     restoreWindowPosition: false
   },
   preflightWindowPlacements: {},
+  preflightProfiles: [],
   preflightConfigRevision: 1
 };
 

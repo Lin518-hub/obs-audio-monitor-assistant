@@ -199,6 +199,7 @@ export class ConfigStore {
       atemPrimaryInputId: atemPrimaryInputIds[0] ?? null,
       atemPrimaryInputIds,
       atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
+      preflightProfiles: preflightProfilesValue(merged.preflightProfiles),
       preflightApps: preflightAppsValue(merged.preflightApps),
       preflightProjector: preflightProjectorValue(merged.preflightProjector),
       preflightWindowPlacements: preflightWindowPlacementsValue(merged.preflightWindowPlacements),
@@ -491,6 +492,7 @@ function preflightWindowPlacementValue(value: unknown): PreflightWindowPlacement
   const normalizedBounds = preflightRectValue(raw.normalizedBounds, true);
   if (!capturedWorkArea || !normalizedBounds) return null;
   return {
+    ...(typeof raw.windowTitle === 'string' ? { windowTitle: raw.windowTitle.slice(0, 512) } : {}),
     displayId: nullableIntegerValue(raw.displayId),
     displayLabel: stringValue(raw.displayLabel, '').trim().slice(0, 160),
     capturedWorkArea,
@@ -528,4 +530,22 @@ function preflightLaunchUrlValue(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function preflightProfilesValue(value: unknown): AppConfig['preflightProfiles'] {
+  if (!Array.isArray(value)) return [];
+  const profiles: AppConfig['preflightProfiles'] = [];
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const id = typeof item.id === 'string' ? item.id.trim().slice(0, 80) : '';
+    const name = typeof item.name === 'string' ? item.name.trim().slice(0, 40) : '';
+    if (!id || !name || ids.has(id) || !item.settings || typeof item.settings !== 'object' || Array.isArray(item.settings)) continue;
+    ids.add(id);
+    profiles.push({ id, name, settings: {
+      apps: preflightAppsValue(item.settings.apps), projector: preflightProjectorValue(item.settings.projector), windowPlacements: preflightWindowPlacementsValue(item.settings.windowPlacements)
+    } });
+    if (profiles.length === 20) break;
+  }
+  return profiles;
 }

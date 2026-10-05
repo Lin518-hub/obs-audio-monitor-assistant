@@ -1,3 +1,5 @@
+import { SingleFlight } from '../shared/singleFlight.js';
+import { confirmLayoutWindow } from './confirmLayoutWindow.js';
 import { LaunchOverlay } from './launchOverlay.js';
 import { preflightError } from '../shared/preflightErrors.js';
 import { resizeFloatingBounds } from '../shared/floatingResize.js';
@@ -37,6 +39,21 @@ const isDev = !app.isPackaged;
 const shouldUseDevServer = isDev && process.env.npm_lifecycle_event === 'dev';
 const rendererUrl = 'http://127.0.0.1:5173';
 let preflightBusy = false;
+const preparationFlight = new SingleFlight<import('../shared/types.js').PreflightLaunchResult>();
+let alertsMutedUntil = 0;
+let muteExpiryTimer: NodeJS.Timeout | null = null;
+function setTemporaryMute(minutes: number): void {
+  if (muteExpiryTimer) clearTimeout(muteExpiryTimer);
+  muteExpiryTimer = null;
+  alertsMutedUntil = minutes ? Date.now() + minutes * 60_000 : 0;
+  if (minutes) { muteExpiryTimer = setTimeout(() => setTemporaryMute(0), minutes * 60_000); muteExpiryTimer.unref(); }
+  const previous = latestSnapshot;
+  latestSnapshot = injectATEMState(monitor.getSnapshot());
+  broadcastSnapshot(latestSnapshot);
+  syncAlertSurfaces(previous, latestSnapshot);
+  syncPreAlertSurfaces(latestSnapshot);
+}
+
 const launchOverlay = new LaunchOverlay(join(__dirname, 'preload.cjs'), window => loadRendererSafely(window, '#launch-overlay', 'launch-overlay'), releasePreflightControl);
 function releasePreflightControl(): void {
   preflightCheckService.cancel();
@@ -615,7 +632,8 @@ function registerIpc(): void {
   ipcMain.handle('preflight:check', (_event, settings: unknown) => {
     return preflightCheckService.check(preflightSettingsValue(settings).apps);
   });
-  ipcMain.handle('preflight:launch-all', async (event, settings: unknown) => runPreflight(async () => {
+  ipcMain.handle('preflight:launch-all', (event, settings: unknown) => {
+    return preparationFlight.run(() => runPreflight(async () => {
     const resolvedSettings = preflightSettingsValue(settings);
     const report = (message: string, percent: number) => {
       preflightCheckService.assertActive();
@@ -653,6 +671,7 @@ function registerIpc(): void {
       : await executePreflightProjector(resolvedSettings, false, report);
     return result;
   }, true));
+  });
   ipcMain.handle('preflight:launch', (_event, id: unknown, settings: unknown, retry = false) => {
     if (!isPreflightAppId(id)) throw new Error('未知的开播检查项目');
     return runPreflight(() => { launchOverlay.report('正在启动并恢复目标软件', 25); return preflightCheckService.launch(id, preflightSettingsValue(settings), retry === true); }, true);
@@ -662,7 +681,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('preflight:capture-layout', async (_event, settings: unknown, target: unknown) => runPreflight(async () => {
     if (target !== undefined && target !== 'obs_projector' && (!isPreflightAppId(target) || target === 'cosmic_cat')) throw new Error('未知窗口');
-    const captured = await preflightCheckService.captureLayout(preflightSettingsValue(settings), target as import('../shared/types.js').PreflightPlacementTarget | undefined);
+    const captured = await preflightCheckService.captureLayout(preflightSettingsValue(settings), target as import('../shared/types.js').PreflightPlacementTarget | undefined, confirmLayoutWindow);
     if (captured.captured.length > 0) {
       const current = monitor.getSnapshot().config;
       const placements = { ...current.preflightWindowPlacements };
@@ -793,6 +812,7 @@ function preflightWindowPlacementValue(value: unknown): PreflightWindowPlacement
   const normalized = preflightRectValue(raw.normalizedBounds, true);
   if (!workArea || !normalized) return null;
   return {
+    ...(typeof raw.windowTitle === 'string' ? { windowTitle: raw.windowTitle.slice(0, 512) } : {}),
     displayId: Number.isInteger(raw.displayId) ? Number(raw.displayId) : null,
     displayLabel: typeof raw.displayLabel === 'string' ? raw.displayLabel.slice(0, 160) : '',
     capturedWorkArea: workArea,
@@ -825,6 +845,10 @@ async function executePreflightProjector(settings: PreflightSettings, force: boo
   }
 
   try {
+    preflightCheckService.assertActive();
+    if (!force && settings.projector.restoreWindowPosition && !settings.windowPlacements.obs_projector) {
+      throw new Error('尚未保存投影位置，请点击“打开或重试投影”，摆好窗口后保存布局');
+    }
     const restoreExistingProjector = async () => {
       const inspection = await preflightCheckService.inspectOBSWindows(settings.apps);
       if (!inspection.projector) return { result: null, handles: inspection.handles };
@@ -916,20 +940,22 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
     Number(inputId),
     customizations[inputId]?.name || label
   ]));
-  const audioAlertVisible = snapshot.activeAlertSource === 'audio';
+  const muted = Date.now() < alertsMutedUntil;
+  const audioAlertVisible = !muted && snapshot.activeAlertSource === 'audio';
   const cameraAlertVisible = Boolean(
-    snapshot.config.atemCameraTimeAlertEnabled
+    !muted && snapshot.config.atemCameraTimeAlertEnabled
     && snapshot.config.atemCameraFullscreenAlertEnabled
     && atem?.cameraFullscreenAlertVisible
   );
-  const audioPreAlertVisible = snapshot.preAlertVisible && snapshot.activePreAlertSource !== 'atem_camera';
+  const audioPreAlertVisible = !muted && snapshot.preAlertVisible && snapshot.activePreAlertSource !== 'atem_camera';
   const cameraPreAlertVisible = Boolean(
-    snapshot.config.preAlertEnabled
+    !muted && snapshot.config.preAlertEnabled
     && snapshot.config.atemCameraTimeAlertEnabled
     && atem?.cameraPreAlertVisible
   );
   return {
     ...snapshot,
+    alertsMutedUntil: muted ? alertsMutedUntil : 0,
     alertVisible: audioAlertVisible || cameraAlertVisible,
     activeAlertSource: audioAlertVisible ? 'audio' : cameraAlertVisible ? 'atem_camera' : null,
     preAlertVisible: audioPreAlertVisible || cameraPreAlertVisible,
@@ -2030,6 +2056,20 @@ function showFloatingWindow(snapshot: AppSnapshot): void {
     scheduleFloatingWindowShape();
     scheduleFloatingWindowResizeSettled();
   });
+  const showFloatingMenu = () => {
+    const config = monitor.getSnapshot().config;
+    const update = (patch: Partial<AppConfig>) => { void configStore.update(patch).then(value => monitor.updateConfig(value)).catch(error => console.error('[floating menu]', error)); };
+    Menu.buildFromTemplate([
+      { label: '锁定浮窗', type: 'checkbox', checked: config.floatingWindowLocked, click: () => update({ floatingWindowLocked: !config.floatingWindowLocked }) },
+      { label: '透明度', submenu: [100, 85, 70, 50, 30].map(value => ({ label: `${value}%`, type: 'radio' as const, checked: Math.round(config.floatingWindowOpacity * 100) === value, click: () => update({ floatingWindowOpacity: value / 100 }) })) },
+      { label: '临时静音提醒（检测继续）', submenu: [1, 5, 15].map(value => ({ label: `${value} 分钟`, click: () => setTemporaryMute(value) })) },
+      { label: '立即恢复提醒', enabled: alertsMutedUntil > Date.now(), click: () => setTemporaryMute(0) },
+      { type: 'separator' },
+      { label: '回到主界面', click: showSettingsWindow }
+    ]).popup({ window: floatingWindow! });
+  };
+  floatingWindow.webContents.on('context-menu', showFloatingMenu);
+  floatingWindow.on('system-context-menu', event => { event.preventDefault(); showFloatingMenu(); });
   floatingWindow.on('closed', () => {
     stopFloatingWindowTimers();
     floatingDrag = null;

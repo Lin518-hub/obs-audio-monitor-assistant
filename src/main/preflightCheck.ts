@@ -30,6 +30,7 @@ let processListCache: { expiresAt: number; promise: Promise<ProcessEntry[]> } | 
 export class PreflightCheckService {
   private readonly windows = new WindowsWindowManager();
   private cancelled = false;
+  private openedBrowserPages = new Set<string>();
   begin(): void { this.cancelled = false; this.windows.reset(); }
   cancel(): void { this.cancelled = true; this.windows.cancel(); }
   assertActive(): void { if (this.cancelled) throw new Error('已取消自动操作'); }
@@ -91,7 +92,7 @@ export class PreflightCheckService {
     return discoverPreflightApps();
   }
 
-  async captureLayout(settings: PreflightSettings, target?: PreflightPlacementTarget): Promise<PreflightLayoutCaptureResult> {
+  async captureLayout(settings: PreflightSettings, target?: PreflightPlacementTarget, confirm?: (label: string, suggested: WindowsTopLevelWindow | null, candidates: WindowsTopLevelWindow[]) => Promise<WindowsTopLevelWindow | null>): Promise<PreflightLayoutCaptureResult> {
     const capturedAt = Date.now();
     const failures: Partial<Record<PreflightPlacementTarget, string>> = {};
     if (process.platform !== 'win32') {
@@ -106,28 +107,41 @@ export class PreflightCheckService {
 
     const processes = await readProcessList(true);
     const displays = await this.placementDisplays();
+    const choose = async (label: string, suggested: WindowsTopLevelWindow | null, candidates: WindowsTopLevelWindow[]) => {
+      const selected = confirm ? await confirm(label, suggested, candidates) : suggested;
+      this.assertActive();
+      if (!selected) throw new Error(confirm ? '已跳过保存；原有位置保持不变' : '未找到可保存的窗口，请先打开该软件');
+      if (!candidates.some(window => window.handle === selected.handle && window.pid === selected.pid)) throw new Error('所选窗口不属于此软件，请重新选择程序路径后保存');
+      const current = (await this.windows.listWindows([selected.pid])).find(w => w.handle === selected.handle);
+      if (!current) throw new Error('确认的窗口已关闭，请重新打开后保存');
+      return current;
+    };
     const placements = { ...settings.windowPlacements };
     const captured: PreflightPlacementTarget[] = [];
 
     for (const id of PREFLIGHT_APP_IDS) {
+      this.assertActive();
       if (id === 'cosmic_cat' || (target && target !== id)) continue;
       if (!settings.apps[id].enabled || !settings.apps[id].restoreWindowPosition) continue;
       try {
         const windows = await this.windowsForApp(id, settings.apps, processes);
-        const mainWindow = selectMainWindow(windows, id === 'obs');
+        const mainWindow = await choose(settings.apps[id].customLabel || id, selectMainWindow(windows, id === 'obs'), windows);
         if (!mainWindow) throw new Error('未找到可保存的主窗口，请先打开该软件');
-        placements[id] = captureWindowPlacement(mainWindow.bounds, mainWindow.windowState, displays, capturedAt);
+        placements[id] = { ...captureWindowPlacement(mainWindow.bounds, mainWindow.windowState, displays, capturedAt), windowTitle: mainWindow.title };
         captured.push(id);
       } catch (error) {
         failures[id] = errorMessage(error, '保存窗口位置失败');
       }
     }
 
+    this.assertActive();
     if ((!target || target === 'obs_projector') && settings.projector.restoreWindowPosition) {
       try {
-        const projector = await this.findOBSProjector(settings.apps, processes);
+        const projectorWindows = await this.windowsForApp('obs', settings.apps, processes);
+        const projector = await choose('OBS 输出投影', await this.findOBSProjector(settings.apps, processes), projectorWindows);
         if (!projector) throw new Error('未找到已打开的节目输出投影');
-        placements.obs_projector = captureWindowPlacement(projector.bounds, projector.windowState, displays, capturedAt);
+        this.rememberOBSProjector(projector);
+        placements.obs_projector = { ...captureWindowPlacement(projector.bounds, projector.windowState, displays, capturedAt), windowTitle: projector.title };
         captured.push('obs_projector');
       } catch (error) {
         failures.obs_projector = errorMessage(error, '保存投影位置失败');
@@ -156,6 +170,7 @@ export class PreflightCheckService {
           ? await this.appWindowHandles(id, settings.apps)
           : undefined;
         await this.launchConfiguredApp(id, settings.apps, placement);
+        if (id === 'browser' && settings.apps.browser.launchUrl.trim()) this.openedBrowserPages.add(`${settings.apps.browser.path.trim()}|${settings.apps.browser.launchUrl.trim()}`);
         launched.push(id);
         if (placement) {
           try {
@@ -173,6 +188,9 @@ export class PreflightCheckService {
     if (current?.state === 'running' && !shouldOpenBrowserPage && id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition && settings.windowPlacements[id]) {
       try { await this.restoreTarget(id, settings); restored.push(id); }
       catch (error) { restoreFailures[id] = errorMessage(error, '窗口位置恢复失败'); }
+    }
+    if (id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition && !settings.windowPlacements[id]) {
+      restoreFailures[id] = '已启用位置恢复但尚未保存布局，请摆好窗口后保存，或关闭此项位置恢复';
     }
     const after = await this.confirmStarted(settings.apps, launched, failures);
     return { ...after, launched, failures, restored, restoreFailures, projector: null };
@@ -199,7 +217,9 @@ export class PreflightCheckService {
       if (id === 'obs' && alreadyRunning) {
         shouldResolveOBSStartupDialogs = true;
       }
-      const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim());
+      if (id === 'browser' && !alreadyRunning) this.openedBrowserPages.clear();
+      const browserPageKey = `${settings.apps.browser.path.trim()}|${settings.apps.browser.launchUrl.trim()}`;
+      const shouldOpenBrowserPage = id === 'browser' && Boolean(settings.apps.browser.launchUrl.trim()) && !this.openedBrowserPages.has(browserPageKey);
       if (alreadyRunning && !shouldOpenBrowserPage) continue;
       try {
         const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
@@ -207,6 +227,7 @@ export class PreflightCheckService {
           existingWindowHandles[id] = await this.appWindowHandles(id, settings.apps);
         }
         await this.launchConfiguredApp(id, settings.apps, placement, id !== 'obs');
+        if (id === 'browser' && shouldOpenBrowserPage) this.openedBrowserPages.add(browserPageKey);
         launched.push(id);
         if (id === 'obs') shouldResolveOBSStartupDialogs = true;
       } catch (error) {
@@ -225,7 +246,10 @@ export class PreflightCheckService {
       && (launched.includes(id) || before.apps.some((app) => app.id === id && app.state === 'running')));
     await Promise.all(restoreTargets.map(async (id) => {
       const placement = id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition ? settings.windowPlacements[id] : undefined;
-      if (!placement) return;
+      if (!placement) {
+        if (id !== 'cosmic_cat' && settings.apps[id].restoreWindowPosition) restoreFailures[id] = '已启用位置恢复但尚未保存布局，请摆好窗口后保存，或关闭此项位置恢复';
+        return;
+      }
       try {
         await this.waitAndRestoreApp(id, settings.apps, placement, existingWindowHandles[id]);
         restored.push(id);
@@ -396,18 +420,27 @@ export class PreflightCheckService {
   ): Promise<void> {
     if (process.platform !== 'win32') throw new Error('窗口布局恢复仅支持 Windows');
     const deadline = Date.now() + 15_000;
+    let lastRestoreError: unknown;
+    let restoreAttempts = 0;
     while (Date.now() < deadline) {
       this.assertActive();
       const windows = await this.windowsForApp(id, configs, await readProcessList());
-      const mainWindow = selectMainWindow(excludedHandles
-        ? windows.filter((window) => !excludedHandles.has(window.handle))
-        : windows, id === 'obs');
+      const eligible = excludedHandles ? windows.filter(window => !excludedHandles.has(window.handle)) : windows;
+      const mainWindow = eligible.find(window => placement.windowTitle && window.title === placement.windowTitle) ?? selectMainWindow(eligible, id === 'obs');
       if (mainWindow) {
-        await this.restoreWindow(mainWindow, placement);
-        return;
+        try {
+          await this.restoreWindow(mainWindow, placement);
+          return;
+        } catch (error) {
+          this.assertActive();
+          lastRestoreError = error;
+          if (++restoreAttempts >= 3) throw error;
+          // Re-enumerate: some apps replace their startup window with the main window.
+        }
       }
       await delay(250);
     }
+    if (lastRestoreError) throw lastRestoreError;
     throw new Error('软件已启动，但未在 15 秒内出现可恢复的主窗口');
   }
 
