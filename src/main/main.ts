@@ -525,6 +525,7 @@ function registerIpc(): void {
   ipcMain.handle('config:reset', () => resetToFactoryDefaults());
   ipcMain.handle('inputs:refresh', () => monitor.refreshInputs());
   ipcMain.handle('obs:reconnect', () => monitor.reconnect());
+  ipcMain.handle('remote:reconnect', () => remoteBridge.reconnect());
   ipcMain.handle('obs:test-connection', async (_event, patch: Partial<AppConfig>) => {
     const config = {
       ...(latestSnapshot ?? monitor.getSnapshot()).config,

@@ -414,12 +414,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 <SettingsDisclosure
                   {...disclosureState('devices-remote')}
                   icon={Monitor}
-                  title="直播间名称"
-                  description="标记这台检测电脑所属的直播间"
-                  summary={draft.livestreamRoomName.trim() || '尚未命名'}
-                  tone={draft.livestreamRoomName.trim() ? 'success' : 'warning'}
+                  title="直播间与监控服务器"
+                  description="直播间名称、服务器状态与重新连接"
+                  summary={`${draft.livestreamRoomName.trim() || '尚未命名'} · ${snapshot.remoteAccessConnected ? '服务器已连接' : '服务器未连接'}`}
+                  tone={snapshot.remoteAccessConnected ? 'success' : 'warning'}
                 >
-                  <RemoteAccessSection draft={draft} onChange={onChangeDraft} />
+                  <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
                 {draft.developerModeEnabled && (
                   <SettingsDisclosure

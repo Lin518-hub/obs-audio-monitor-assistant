@@ -31,6 +31,7 @@ export interface ObsGuardApi {
   resetConfig: () => Promise<AppSnapshot>;
   refreshInputs: () => Promise<InputOption[]>;
   reconnect: () => Promise<AppSnapshot>;
+  reconnectRemote: () => Promise<void>;
   testConnection: (patch: Partial<AppConfig>) => Promise<TestConnectionResult>;
   setMonitoringActive: (active: boolean) => Promise<AppSnapshot>;
   setPaused: (paused: boolean) => Promise<AppSnapshot>;

@@ -158,6 +158,13 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     if (this.latestSnapshot) this.updateSnapshot(this.latestSnapshot);
   }
 
+  async reconnect(): Promise<void> {
+    this.generation += 1;
+    this.clearTimers();
+    this.closeSocket();
+    await this.connect(this.generation);
+  }
+
   async stop(): Promise<void> {
     this.enabled = false;
     this.generation += 1;
@@ -444,6 +451,8 @@ export class RemoteBridge extends EventEmitter<RemoteBridgeEvents> {
     this.socket = null;
     if (socket) {
       socket.removeAllListeners();
+      // Closing a socket during its handshake can emit an asynchronous error.
+      socket.once('error', () => {});
       try { socket.close(); } catch { /* already closed */ }
     }
   }

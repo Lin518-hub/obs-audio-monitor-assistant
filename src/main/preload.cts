@@ -28,6 +28,7 @@ const obsGuardApi = {
   resetConfig: () => ipcRenderer.invoke('config:reset') as Promise<AppSnapshot>,
   refreshInputs: () => ipcRenderer.invoke('inputs:refresh'),
   reconnect: () => ipcRenderer.invoke('obs:reconnect') as Promise<AppSnapshot>,
+  reconnectRemote: () => ipcRenderer.invoke('remote:reconnect') as Promise<void>,
   testConnection: (patch: Partial<AppConfig>) =>
     ipcRenderer.invoke('obs:test-connection', patch) as Promise<TestConnectionResult>,
   setMonitoringActive: (active: boolean) => ipcRenderer.invoke('monitor:set-active', active) as Promise<AppSnapshot>,

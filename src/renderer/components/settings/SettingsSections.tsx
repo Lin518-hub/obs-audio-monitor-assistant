@@ -885,9 +885,21 @@ export const BackgroundSection: React.FC<{
 
 export const RemoteAccessSection: React.FC<{
   draft: AppConfig;
+  snapshot: AppSnapshot;
   onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, onChange }) => (
-  <Section id="settings-remote" icon={Monitor} title="直播间名称" description="标记这台检测电脑所属的直播间">
+}> = ({ draft, snapshot, onChange }) => {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const connecting = busy || snapshot.remoteAccessConnectionState === 'connecting';
+  const reconnect = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await window.obsGuard.reconnectRemote(); }
+    catch { setError('重连请求失败，请稍后重试'); }
+    finally { setBusy(false); }
+  };
+  return (
+  <Section id="settings-remote" icon={Monitor} title="直播间与监控服务器" description="设置直播间名称，查看监控中心连接状态">
     <div className="room-identity-setting">
       <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
       <input
@@ -901,8 +913,19 @@ export const RemoteAccessSection: React.FC<{
       />
       <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
     </div>
+    <div className="remote-route-card">
+      <strong role="status">{snapshot.remoteAccessConnected ? '监控服务器已连接' : connecting ? '正在连接监控服务器…' : '监控服务器未连接'}</strong>
+      <p className="settings-field-help">{snapshot.remoteAccessActiveServerUrl || snapshot.config.remoteServerUrl}</p>
+      <p className="settings-field-help">最后同步：{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleString() : '尚未同步'}</p>
+      {(error || snapshot.remoteAccessErrorMessage) && <p role="alert">{error || snapshot.remoteAccessErrorMessage}</p>}
+      <button type="button" className="btn-secondary" disabled={connecting || !snapshot.config.livestreamRoomName.trim()} onClick={() => void reconnect()}>
+        <RefreshCw size={16} />{connecting ? '连接中…' : '重新连接服务器'}
+      </button>
+      <p className="settings-field-help">重连不会中断 OBS 本地音频检测。请先填写并保存直播间名称。</p>
+    </div>
   </Section>
 );
+};
 
 export const MobileAccessSection: React.FC<{
   draft: AppConfig;
