@@ -2,6 +2,7 @@ import { livePlatformOverlaySvg } from './livePlatformOverlay.js';
 /** Ratios describe the rectangular screen in portrait orientation, not platform UI. */
 export interface ProjectorSafetyConfig {
   enabled: boolean;
+  hideWhenCovered: boolean;
   platformOverlayEnabled: boolean;
   platformOverlayOpacity: number;
   sourceWidth: number;
@@ -17,7 +18,7 @@ export interface ProjectorSafetyConfig {
   targetTitle: string;
 }
 export const DEFAULT_PROJECTOR_SAFETY: ProjectorSafetyConfig = {
-  enabled: false, platformOverlayEnabled: false, platformOverlayOpacity: 0.85, sourceWidth: 1080, sourceHeight: 1920,
+  enabled: false, hideWhenCovered: false, platformOverlayEnabled: false, platformOverlayOpacity: 0.85, sourceWidth: 1080, sourceHeight: 1920,
   phoneWidth: 1320, phoneHeight: 2868, wideWidth: 1320, wideHeight: 2232,
   opacity: 0.35, labels: true, sideAdjustment: 0, verticalAdjustment: 0, targetTitle: ''
 };
@@ -29,7 +30,7 @@ export function normalizeProjectorSafety(raw: unknown): ProjectorSafetyConfig {
   };
   return {
     platformOverlayEnabled: value.platformOverlayEnabled === true, platformOverlayOpacity: number('platformOverlayOpacity', 0.15, 1),
-    enabled: value.enabled === true, labels: value.labels !== false,
+    enabled: value.enabled === true, hideWhenCovered: value.hideWhenCovered === true, labels: value.labels !== false,
     sourceWidth: number('sourceWidth', 1, 16384), sourceHeight: number('sourceHeight', 1, 16384),
     phoneWidth: number('phoneWidth', 1, 16384), phoneHeight: number('phoneHeight', 1, 16384),
     wideWidth: number('wideWidth', 1, 16384), wideHeight: number('wideHeight', 1, 16384),

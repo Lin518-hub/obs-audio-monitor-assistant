@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
 interface NumberFieldProps {
+  ariaLabel?: string;
   value: number;
   min: number;
   max: number;
@@ -9,22 +10,24 @@ interface NumberFieldProps {
   onChange: (value: number) => void;
 }
 
-export const NumberField: React.FC<NumberFieldProps> = ({ value, min, max, step, suffix, onChange }) => {
+export const NumberField: React.FC<NumberFieldProps> = ({ value, min, max, step, suffix, onChange, ariaLabel }) => {
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(String(value)); }, [value]);
 
+  const precision = Math.max(0, (String(step).split('.')[1] || '').length);
+  const rounded = (value: number) => Number(value.toFixed(precision));
   const commit = (raw: string) => {
     const trimmed = raw.trim();
     if (trimmed === '' || trimmed === '-' || trimmed === '.') { setText(String(value)); return; }
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed)) { setText(String(value)); return; }
-    const next = Math.min(max, Math.max(min, Math.round(parsed)));
+    const next = Math.min(max, Math.max(min, rounded(parsed)));
     setText(String(next));
     if (next !== value) onChange(next);
   };
 
   const stepBy = (direction: -1 | 1) => {
-    const next = Math.min(max, Math.max(min, value + step * direction));
+    const next = Math.min(max, Math.max(min, rounded(value + step * direction)));
     setText(String(next));
     onChange(next);
   };
@@ -35,7 +38,8 @@ export const NumberField: React.FC<NumberFieldProps> = ({ value, min, max, step,
       <div className="number-field-input-wrap">
         <input
           className="number-field-input"
-          inputMode="numeric"
+          aria-label={ariaLabel}
+          inputMode={step < 1 ? "decimal" : "numeric"}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onBlur={() => commit(text)}

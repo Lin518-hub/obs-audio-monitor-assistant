@@ -1,10 +1,10 @@
 import React from 'react';
-import { Activity, Bell, History, LayoutDashboard, ListChecks, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
+import { Activity, ScanLine, Bell, History, LayoutDashboard, ListChecks, Mic2, Settings as SettingsIcon, Video } from 'lucide-react';
 import { APP_VERSION } from '../utils/appVersion';
 import { displayStatusText } from '../utils/status';
 import type { AppSnapshot } from '../../shared/types';
 
-export type SidebarPage = 'dashboard' | 'preflight' | 'monitor' | 'atem' | 'history';
+export type SidebarPage = 'dashboard' | 'preflight' | 'safety' | 'monitor' | 'atem' | 'history';
 
 interface SidebarProps {
   snapshot: AppSnapshot;
@@ -23,6 +23,7 @@ const groups: Array<{
     items: [
       { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
       { id: 'preflight', label: '开播检查', icon: ListChecks },
+      { id: 'safety', label: '投影安全区', icon: ScanLine },
       { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' }
     ]
   },

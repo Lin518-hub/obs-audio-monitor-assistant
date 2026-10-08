@@ -29,12 +29,18 @@ describe('projector safety lifecycle',()=>{
   now+=300;await frame([{...target,x:200}]);expect(window.visible).toBe(true);expect(window.bounds.x).toBe(200);
   expect(window.setIgnoreMouseEvents).toHaveBeenCalledWith(true);
  });
- it('hides when covered, missing or the helper exits',async()=>{
+ it('hides when covered only when enabled, missing or the helper exits',async()=>{
+  overlay.configure({...defaults,enabled:true,hideWhenCovered:true});
   await frame([target]);now+=300;await frame([target]);await frame([target]);
   await frame([{...target,covered:true}]);expect(overlay.getStatus().visible).toBe(false);
   await frame([target]);expect(overlay.getStatus().visible).toBe(true);
   await frame([]);expect(overlay.getStatus().visible).toBe(false);
   state.worker.emit('exit',1);expect(overlay.getStatus().message).toContain('中断');
+ });
+ it('keeps the overlay usable when overlap is reported by default',async()=>{
+  await frame([{...target,covered:true}]);now+=300;await frame([{...target,covered:true}]);await frame([{...target,covered:true}]);
+  expect(overlay.getStatus().visible).toBe(true);
+  await frame([{...target,covered:true,moving:true}]);expect(overlay.getStatus().visible).toBe(false);
  });
  it('requires selection for multiple windows and cleans up on disable',async()=>{
   await frame([target,{...target,handle:'2'}]);now+=500;await frame([target,{...target,handle:'2'}]);expect(state.windows).toHaveLength(0);

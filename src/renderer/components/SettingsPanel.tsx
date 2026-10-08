@@ -82,6 +82,7 @@ const sectionForFocus = (focus?: string | null): SectionId => {
     case 'source':
     case 'atem':
     case 'remote':
+    case 'safety':
       return 'devices';
     case 'rules':
     case 'monitor':
@@ -187,6 +188,7 @@ const disclosureForFocus = (
     case 'source': return 'devices-source';
     case 'atem': return 'devices-atem';
     case 'remote': return 'devices-remote';
+    case 'safety': return 'devices-safety';
     case 'rules':
     case 'monitor': return 'rules-audio';
     case 'display': return 'alerts-display';
@@ -382,7 +384,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             <div className="settings-page-sheet">
             {active === 'devices' && (
               <>
-                <SettingsDisclosure {...disclosureState('devices-safety')} icon={Monitor} title="投影安全区" description="手机与阔屏裁切范围" summary={draft.projectorSafety.enabled ? '已开启' : '未开启'}>
+                <SettingsDisclosure {...disclosureState('devices-safety')} icon={Monitor} title="投影比例与校准" description="画布分辨率、参考机型与裁切微调" summary="高级设置">
                   <ProjectorSafetySection config={draft.projectorSafety} onChange={value => onChangeDraft('projectorSafety', value)} />
                 </SettingsDisclosure>
                 <SettingsDisclosure

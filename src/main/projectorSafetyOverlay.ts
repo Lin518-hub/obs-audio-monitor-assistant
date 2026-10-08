@@ -76,7 +76,7 @@ export class ProjectorSafetyOverlay {
     if (!target) { this.signature = ''; this.hide(targets.length ? '请选择目标投影窗口（原目标未找到或存在多个投影）' : '等待 OBS 投影窗口打开'); return; }
     const signature = [target.handle,target.x,target.y,target.width,target.height].join(':');
     if (signature !== this.signature || target.moving) { this.signature = signature; this.stableSince = Date.now(); this.hide('正在移动或缩放，安全区暂时隐藏'); return; }
-    if (target.covered) { this.hide('投影被其他窗口遮挡，安全区暂时隐藏'); return; }
+    if (target.covered && this.config.hideWhenCovered) { this.hide('投影被其他窗口遮挡，安全区暂时隐藏'); return; }
     if (Date.now() - this.stableSince < 280) return;
     if (!this.window) {
       const win = new BrowserWindow({title: 'OBS Safety Overlay', frame: false, transparent: true, backgroundColor: '#00000000', show: false,

@@ -18,6 +18,7 @@ public class SafetyTracker {
  public delegate bool EnumProc(IntPtr h, IntPtr p);
  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f,IntPtr p);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll",EntryPoint="GetWindowLongW")] static extern int GetWindowLong(IntPtr h,int index);
  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h,out RECT r);
  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h,out RECT r);
@@ -35,6 +36,8 @@ public class SafetyTracker {
    int cloaked; if(DwmGetWindowAttribute(h,14,out cloaked,4)==0 && cloaked!=0) return true;
    var s=new StringBuilder(1024); GetWindowText(h,s,s.Capacity); string title=s.ToString();
    if(title.Length==0 || title=="OBS Safety Overlay") return true;
+   // Click-through overlays (including our own) do not obscure the projector.
+   if((GetWindowLong(h,-20)&0x20)!=0) return true;
    RECT outer; if(!GetWindowRect(h,out outer)) return true;
    if(title.IndexOf("projector",StringComparison.OrdinalIgnoreCase)>=0 || title.Contains("投影")) {
     uint pid; uint tid=GetWindowThreadProcessId(h,out pid); string name="";

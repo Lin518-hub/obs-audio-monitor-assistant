@@ -1,3 +1,4 @@
+import { ProjectorSafetyPage } from './components/ProjectorSafetyPage';
 import { LaunchOverlayApp } from './components/LaunchOverlayApp';
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -382,6 +383,8 @@ function SettingsApp() {
           <MonitoringDashboard snapshot={snapshot} search={search} />
         </>
       )}
+
+      {page === 'safety' && <ProjectorSafetyPage config={draft.projectorSafety} onChange={value=>updateDraft('projectorSafety',value)} onOpenSettings={()=>openSettings('safety')}/>}
 
       {page === 'preflight' && (
         <PreflightCheckPage

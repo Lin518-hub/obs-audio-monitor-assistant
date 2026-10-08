@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { Activity, MonitorUp, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES: Record<string, { icon: typeof Activity; title: string; detail: string }[]> = {
+  '3.9.16': [
+    { icon: MonitorUp, title: '投影安全区独立入口', detail: '侧栏直接开启、选择投影、调整图层与透明度；分辨率和裁切校准保留在设置，统一控件和间距。' },
+    { icon: ShieldCheck, title: '修复投影遮挡误判', detail: '默认保持安全区显示，遮挡隐藏改为可选；忽略鼠标穿透浮层，拖动、缩放和最小化仍自动隐藏。' }
+  ],
   '3.9.14': [{ icon: MonitorUp, title: '监控服务器手动重连', detail: '设置中新增服务器连接状态、失败原因、最后同步时间和重新连接按钮，无需重启音频检测。' }],
   '3.9.15': [
     { icon: MonitorUp, title: 'OBS 投影安全区与直播界面示意', detail: '新增手机、阔直板裁切线和匿名直播组件图层；Windows 自动跟随投影，拖动或缩放时隐藏，Mac 支持设置与预览。' },
