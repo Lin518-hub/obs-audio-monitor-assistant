@@ -18,6 +18,9 @@ import type {
 } from './types.js';
 
 export interface ObsGuardApi {
+  getProjectorSafetyStatus: () => Promise<import('./projectorSafety.js').ProjectorSafetyStatus>;
+  selectSafetyProjector: (handle: string) => Promise<void>;
+  previewProjectorSafety: (config: import('./projectorSafety.js').ProjectorSafetyConfig) => Promise<void>;
   floatingResize: (phase: 'start' | 'move' | 'end', edge?: string) => Promise<void>;
   respondMonitoringPrompt: (accept: boolean) => Promise<void>;
   onWindowShown: (callback: () => void) => () => void;

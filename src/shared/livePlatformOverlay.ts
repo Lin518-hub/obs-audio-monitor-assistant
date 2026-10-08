@@ -1,0 +1,53 @@
+/** Redrawn placeholders measured from the user's 1206 × 2622 screenshot.
+ * No screenshot pixels, actual avatars, usernames, products or messages are embedded.
+ * All coordinates below use its 942 × 2048 displayed reference grid, scaled uniformly.
+ */
+export function livePlatformOverlaySvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1206 2622" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-label="直播界面占位图层" style="display:block;pointer-events:none">
+  <defs><filter id="status-soft" x="-25%" y="-50%" width="150%" height="200%"><feGaussianBlur stdDeviation="3"/></filter></defs>
+  <g transform="scale(1.280254777)" font-family="system-ui,Microsoft YaHei,sans-serif" fill="white">
+    <!-- Anonymized, blurred system status only; the video beneath remains clear. -->
+    <g filter="url(#status-soft)" opacity=".8">
+      <text x="86" y="91" font-size="42" font-weight="600">00:00</text>
+      <rect x="219" y="70" width="36" height="20" rx="5" fill="none" stroke="white" stroke-width="5"/>
+      <g transform="translate(665 60)"><rect y="14" width="8" height="20" rx="4"/><rect x="14" y="9" width="8" height="25" rx="4"/><rect x="28" y="4" width="8" height="30" rx="4"/><rect x="42" width="8" height="34" rx="4"/></g>
+      <path d="M737 71 Q756 53 775 71 M744 80 Q756 69 768 80" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/><circle cx="756" cy="88" r="4"/>
+      <rect x="800" y="62" width="61" height="31" rx="8" fill="none" stroke="white" stroke-width="4"/><rect x="806" y="68" width="40" height="19" rx="3"/><rect x="864" y="71" width="4" height="12" rx="2"/>
+    </g>
+    <!-- Header / anonymous avatar / follow / viewers / close -->
+    <rect x="28" y="129" width="376" height="85" rx="43" fill="#242730" fill-opacity=".25"/>
+    <circle cx="71" cy="172" r="38" fill="#e1e5e8"/><circle cx="71" cy="161" r="11" fill="#9ba5ad"/><path d="M48 194 Q48 176 71 176 Q94 176 94 194" fill="#9ba5ad"/>
+    <text x="118" y="167" font-size="29">示例直播间</text><text x="118" y="193" font-size="21" opacity=".8">直播中</text>
+    <rect x="298" y="138" width="95" height="66" rx="33" fill="#ff2379"/><text x="345" y="181" text-anchor="middle" font-size="29" font-weight="600">关注</text>
+    <rect x="748" y="139" width="95" height="66" rx="33" fill="#242730" fill-opacity=".25"/><text x="795" y="182" text-anchor="middle" font-size="28">1.2万</text>
+    <circle cx="888" cy="171" r="31" fill="#242730" fill-opacity=".28"/><path d="M878 161 L898 181 M898 161 L878 181" stroke="white" stroke-width="5" stroke-linecap="round"/>
+    <!-- Activity badge -->
+    <rect x="28" y="303" width="84" height="84" rx="20" fill="#444954" fill-opacity=".35"/><path d="M52 328 H88 V354 H52 Z M70 326 V358 M49 326 H91" fill="none" stroke="#e7d7f6" stroke-width="4"/><text x="70" y="377" text-anchor="middle" font-size="17">活动</text>
+    <!-- Comment block widths and wrapping follow the reference. -->
+    <g font-size="30">
+      <rect x="28" y="1427" width="586" height="94" rx="28" fill="#282b34" fill-opacity=".32"/>
+      <rect x="48" y="1438" width="75" height="30" rx="15" fill="#a5adfa"/><text x="85" y="1461" text-anchor="middle" font-size="22">◇ 17</text>
+      <text x="138" y="1467" fill="#ace7f6">观众 A：</text><text x="282" y="1467">欢迎来到直播间</text><text x="48" y="1506">这里是评论示例</text>
+      <rect x="28" y="1526" width="594" height="136" rx="28" fill="#282b34" fill-opacity=".32"/>
+      <circle cx="66" cy="1551" r="19" fill="#fa4f87"/><text x="66" y="1561" text-anchor="middle" font-size="25">管</text><text x="94" y="1566" fill="#ace7f6">管理员：</text><text x="244" y="1566">喜欢可以点点关注</text><text x="48" y="1605">更多直播内容，欢迎在评论区</text><text x="48" y="1644">一起交流～</text>
+      <rect x="28" y="1667" width="604" height="92" rx="28" fill="#282b34" fill-opacity=".32"/>
+      <rect x="48" y="1678" width="75" height="30" rx="15" fill="#94a8d8"/><text x="85" y="1701" text-anchor="middle" font-size="22">◇ 5</text><text x="139" y="1707" fill="#ace7f6">观众 B：</text><text x="281" y="1707">这是一条示例评论</text><text x="48" y="1746">用于检查画面遮挡</text>
+      <rect x="28" y="1765" width="586" height="93" rx="28" fill="#282b34" fill-opacity=".32"/>
+      <rect x="48" y="1776" width="75" height="30" rx="15" fill="#94a8d8"/><text x="85" y="1799" text-anchor="middle" font-size="22">◇ 15</text><text x="139" y="1805" fill="#ace7f6">观众 C：</text><text x="281" y="1805">欢迎互动</text><text x="48" y="1844">示例文字，不是真实评论</text>
+    </g>
+    <!-- Product card: neutral illustration, no real product image. -->
+    <rect x="651" y="1376" width="270" height="56" rx="28" fill="#f5a938" fill-opacity=".85"/><text x="786" y="1417" text-anchor="middle" font-size="32" font-weight="600">热卖 · 示例</text>
+    <rect x="652" y="1454" width="261" height="405" rx="35" fill="white" fill-opacity=".9"/>
+    <rect x="668" y="1467" width="63" height="39" rx="19" fill="#ff325c"/><text x="699" y="1495" text-anchor="middle" font-size="23">活动</text>
+    <path d="M879 1477 L893 1491 M893 1477 L879 1491" stroke="#b3bbc0" stroke-width="3"/>
+    <rect x="723" y="1513" width="116" height="132" rx="17" fill="#d9dfe3"/><rect x="734" y="1524" width="94" height="101" rx="8" fill="#b6c1c9"/><circle cx="781" cy="1635" r="4" fill="#9aa7b0"/>
+    <rect x="662" y="1667" width="240" height="42" fill="#a6a0c4"/><text x="782" y="1696" text-anchor="middle" font-size="21">商品信息占位</text>
+    <text x="665" y="1746" font-size="25" fill="#333842">示例商品名称</text><text x="665" y="1781" font-size="23" fill="#64727d">商品规格与说明…</text>
+    <rect x="662" y="1796" width="240" height="55" rx="27" fill="#ff275d"/><text x="679" y="1834" font-size="31" font-weight="600">¥ —</text><text x="873" y="1835" text-anchor="middle" font-size="30" font-weight="600">抢</text>
+    <!-- Bottom input, emoji, shopping and sharing actions -->
+    <rect x="28" y="1880" width="671" height="88" rx="44" fill="#282b34" fill-opacity=".32"/><text x="52" y="1935" font-size="29" fill="#eeeeef">说点什么…</text>
+    <g fill="none" stroke="#f4f4f6" stroke-width="5"><circle cx="654" cy="1924" r="23"/><path d="M643 1930 Q654 1942 665 1930"/></g><circle cx="647" cy="1917" r="3"/><circle cx="661" cy="1917" r="3"/>
+    <circle cx="762" cy="1924" r="45" fill="#282b34" fill-opacity=".32"/><path d="M734 1905 H745 L753 1934 H781 L787 1912 H748" fill="none" stroke="#ffb537" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="757" cy="1945" r="5" fill="#ffb537"/><circle cx="777" cy="1945" r="5" fill="#ffb537"/>
+    <circle cx="870" cy="1924" r="45" fill="#282b34" fill-opacity=".32"/><path d="M845 1941 Q843 1916 869 1915 V1903 L895 1923 L870 1942 V1929 Q854 1928 845 1941" fill="#f3f4f6"/>
+  </g></svg>`;
+}

@@ -1,3 +1,4 @@
+import { ProjectorSafetySection } from './settings/ProjectorSafetySection';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   BellRing,
@@ -381,6 +382,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
             <div className="settings-page-sheet">
             {active === 'devices' && (
               <>
+                <SettingsDisclosure {...disclosureState('devices-safety')} icon={Monitor} title="投影安全区" description="手机与阔屏裁切范围" summary={draft.projectorSafety.enabled ? '已开启' : '未开启'}>
+                  <ProjectorSafetySection config={draft.projectorSafety} onChange={value => onChangeDraft('projectorSafety', value)} />
+                </SettingsDisclosure>
                 <SettingsDisclosure
                   {...disclosureState('devices-obs')}
                   icon={Cable}

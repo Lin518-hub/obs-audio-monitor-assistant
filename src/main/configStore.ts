@@ -1,3 +1,4 @@
+import { normalizeProjectorSafety } from '../shared/projectorSafety.js';
 import { app, safeStorage } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -199,6 +200,7 @@ export class ConfigStore {
       atemPrimaryInputId: atemPrimaryInputIds[0] ?? null,
       atemPrimaryInputIds,
       atemInputCustomizations: atemInputCustomizationsValue(merged.atemInputCustomizations),
+      projectorSafety: normalizeProjectorSafety(merged.projectorSafety),
       preflightProfiles: preflightProfilesValue(merged.preflightProfiles),
       preflightApps: preflightAppsValue(merged.preflightApps),
       preflightProjector: preflightProjectorValue(merged.preflightProjector),

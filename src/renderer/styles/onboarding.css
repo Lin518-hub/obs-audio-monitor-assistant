@@ -781,3 +781,40 @@
 .setup-checklist li { display:flex; gap:12px; align-items:center; justify-content:space-between; }
 .onboarding-workspace .preflight-page { padding:0; }
 .onboarding-workspace .preflight-page-header { flex-wrap:wrap; }
+
+/* All setup steps share one frame; embedded tools cannot resize the wizard. */
+.onboarding-root{padding:28px 20px;box-sizing:border-box}
+.onboarding-steps{margin-bottom:24px}
+.onboarding-card,.onboarding-card.onboarding-workspace{width:min(720px,calc(100vw - 40px));height:min(680px,calc(100vh - 124px));max-height:calc(100vh - 124px)}
+.onboarding-card-body{padding:26px 30px;gap:18px;scrollbar-gutter:auto}
+.onboarding-step-title h2,.onboarding-card-body>h2{font-size:22px;line-height:1.35;margin:0}
+.onboarding-step-desc{margin:0;font-size:14px;line-height:1.7}
+.onboarding-card-body p{line-height:1.65}
+.onboarding-card-footer{padding:16px 30px;gap:12px;flex-wrap:wrap}
+.onboarding-card-footer button{min-height:40px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+.onboarding-card-footer .btn-primary:last-child{margin-left:auto}
+.onboarding-source-area{display:flex;flex-direction:column;gap:12px;margin:0}
+.onboarding-source-area>button{align-self:flex-start;min-height:40px}
+.onboarding-test-row{gap:12px;align-items:flex-start}.onboarding-test-result{font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.setup-verification{gap:14px}.verification-panel{padding:18px;border:1px solid var(--border-soft);border-radius:14px;background:var(--glass-bg-soft)}
+.verification-panel header{display:flex;align-items:center;gap:10px;margin-bottom:14px}.verification-panel h3{font-size:15px;margin:0}.verification-number{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--brand-100);color:var(--brand-700);font-weight:700}.verification-state{margin-left:auto;color:var(--text-muted);font-size:12px}
+.verification-source{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}.verification-source strong{font-size:20px;white-space:nowrap}.verification-source>span{overflow-wrap:anywhere}
+.verification-meter{height:8px;border-radius:4px;overflow:hidden;background:var(--border-soft);margin:12px 0}.verification-meter i{display:block;height:100%;background:var(--brand-500);transform-origin:left;transition:transform 100ms linear}
+.verification-panel p{font-size:13px;margin:10px 0;color:var(--text-secondary)}.verification-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.setup-verification .verification-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;margin:0;flex-shrink:0;font-size:13px}
+.onboarding-workspace .preflight-page{min-width:0;gap:16px}.onboarding-workspace .preflight-page-header{display:none}.onboarding-workspace .preflight-summary{padding:16px;flex-wrap:wrap;gap:12px}.onboarding-workspace .preflight-summary-copy strong{font-size:17px}.onboarding-workspace .preflight-summary-stats{flex-wrap:wrap}.onboarding-workspace .preflight-app-grid{grid-template-columns:1fr}
+@media(max-width:600px){.onboarding-card-body{padding:20px}.onboarding-card-footer{padding:14px 20px}.onboarding-step-line{width:18px}.onboarding-step-dot{width:28px;height:28px}.verification-actions button{flex:1}}
+@media(prefers-reduced-motion:reduce){.verification-meter i{transition:none}}
+.onboarding-workspace .preflight-page-header{display:flex;justify-content:flex-end;margin:0}
+.onboarding-workspace .preflight-page-header>div:first-child{display:none}
+.onboarding-workspace .preflight-summary{grid-template-columns:36px minmax(0,1fr)}
+.onboarding-workspace .preflight-summary-stats{grid-column:1/-1;justify-content:start}
+.onboarding-workspace .preflight-summary-icon{width:36px;height:36px;border-radius:10px}
+.onboarding-workspace .preflight-summary{grid-template-columns:36px minmax(0,1fr) auto;gap:12px}
+.onboarding-workspace .preflight-summary-stats{grid-column:auto;gap:6px}
+.onboarding-workspace .preflight-layout{padding:16px}
+.onboarding-workspace .preflight-layout-heading{grid-template-columns:32px minmax(0,1fr);gap:10px}
+.onboarding-workspace .preflight-layout-icon{width:32px;height:32px}
+.onboarding-workspace .preflight-layout-save{grid-column:2;justify-self:start}
+.onboarding-workspace .preflight-layout-options{padding-left:42px}
+@media(max-width:600px){.onboarding-workspace .preflight-summary{grid-template-columns:36px minmax(0,1fr)}.onboarding-workspace .preflight-summary-stats{grid-column:1/-1}}

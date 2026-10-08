@@ -1,3 +1,5 @@
+import { streamBitrateKbps, type StreamSample } from '../shared/streamBitrate.js';
+import { obsErrorMessage } from '../shared/obsErrors.js';
 import { EventEmitter } from 'node:events';
 import OBSWebSocket, { EventSubscription } from 'obs-websocket-js';
 import { maxInputLevelDb, smoothMeterLevel } from '../shared/audio.js';
@@ -100,6 +102,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private lastVolumeHistoryPrunedAt = 0;
   private lastVolumeHistoryBroadcastAt = 0;
   private obsStats: OBSStatsSnapshot = emptyOBSStats();
+  private streamSample: StreamSample | null = null;
+  private streamRateKbps: number | null = null;
   private lastTargetMeterAt: number | null = null;
   private lastAudioMeterReceivedAt: number | null = null;
   private reconnectAttempt = 0;
@@ -367,7 +371,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return {
         ok: false,
         stage: 'connect',
-        message: error instanceof Error ? error.message : '无法连接 OBS WebSocket。',
+        message: obsErrorMessage(error),
         inputCount: 0
       };
     }
@@ -385,7 +389,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       return {
         ok: false,
         stage: 'inputs',
-        message: error instanceof Error ? error.message : '已连接 OBS，但读取输入源失败。',
+        message: obsErrorMessage(error, '已连接 OBS，但读取音源失败，请刷新音源后重试。'),
         inputCount: 0
       };
     } finally {
@@ -451,7 +455,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.scheduleReconnect();
     });
     obs.on('ConnectionError', (error) => {
-      this.markDisconnected(error.message || 'OBS 连接失败。');
+      this.markDisconnected(obsErrorMessage(error));
       this.scheduleReconnect();
     });
     obs.on('InputVolumeMeters', (event) => this.handleVolumeMeters(event as OBSInputVolumeMetersEvent));
@@ -491,7 +495,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
       this.startOutputPolling();
       this.emitSnapshot();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'OBS 连接失败。';
+      const message = obsErrorMessage(error);
       await this.disconnect();
       this.markDisconnected(message);
       this.scheduleReconnect();
@@ -553,6 +557,10 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         this.obs.call('GetRecordStatus'),
         this.obs.call('GetVirtualCamStatus').catch(() => null)
       ]);
+      const sample = { bytes: streamStatus.outputBytes, durationMs: streamStatus.outputDuration };
+      this.streamRateKbps = streamStatus.outputActive ? streamBitrateKbps(this.streamSample, sample) : null;
+      this.streamSample = streamStatus.outputActive ? sample : null;
+      this.obsStats.streamBitrateKbps = this.streamRateKbps;
       this.actualStreaming = Boolean(streamStatus.outputActive);
       this.actualRecording = Boolean(recordStatus.outputActive);
       this.actualVirtualCamera = Boolean(virtualCameraStatus?.outputActive);
@@ -569,6 +577,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
   private async pollOBSStats(): Promise<void> {
     if (!this.obs || !this.state.connected) {
       this.obsStats = emptyOBSStats();
+      this.streamSample = null;
+      this.streamRateKbps = null;
       return;
     }
 
@@ -584,10 +594,12 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
         renderTotalFrames: numberOrNull(stats.renderTotalFrames),
         outputSkippedFrames: numberOrNull(stats.outputSkippedFrames),
         outputTotalFrames: numberOrNull(stats.outputTotalFrames),
-        streamBitrateKbps: numberOrNull((stats as { outputSkippedFrames?: unknown; outputTotalFrames?: unknown; } & Record<string, unknown>).streamBitrate)
+        streamBitrateKbps: this.streamRateKbps
       };
     } catch {
       this.obsStats = emptyOBSStats();
+      this.streamSample = null;
+      this.streamRateKbps = null;
     }
   }
 
@@ -647,6 +659,8 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.lastTargetMeterAt = null;
     this.activeInputName = '';
     this.obsStats = emptyOBSStats();
+    this.streamSample = null;
+    this.streamRateKbps = null;
     this.errorMessage = message;
     this.stopOutputPolling();
     this.emitSnapshot();

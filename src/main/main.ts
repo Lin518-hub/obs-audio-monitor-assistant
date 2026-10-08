@@ -1,3 +1,4 @@
+import { ProjectorSafetyOverlay } from './projectorSafetyOverlay.js';
 import { SingleFlight } from '../shared/singleFlight.js';
 import { confirmLayoutWindow } from './confirmLayoutWindow.js';
 import { LaunchOverlay } from './launchOverlay.js';
@@ -135,6 +136,7 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.obsaudioassistant.app');
 }
 
+const projectorSafetyOverlay = new ProjectorSafetyOverlay();
 let configStore: ConfigStore;
 let historyStore: HistoryStore;
 let atemHistoryStore: ATEMHistoryStore;
@@ -228,6 +230,7 @@ async function initializeApp(): Promise<void> {
     atemSessionStore.load()
   ]);
   monitor = new OBSMonitor(config, getDisplays());
+  projectorSafetyOverlay.configure(config.projectorSafety);
 
   atemMonitor = new ATEMMonitor();
   remoteBridge = new RemoteBridge(app.getVersion());
@@ -382,6 +385,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  projectorSafetyOverlay.destroy();
   void mainLogger.flush();
   if (updateInitialTimer) {
     clearTimeout(updateInitialTimer);
@@ -431,6 +435,9 @@ function registerIpc(): void {
     latestSnapshot ?? monitor.getSnapshot(),
     settingsWindow?.webContents.id === event.sender.id
   ));
+  ipcMain.handle('projector-safety:status', () => projectorSafetyOverlay.getStatus());
+  ipcMain.handle('projector-safety:select', (_event, handle: string) => projectorSafetyOverlay.select(String(handle)));
+  ipcMain.handle('projector-safety:preview', (_event, config) => projectorSafetyOverlay.preview(config));
   ipcMain.handle('config:save', async (_event, patch: Partial<AppConfig>) => {
     const previousSnapshot = latestSnapshot ?? monitor.getSnapshot();
     const previous = previousSnapshot.config;
@@ -451,6 +458,7 @@ function registerIpc(): void {
         remoteDeviceSecret: current.remoteDeviceSecret
       };
     });
+    projectorSafetyOverlay.configure(nextConfig.projectorSafety);
     if (Object.hasOwn(patch, 'autoLaunch') && nextConfig.autoLaunch !== previous.autoLaunch) {
       await applyAutoLaunch(nextConfig.autoLaunch);
     }
@@ -2137,6 +2145,7 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   await applyAutoLaunch(false);
 
   const nextConfig = await configStore.reset();
+  projectorSafetyOverlay.configure(nextConfig.projectorSafety);
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
   await remoteBridge.configure(nextConfig);

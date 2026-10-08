@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECTOR_SAFETY, type ProjectorSafetyConfig } from './projectorSafety.js';
 export type MonitorStatus =
   | 'disconnected'
   | 'connecting'
@@ -416,6 +417,7 @@ export interface AppConfig {
   atemPrimaryInputIds: number[];
   atemInputCustomizations: Record<string, ATEMInputCustomization>;
   preflightApps: PreflightAppConfigs;
+  projectorSafety: ProjectorSafetyConfig;
   preflightProjector: PreflightProjectorConfig;
   preflightWindowPlacements: PreflightWindowPlacements;
   preflightProfiles: { id: string; name: string; settings: PreflightSettings }[];
@@ -521,6 +523,7 @@ export interface RemoteAdminCommandResult {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
+  projectorSafety: DEFAULT_PROJECTOR_SAFETY,
   obsHost: '127.0.0.1',
   obsPort: 4455,
   obsPassword: '',

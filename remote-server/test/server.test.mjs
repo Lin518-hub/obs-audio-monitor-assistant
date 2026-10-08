@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -629,4 +629,150 @@ test('serves the native picture-in-picture video with byte ranges', async () => 
   assert.equal(response.headers.get('accept-ranges'), 'bytes');
   assert.match(response.headers.get('content-range') || '', /^bytes 0-99\/\d+$/);
   assert.equal((await response.arrayBuffer()).byteLength, 100);
+});
+
+test('manages room categories and keeps assignments in sync with renames', async () => {
+  const login = await request('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'remote-admin-test-password' })
+  });
+  const cookie = login.response.headers.get('set-cookie').split(';')[0];
+
+  const anonymous = await request('/api/monitor/room-groups');
+  assert.equal(anonymous.response.status, 401);
+
+  // 首次部署：必须等价于改造前 room-groups.js 里硬编码的映射。
+  const initial = await request('/api/monitor/room-groups', { headers: { Cookie: cookie } });
+  assert.equal(initial.response.status, 200);
+  assert.deepEqual(initial.body.categories, ['杭海路直播间']);
+  assert.deepEqual(initial.body.assignments, {
+    鸿蒙智行官方直播间: '杭海路直播间',
+    华为全屋智能: '杭海路直播间',
+    天猫小时达官方直播间: '杭海路直播间',
+    我的华为: '杭海路直播间'
+  });
+
+  const uuid = 'cccccccc-1111-2222-3333-444444444444';
+  const registered = await request('/api/devices/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uuid,
+      secret: '3'.repeat(64),
+      label: 'Category Desktop',
+      roomName: '分类测试直播间',
+      roomNameRevision: 0,
+      monitoringIdentityRevision: 1,
+      appVersion: '3.9.13'
+    })
+  });
+  assert.equal(registered.response.status, 200);
+
+  const saved = await request('/api/monitor/room-groups', {
+    method: 'PUT',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      categories: ['杭海路直播间', '滨江直播间'],
+      assignments: { 分类测试直播间: '滨江直播间' }
+    })
+  });
+  assert.equal(saved.response.status, 200);
+  assert.deepEqual(saved.body.categories, ['杭海路直播间', '滨江直播间']);
+  assert.equal(saved.body.assignments['分类测试直播间'], '滨江直播间');
+  assert.equal(Number.isFinite(saved.body.updatedAt), true);
+
+  // 看板与监控列表都从 overview 取分类表。
+  const overview = await request('/api/monitor/overview', { headers: { Cookie: cookie } });
+  assert.deepEqual(overview.body.roomGroups.categories, ['杭海路直播间', '滨江直播间']);
+  assert.equal(overview.body.roomGroups.assignments['分类测试直播间'], '滨江直播间');
+
+  // 直播间改名后分类分配必须跟着走，不能留下指向旧名字的孤儿分配。
+  const renamed = await request(`/api/monitor/devices/${uuid}/name`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomName: '分类测试直播间二店' })
+  });
+  assert.equal(renamed.response.status, 200);
+  const afterRename = await request('/api/monitor/room-groups', { headers: { Cookie: cookie } });
+  assert.equal(afterRename.body.assignments['分类测试直播间二店'], '滨江直播间');
+  assert.equal(afterRename.body.assignments['分类测试直播间'], undefined);
+
+  const reject = async (payload) => {
+    const result = await request('/api/monitor/room-groups', {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error, 'invalid_room_groups');
+  };
+  await reject({ categories: ['A'], assignments: { 某房间: 'B' } });
+  await reject({ categories: ['未分类'], assignments: {} });
+  await reject({ categories: ['A', 'a'], assignments: {} });
+  await reject({ categories: [''], assignments: {} });
+
+  // 校验失败不能破坏已保存的数据。
+  const stillSaved = await request('/api/monitor/room-groups', { headers: { Cookie: cookie } });
+  assert.deepEqual(stillSaved.body.categories, ['杭海路直播间', '滨江直播间']);
+  assert.equal(stillSaved.body.assignments['分类测试直播间二店'], '滨江直播间');
+
+  const monitorHtml = await (await fetch(`${base}/monitor`)).text();
+  assert.match(monitorHtml, /monitor-room-groups-button/);
+  assert.match(monitorHtml, /分类设置/);
+  assert.match(monitorHtml, /monitor-room-groups-form/);
+});
+
+test('authenticated monitor receives live meters even with mobile access disabled', { timeout: 10000 }, async () => {
+  assert.equal((await fetch(`${base}/api/monitor/live`)).status, 401);
+  const uuid = '77777777-7777-4777-8777-777777777777', secret = '7'.repeat(64);
+  await request('/api/devices/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uuid, secret, label: '实时电平测试', roomName: '实时测试', roomNameRevision: 0, monitoringIdentityRevision: 1, mobileAccessEnabled: false }) });
+  const login = await request('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'remote-admin-test-password' }) });
+  const controller = new AbortController();
+  const desktop = trackedSocket(`${base.replace('http:', 'ws:')}/ws/desktop?uuid=${uuid}&secret=${secret}`);
+  const desktopReady = desktop.open();
+  let reader;
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const stream = await fetch(`${base}/api/monitor/live`, { headers: { Cookie: login.response.headers.get('set-cookie').split(';')[0] }, signal: controller.signal });
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get('content-type'), /text\/event-stream/);
+    reader = stream.body.getReader();
+    await reader.read(); // Initial connection comment is flushed immediately.
+    await desktopReady;
+    desktop.socket.send(JSON.stringify({ type: 'meter', meter: { levelDb: 99, activeInputName: '麦克风' } }));
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes('event: meters') || !text.includes('\n\n')) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    const frames = JSON.parse(text.split('\n').find(line => line.startsWith('data: ')).slice(6));
+    assert.deepEqual(frames.find(frame => frame.uuid === uuid), { uuid, levelDb: 12, inputName: '麦克风' });
+    assert.equal(text.includes(secret), false);
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    await reader?.cancel().catch(() => {});
+    desktop.socket.close();
+  }
+});
+
+
+test('unreadable static files return an error without crashing the server', { skip: process.getuid?.() === 0 }, async () => {
+  const file = new URL('../public/assets/qa-unreadable-fixture.txt', import.meta.url);
+  await writeFile(file, 'private test fixture', { mode: 0o600 });
+  await chmod(file, 0o000);
+  try {
+    for (const headers of [{}, { Range: 'bytes=0-3' }]) {
+      const response = await fetch(`${base}/assets/qa-unreadable-fixture.txt`, { headers });
+      assert.equal(response.status, 500);
+      assert.equal((await response.json()).error, 'file_read_failed');
+      assert.equal((await fetch(`${base}/health`)).status, 200);
+    }
+  } finally {
+    await chmod(file, 0o600);
+    await rm(file, { force: true });
+  }
 });

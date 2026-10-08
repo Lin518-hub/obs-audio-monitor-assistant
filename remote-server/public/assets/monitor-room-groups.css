@@ -1,0 +1,204 @@
+/* 分类设置面板：场地分类与直播间归属。
+ * 依赖 app.css 的 :root token（--line / --text / --muted / --green / --green2 / --red）。 */
+
+.monitor-groups-form {
+  display: grid;
+  gap: 22px;
+}
+
+.monitor-groups-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.monitor-groups-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.monitor-groups-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.monitor-groups-head strong {
+  font-size: 13px;
+}
+
+.monitor-groups-head small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.monitor-groups-head .touch-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 15px;
+  font-size: 12px;
+}
+
+.monitor-groups-summary {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-groups-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monitor-groups-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitor-groups-item input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: 0;
+}
+
+.monitor-groups-item input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+}
+
+.monitor-groups-remove {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: #94a3b8;
+  font-size: 19px;
+  line-height: 1;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+
+.monitor-groups-remove:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: var(--red);
+}
+
+.monitor-groups-remove:focus-visible,
+.monitor-groups-item input:focus-visible,
+.monitor-groups-room select:focus-visible {
+  outline: 3px solid rgba(34, 197, 94, 0.34);
+  outline-offset: 2px;
+}
+
+.monitor-groups-rooms {
+  display: grid;
+  gap: 7px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.monitor-groups-room {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(148px, 0.78fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+}
+
+.monitor-groups-room > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-groups-room select {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.monitor-groups-room.is-unassigned select {
+  color: var(--muted);
+}
+
+.monitor-groups-empty {
+  margin: 0;
+  padding: 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 13px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 面板页脚只有三个元素，覆盖通知设置的四列网格。 */
+.monitor-groups-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.monitor-groups-footer .monitor-settings-saved {
+  margin-right: auto;
+}
+
+@media (max-width: 560px) {
+  .monitor-groups-room {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .monitor-groups-rooms {
+    max-height: none;
+  }
+
+  .monitor-groups-footer {
+    flex-wrap: wrap;
+  }
+
+  .monitor-groups-footer .monitor-settings-saved {
+    width: 100%;
+    margin-right: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitor-groups-remove {
+    transition: none;
+  }
+}

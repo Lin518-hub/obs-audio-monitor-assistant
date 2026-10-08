@@ -166,3 +166,5 @@
   .release-notes-list{padding:6px 20px 14px}
   .release-notes-card>footer{padding:14px 20px 18px;align-items:flex-end}
 }
+.release-notes-card>footer{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.release-notes-card>footer>.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:0;min-width:108px;padding:12px 24px;text-align:center}

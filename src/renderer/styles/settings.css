@@ -1414,3 +1414,13 @@
   .settings-side { padding:16px; }
   .settings-disclosure-summary { max-width:180px; }
 }
+
+/* Monitoring connection status is independent of the mobile route icon grid. */
+.monitor-server-card{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:18px;border:1px solid var(--glass-border);border-radius:var(--r-md);background:var(--glass-bg-soft);min-width:0}
+.monitor-server-heading{display:flex;align-items:center;gap:10px}
+.monitor-server-heading strong{font-size:14px;line-height:1.5;color:var(--text-primary)}
+.monitor-server-card p{margin:0;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
+.monitor-server-address{color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.monitor-server-card>.btn-secondary{align-self:flex-start;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:9px 14px;white-space:nowrap;font-size:13px}
+.monitor-server-card>.btn-secondary svg{flex-shrink:0}
+.monitor-server-card [role=alert]{color:var(--red-600,#dc2626)}

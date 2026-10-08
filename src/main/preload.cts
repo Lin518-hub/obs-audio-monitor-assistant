@@ -3,6 +3,9 @@ import type { ObsGuardApi } from '../shared/ipc.js';
 import type { AppConfig, AppSnapshot, AlertAction, AlertHistoryEntry, ATEMScanResult, ATEMSwitchHistoryEntry, AudioMeterFrame, PreflightAppId, PreflightCheckResult, PreflightDiscoveryResult, PreflightLayoutCaptureResult, PreflightLaunchResult, PreflightProjectorResult, PreflightSettings, TestConnectionResult, UpdateSnapshot } from '../shared/types.js';
 
 const obsGuardApi = {
+  getProjectorSafetyStatus: () => ipcRenderer.invoke('projector-safety:status') as Promise<import('../shared/projectorSafety.js').ProjectorSafetyStatus>,
+  selectSafetyProjector: (handle: string) => ipcRenderer.invoke('projector-safety:select', handle) as Promise<void>,
+  previewProjectorSafety: (config: import('../shared/projectorSafety.js').ProjectorSafetyConfig) => ipcRenderer.invoke('projector-safety:preview', config) as Promise<void>,
   floatingResize: (phase: 'start' | 'move' | 'end', edge?: string) => ipcRenderer.invoke('floating:resize', phase, edge) as Promise<void>,
   respondMonitoringPrompt: (accept: boolean) => ipcRenderer.invoke('monitor:prompt-response', accept) as Promise<void>,
   onWindowShown: (callback: () => void) => {

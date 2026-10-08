@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
-import { Activity, MonitorUp, Radio, ShieldCheck } from 'lucide-react';
+import { Activity, MonitorUp, ShieldCheck } from 'lucide-react';
 
-const CLIENT_RELEASE_NOTES = [
-  { icon: ShieldCheck, title: '首次使用逐项验证', detail: '连接 OBS、说话验证、确认报警，再按需配置工作台并试运行。未完成的项目可暂存后继续，保存失败可重试。' },
-  { icon: MonitorUp, title: '开播准备可以随时接手', detail: '全屏浅绿遮罩显示当前步骤和耗时，点击交回操作权或按 Esc 停止后续自动操作。' },
-  { icon: ShieldCheck, title: '逐项结果与失败重试', detail: '窗口可以单独保存、恢复和重试；恢复后核对实际位置，已成功项目不重复启动。' },
-  { icon: Activity, title: '浮窗锁定与透明度', detail: '设置中支持锁定位置和大小、调整不透明度，浮窗上也可快速锁定和解锁。' },
-  { icon: MonitorUp, title: '窗口布局保存修复', detail: '修复已打开的普通软件窗口无法保存和恢复位置；失败提示显示软件名称，已存布局与本次保存数量分开说明。' },
-  { icon: Activity, title: '开播准备进度可见', detail: '新增毛玻璃动态进度弹窗，显示当前启动步骤、恢复位置和输出投影状态；支持收起后台继续。' },
-  { icon: MonitorUp, title: '一键开播与投影位置修复', detail: '改善中文输出投影识别，保存布局立即写入配置，等待 OBS 就绪后打开并恢复投影位置。' },
-  { icon: Activity, title: '默认恢复经典绿色', detail: '设置 → 系统与更新中可切换经典绿和暖黄色，导航、图标和按钮同步变色。' },
-  { icon: Radio, title: '浮窗缩放与反馈', detail: '拖动边角实时按比例缩放；静音满 3 秒闪红色描边，恢复讲话闪绿色。' },
-  { icon: ShieldCheck, title: '虚拟摄像头确认检测', detail: '开启虚拟摄像头后先显示 5 秒确认提示，点击开始检测后才启动音频与机位检测。' }
-];
+const CLIENT_RELEASE_NOTES: Record<string, { icon: typeof Activity; title: string; detail: string }[]> = {
+  '3.9.14': [{ icon: MonitorUp, title: '监控服务器手动重连', detail: '设置中新增服务器连接状态、失败原因、最后同步时间和重新连接按钮，无需重启音频检测。' }],
+  '3.9.15': [
+    { icon: MonitorUp, title: 'OBS 投影安全区与直播界面示意', detail: '新增手机、阔直板裁切线和匿名直播组件图层；Windows 自动跟随投影，拖动或缩放时隐藏，Mac 支持设置与预览。' },
+    { icon: Activity, title: '推流码率显示修复', detail: '根据 OBS 实际推流字节数计算码率，区分未推流与等待采样状态。' },
+    { icon: ShieldCheck, title: '首次引导重新排版', detail: '统一步骤宽度、按钮与间距，重新设计音频和报警验证，精简一键开播配置页面。' },
+    { icon: Activity, title: '连接错误更容易处理', detail: 'OBS 密码、地址与连接失败改为中文提示；更新弹窗仅展示当前版本内容。' }
+  ]
+};
 
 export const ReleaseNotesDialog: React.FC<{
   version: string;
@@ -42,7 +39,7 @@ export const ReleaseNotesDialog: React.FC<{
         </header>
         <div className="release-notes-body">
           <div className="release-notes-list">
-            {CLIENT_RELEASE_NOTES.map(({ icon: Icon, title, detail }) => (
+            {(CLIENT_RELEASE_NOTES[version.replace(/^v/, '')] || [{ icon: ShieldCheck, title: '版本更新', detail: '本版本包含体验优化与问题修复。' }]).map(({ icon: Icon, title, detail }) => (
               <article key={title}>
                 <span><Icon size={18} /></span>
                 <div><strong>{title}</strong><p>{detail}</p></div>

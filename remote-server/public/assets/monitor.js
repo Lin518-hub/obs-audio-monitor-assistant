@@ -41,10 +41,12 @@ function showDashboard() {
 }
 
 function showLogin() {
+  window.roomBoard?.close();
   closeDrawer();
   closeManagementPanel('monitor-access-management');
   closeManagementPanel('monitor-update-management');
   if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
+  if (!$('monitor-room-groups').classList.contains('hidden')) closeRoomGroups();
   $('monitor-dashboard').classList.add('hidden');
   $('monitor-login').classList.remove('hidden');
 }
@@ -70,6 +72,11 @@ async function refresh() {
   refreshPromise = (async () => {
     try {
       overview = await api('/api/monitor/overview');
+      // 分类表随 overview 一起下发，先落到本地数据源再渲染，
+      // 这样监控列表与看板筛选用的都是最新场地。
+      window.roomGroups?.apply(overview.roomGroups);
+      syncLocationOptions();
+      window.roomBoard?.update(overview);
       showDashboard();
       render();
     } catch (error) {
@@ -77,6 +84,7 @@ async function refresh() {
         showLogin();
         return;
       }
+      window.roomBoard?.fail();
       $('monitor-service-chip').className = 'state-pill danger';
       $('monitor-service-chip').textContent = '同步失败';
       toast(error.message);
@@ -167,6 +175,7 @@ function renderRooms(rooms) {
   const root = $('monitor-rooms');
   root.replaceChildren();
   const visibleRooms = rooms
+    .filter(room => !$('monitor-location').value || window.roomLocation(room.name) === $('monitor-location').value)
     .map((room) => ({ ...room, devices: room.devices.filter(deviceMatches) }))
     .filter((room) => room.devices.length > 0);
   if (!visibleRooms.length) {
@@ -184,6 +193,7 @@ function renderRooms(rooms) {
 function deviceMatches(device) {
   const haystack = [
     device.roomName,
+    window.roomLocation(device.roomName),
     device.label,
     device.audio.inputName,
     device.audio.display,
@@ -229,7 +239,7 @@ function roomView(room) {
     : device.overallTone === 'warning'
       ? chip('请留意', 'warning')
       : chip(device.online ? (device.obs.liveActive ? '直播中' : '状态正常') : '电脑离线', device.online ? 'safe' : 'offline');
-  titleLine.append(title, roomState);
+  titleLine.append(title, chip(window.roomLocation(room.name), 'offline'), roomState);
   const subtitle = document.createElement('p');
   subtitle.textContent = device.online
     ? `${device.label} · ${routeLabel(device.service.routeType)} · ${relativeTime(device.service.lastSyncAt || device.stateUpdatedAt)}`
@@ -415,9 +425,105 @@ async function revokeAccessApproval(approvalId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 更新缓存下载
+// /updates/* 是客户端 electron-updater 使用的公开静态分发（支持 Range 断点续传），
+// 后台直接用同样的地址下载，无需新增接口，也不会改变客户端更新协议。
+// ---------------------------------------------------------------------------
+const UPDATE_FILE_KIND_LABELS = {
+  windows: 'Windows x64 安装包',
+  macos: 'macOS arm64 压缩包',
+  blockmap: '增量更新索引',
+  manifest: '更新描述文件',
+  other: '缓存文件'
+};
+
+function updateFileKind(name) {
+  const value = String(name || '').toLowerCase();
+  if (value.endsWith('.blockmap')) return 'blockmap';
+  if (value.endsWith('.exe')) return 'windows';
+  if (value.endsWith('.zip')) return 'macos';
+  if (value.endsWith('.yml') || value.endsWith('.yaml')) return 'manifest';
+  return 'other';
+}
+
+function updateFileDownloadUrl(name) {
+  return new URL(`/updates/${encodeURIComponent(name)}`, location.origin).href;
+}
+
+/** 内网用 http:// 打开监控中心时不是安全上下文，navigator.clipboard 不存在，需要回退。 */
+async function copyTextToClipboard(value) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch { /* 继续尝试回退方案 */ }
+  try {
+    const field = document.createElement('textarea');
+    field.className = 'monitor-copy-helper';
+    field.value = value;
+    field.setAttribute('readonly', '');
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand('copy');
+    field.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+/** 用 <a download> 交给浏览器原生下载：大文件不进内存，且支持断点续传。 */
+function managementDownloadLink(label, href, filename, primary = false) {
+  const link = document.createElement('a');
+  link.className = `monitor-management-link${primary ? ' is-primary' : ''}`;
+  link.href = href;
+  link.setAttribute('download', filename);
+  link.textContent = label;
+  link.setAttribute('aria-label', `${label}：${filename}`);
+  return link;
+}
+
+function managementCopyLinkAction(label, href, filename) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'monitor-management-action';
+  button.textContent = label;
+  button.setAttribute('aria-label', `${label}：${filename}`);
+  button.addEventListener('click', async () => {
+    const copied = await copyTextToClipboard(href);
+    toast(copied ? '下载链接已复制，可直接发给直播电脑' : '复制失败，请手动复制地址');
+  });
+  return button;
+}
+
+/** 顶部快捷下载：优先当前缓存版本对应的包，否则取最近更新的那个。 */
+function renderUpdateQuickDownload(files, version) {
+  const root = $('monitor-update-quick');
+  const items = Array.isArray(files) ? files : [];
+  const targets = [
+    { kind: 'windows', label: '下载 Windows 安装包', primary: true },
+    { kind: 'macos', label: '下载 macOS 包', primary: false }
+  ];
+  const links = [];
+  for (const target of targets) {
+    const candidates = items.filter((file) => updateFileKind(file.name) === target.kind);
+    if (!candidates.length) continue;
+    const matched = version ? candidates.filter((file) => String(file.name).includes(String(version))) : [];
+    const pick = (matched.length ? matched : candidates)
+      .slice()
+      .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))[0];
+    links.push(managementDownloadLink(target.label, updateFileDownloadUrl(pick.name), pick.name, target.primary));
+  }
+  root.replaceChildren(...links);
+  root.classList.toggle('hidden', links.length === 0);
+}
+
 async function openUpdateManagement() {
   openManagementPanel('monitor-update-management');
   renderManagementLoading('monitor-update-files-list', '正在读取缓存文件…');
+  renderUpdateQuickDownload([], null);
   await refreshUpdateManagement();
 }
 
@@ -425,19 +531,29 @@ async function refreshUpdateManagement() {
   try {
     const result = await api('/api/admin/updates');
     renderUpdateSync(result.sync || {});
+    renderUpdateQuickDownload(result.files || [], result.sync?.version);
     renderManagementList(
       'monitor-update-files-list',
       result.files || [],
-      (file) => managementItem(
-        file.name,
-        `${formatBytes(file.size)} · 更新于 ${relativeTime(file.updatedAt)}`,
-        [managementAction('删除', 'danger-action', () => confirmDeleteUpdate(file.name))],
-        'monitor-update-file-name'
-      ),
+      (file) => {
+        const kind = updateFileKind(file.name);
+        const url = updateFileDownloadUrl(file.name);
+        return managementItem(
+          file.name,
+          `${UPDATE_FILE_KIND_LABELS[kind]} · ${formatBytes(file.size)} · 更新于 ${relativeTime(file.updatedAt)}`,
+          [
+            managementDownloadLink('下载', url, file.name),
+            managementCopyLinkAction('复制链接', url, file.name),
+            managementAction('删除', 'danger-action', () => confirmDeleteUpdate(file.name))
+          ],
+          'monitor-update-file-name'
+        );
+      },
       '缓存目录暂时为空。自动同步完成后，客户端仍使用原有更新地址下载。'
     );
   } catch (error) {
     if (error.message === 'admin_auth_required') return showLogin();
+    renderUpdateQuickDownload([], null);
     renderManagementLoading('monitor-update-files-list', '更新缓存读取失败。');
     toast(error.message);
   }
@@ -675,6 +791,221 @@ async function resetNotificationSettings() {
   } finally {
     resetButton.disabled = false;
     resetButton.textContent = '恢复默认';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 分类设置（场地分类与直播间归属）
+// 面板内使用草稿状态：分类用本地 id 关联，改名不会打断已分配的房间；提交时才
+// 转换成服务器使用的「分类名 → 房间」结构。
+// ---------------------------------------------------------------------------
+let roomGroupsDraft = null;
+let roomGroupIdSeq = 0;
+let locationOptionsKey = '';
+
+const nextRoomGroupId = () => `g${++roomGroupIdSeq}`;
+const roomGroupsDefaultCategory = () => window.roomGroups?.defaultCategory || '未分类';
+
+/** 分类名列表 + 保留的「未分类」，用于两个场地下拉。 */
+function syncLocationOptions() {
+  const names = (window.roomGroups?.categories?.() || []).concat(roomGroupsDefaultCategory());
+  const key = JSON.stringify(names);
+  if (key === locationOptionsKey) return;
+  locationOptionsKey = key;
+  for (const id of ['monitor-location', 'room-board-location']) {
+    const select = $(id);
+    if (!select) continue;
+    const previous = select.value;
+    select.replaceChildren(new Option('全部场地', ''), ...names.map((name) => new Option(name, name)));
+    select.value = names.includes(previous) ? previous : '';
+  }
+}
+
+function draftFromGroups(status) {
+  const raw = Array.isArray(status?.categories) ? status.categories : [];
+  const categories = raw
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+    .map((name) => ({ id: nextRoomGroupId(), name }));
+  const idByName = new Map(categories.map((category) => [category.name, category.id]));
+  const assignments = {};
+  const rawAssignments = status?.assignments && typeof status.assignments === 'object' ? status.assignments : {};
+  for (const [room, category] of Object.entries(rawAssignments)) {
+    const id = idByName.get(String(category || '').trim());
+    if (id) assignments[String(room)] = id;
+  }
+  return { categories, assignments };
+}
+
+function groupsFromDraft(draft) {
+  const nameById = new Map(draft.categories.map((category) => [category.id, category.name.trim()]));
+  const assignments = {};
+  for (const [room, id] of Object.entries(draft.assignments)) {
+    const name = nameById.get(id);
+    if (name) assignments[room] = name;
+  }
+  return { categories: draft.categories.map((category) => category.name.trim()), assignments };
+}
+
+/** 服务器已知的直播间 = overview 里的房间 + 草稿里已有的分配（防止离线房间被漏掉）。 */
+function knownRoomNames() {
+  const names = new Set();
+  for (const room of overview?.rooms || []) {
+    const name = String(room?.name || '').trim();
+    if (name) names.add(name);
+  }
+  for (const name of Object.keys(roomGroupsDraft?.assignments || {})) names.add(name);
+  return Array.from(names).sort((left, right) => left.localeCompare(right, 'zh-CN'));
+}
+
+function openRoomGroups() {
+  if (!overview) return;
+  roomGroupsDraft = draftFromGroups(overview.roomGroups);
+  renderRoomGroupsPanel();
+  const backdrop = $('monitor-room-groups');
+  backdrop.classList.remove('hidden');
+  requestAnimationFrame(() => backdrop.classList.add('visible'));
+}
+
+function closeRoomGroups() {
+  const backdrop = $('monitor-room-groups');
+  backdrop.classList.remove('visible');
+  setTimeout(() => backdrop.classList.add('hidden'), 200);
+  $('monitor-room-groups-error').textContent = '';
+  roomGroupsDraft = null;
+}
+
+function addRoomGroupsCategory() {
+  if (!roomGroupsDraft) return;
+  if (roomGroupsDraft.categories.length >= 24) {
+    $('monitor-room-groups-error').textContent = '分类最多 24 个';
+    return;
+  }
+  roomGroupsDraft.categories.push({ id: nextRoomGroupId(), name: '' });
+  renderRoomGroupsPanel();
+  const inputs = $('monitor-room-groups-list').querySelectorAll('input');
+  inputs[inputs.length - 1]?.focus();
+}
+
+function renderRoomGroupsPanel() {
+  const draft = roomGroupsDraft;
+  if (!draft) return;
+
+  $('monitor-room-groups-list').replaceChildren(...draft.categories.map((category) => roomGroupCategoryRow(category)));
+  $('monitor-room-groups-empty').classList.toggle('hidden', draft.categories.length > 0);
+
+  const names = knownRoomNames();
+  $('monitor-room-groups-rooms').replaceChildren(...names.map((name) => roomGroupRoomRow(name)));
+  $('monitor-room-groups-rooms-empty').classList.toggle('hidden', names.length > 0);
+
+  $('monitor-room-groups-saved').textContent = overview?.roomGroups?.updatedAt
+    ? `上次保存 ${relativeTime(overview.roomGroups.updatedAt)}`
+    : '当前为默认分类';
+  updateRoomGroupsSummary(names);
+}
+
+function updateRoomGroupsSummary(names = knownRoomNames()) {
+  if (!roomGroupsDraft) return;
+  const assigned = names.filter((name) => roomGroupsDraft.assignments[name]).length;
+  $('monitor-room-groups-summary').textContent = names.length ? `${assigned} / ${names.length} 已分配` : '';
+}
+
+function roomGroupCategoryRow(category) {
+  const item = document.createElement('li');
+  item.className = 'monitor-groups-item';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 24;
+  input.value = category.name;
+  input.placeholder = '例如：杭海路直播间';
+  input.setAttribute('aria-label', '分类名称');
+  input.addEventListener('input', () => {
+    category.name = input.value;
+    $('monitor-room-groups-error').textContent = '';
+  });
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'monitor-groups-remove';
+  remove.textContent = '×';
+  remove.setAttribute('aria-label', `删除分类 ${category.name || '未命名分类'}`);
+  remove.addEventListener('click', () => {
+    roomGroupsDraft.categories = roomGroupsDraft.categories.filter((item2) => item2.id !== category.id);
+    for (const [room, id] of Object.entries(roomGroupsDraft.assignments)) {
+      if (id === category.id) delete roomGroupsDraft.assignments[room];
+    }
+    renderRoomGroupsPanel();
+  });
+
+  item.append(input, remove);
+  return item;
+}
+
+function roomGroupRoomRow(name) {
+  const row = document.createElement('div');
+  row.className = 'monitor-groups-room';
+
+  const label = document.createElement('span');
+  label.textContent = name;
+  label.title = name;
+
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', `${name} 的场地分类`);
+  select.append(
+    new Option(roomGroupsDefaultCategory(), ''),
+    ...roomGroupsDraft.categories.map((category) => new Option(category.name.trim() || '未命名分类', category.id))
+  );
+  select.value = roomGroupsDraft.assignments[name] || '';
+  row.classList.toggle('is-unassigned', !select.value);
+  select.addEventListener('change', () => {
+    if (select.value) roomGroupsDraft.assignments[name] = select.value;
+    else delete roomGroupsDraft.assignments[name];
+    row.classList.toggle('is-unassigned', !select.value);
+    updateRoomGroupsSummary();
+    $('monitor-room-groups-error').textContent = '';
+  });
+
+  row.append(label, select);
+  return row;
+}
+
+async function saveRoomGroups(event) {
+  event.preventDefault();
+  if (!roomGroupsDraft) return;
+  const saveButton = $('monitor-room-groups-save');
+  const errorRoot = $('monitor-room-groups-error');
+  errorRoot.textContent = '';
+  try {
+    const names = roomGroupsDraft.categories.map((category) => category.name.trim());
+    if (names.some((name) => !name)) throw new Error('分类名称不能为空');
+    const folded = names.map((name) => name.toLocaleLowerCase('zh-CN'));
+    if (new Set(folded).size !== folded.length) throw new Error('分类名称不能重复');
+    if (names.includes(roomGroupsDefaultCategory())) {
+      throw new Error(`「${roomGroupsDefaultCategory()}」是系统保留分类，不能手动创建`);
+    }
+
+    saveButton.disabled = true;
+    saveButton.textContent = '正在保存';
+    const status = await api('/api/monitor/room-groups', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(groupsFromDraft(roomGroupsDraft))
+    });
+
+    if (overview) overview.roomGroups = status;
+    window.roomGroups?.apply(status);
+    locationOptionsKey = '';
+    syncLocationOptions();
+    if (overview) window.roomBoard?.update(overview);
+    toast('分类设置已保存');
+    closeRoomGroups();
+    render();
+  } catch (error) {
+    errorRoot.textContent = error.payload?.message || error.message || '分类设置保存失败';
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = '保存分类';
   }
 }
 
@@ -1094,6 +1425,14 @@ $('monitor-notification-settings-reset').addEventListener('click', () => void re
 $('monitor-notification-enabled').addEventListener('change', syncNotificationSettingsControls);
 $('monitor-notification-audio-enabled').addEventListener('change', syncNotificationSettingsControls);
 $('monitor-notification-camera-enabled').addEventListener('change', syncNotificationSettingsControls);
+$('monitor-room-groups-button').addEventListener('click', openRoomGroups);
+$('monitor-room-groups-close').addEventListener('click', closeRoomGroups);
+$('monitor-room-groups-cancel').addEventListener('click', closeRoomGroups);
+$('monitor-room-groups-add').addEventListener('click', addRoomGroupsCategory);
+$('monitor-room-groups').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeRoomGroups();
+});
+$('monitor-room-groups-form').addEventListener('submit', (event) => void saveRoomGroups(event));
 $('monitor-confirm-cancel').addEventListener('click', closeConfirmation);
 $('monitor-confirm-accept').addEventListener('click', () => {
   const action = pendingConfirmedAction;
@@ -1106,8 +1445,11 @@ document.addEventListener('keydown', (event) => {
     else if (!$('monitor-access-management').classList.contains('hidden')) closeManagementPanel('monitor-access-management');
     else if (!$('monitor-update-management').classList.contains('hidden')) closeManagementPanel('monitor-update-management');
     else if (!$('monitor-notification-settings').classList.contains('hidden')) closeNotificationSettings();
+    else if (!$('monitor-room-groups').classList.contains('hidden')) closeRoomGroups();
     else closeDrawer();
   }
 });
 document.addEventListener('visibilitychange', scheduleRefresh);
 void refresh();
+
+$('monitor-location').addEventListener('change', () => { if (overview) renderRooms(overview.rooms); });

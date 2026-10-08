@@ -66,39 +66,6 @@ type WindowOutcome = { message: string; failed: boolean; retry: 'launch' | 'rest
 type BusyState = 'discover' | 'all' | 'layout' | 'projector' | PreflightAppId | null;
 
 export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, search, onChange, onTrialResult }) => {
-  const profileOperation = useRef(false);
-  const [profileName, setProfileName] = useState('');
-  const [profileId, setProfileId] = useState('');
-  const saveProfile = async () => {
-    if (profileOperation.current || busyRef.current !== null || !profileName.trim()) return;
-    const profiles = [...draft.preflightProfiles, { id: crypto.randomUUID(), name: profileName.trim(), settings: structuredClone(settings) }];
-    if (profiles.length > 20) { setNotice({ tone: 'warning', text: '最多保存 20 套方案，请先删除不需要的方案' }); return; }
-    profileOperation.current = true; setBusy('layout');
-    try { await window.obsGuard.saveConfig({ preflightProfiles: profiles }); onChange('preflightProfiles', profiles); setProfileName(''); setNotice({ tone: 'success', text: '已保存为新方案' }); }
-    catch { setNotice({ tone: 'error', text: '方案保存失败，请重试' }); }
-    finally { profileOperation.current = false; setBusy(null); }
-  };
-  const applyProfile = async () => {
-    if (profileOperation.current || busyRef.current !== null) return;
-    const profile = draft.preflightProfiles.find(p => p.id === profileId);
-    if (!profile) return;
-    profileOperation.current = true; setBusy('layout');
-    const patch = { preflightApps: profile.settings.apps, preflightProjector: profile.settings.projector, preflightWindowPlacements: profile.settings.windowPlacements };
-    try {
-      await window.obsGuard.saveConfig(patch);
-      onChange('preflightApps', patch.preflightApps); onChange('preflightProjector', patch.preflightProjector); onChange('preflightWindowPlacements', patch.preflightWindowPlacements);
-      setOutcomes({}); setNotice({ tone: 'success', text: `已切换到 ${profile.name}，点击一键开播准备即可使用` });
-    } catch { setNotice({ tone: 'error', text: '切换失败，请重试' }); }
-    finally { profileOperation.current = false; setBusy(null); }
-  };
-  const deleteProfile = async () => {
-    if (profileOperation.current || busyRef.current !== null) return;
-    profileOperation.current = true; setBusy('layout');
-    const profiles = draft.preflightProfiles.filter(p => p.id !== profileId);
-    try { await window.obsGuard.saveConfig({ preflightProfiles: profiles }); onChange('preflightProfiles', profiles); setProfileId(''); }
-    catch { setNotice({ tone: 'error', text: '删除方案失败，请重试' }); }
-    finally { profileOperation.current = false; setBusy(null); }
-  };
   const cancelledRef = useRef(false);
   const [outcomes, setOutcomes] = useState<Partial<Record<PreflightPlacementTarget, WindowOutcome>>>({});
   const targetName = (id: PreflightPlacementTarget) => id === 'obs_projector' ? 'OBS 输出投影' : appDisplayName(id, draft.preflightApps[id].customLabel);
@@ -262,7 +229,7 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
   };
 
   const launchAll = async () => {
-    if (profileOperation.current || busyRef.current !== null) return;
+    if (busyRef.current !== null) return;
     cancelledRef.current = false;
     setLaunchProgress({ startedAt: Date.now(), percent: 0, message: '正在检查启动路径与运行状态', steps: ['正在检查启动路径与运行状态'], finished: false, failed: false });
     setBusy('all');
@@ -462,26 +429,6 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
           </button>
         </div>
       </header>
-
-      <details className="preflight-notice">
-        <summary>开播方案 · 保存和切换工作台</summary>
-        <div className="preflight-header-actions" style={{ flexWrap: 'wrap', marginTop: 12 }}>
-          <input aria-label="新方案名称" placeholder="例如：日常直播、双屏直播" maxLength={40} value={profileName} onChange={e => setProfileName(e.target.value)} />
-          <button className="btn-secondary" disabled={busy !== null || !profileName.trim()} onClick={() => void saveProfile()}>保存当前为新方案</button>
-          <select aria-label="已保存的方案" value={profileId} onChange={e => setProfileId(e.target.value)}><option value="">选择方案</option>{draft.preflightProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-          <button className="btn-primary" disabled={busy !== null || !profileId} onClick={() => void applyProfile()}>使用方案</button>
-          <button className="btn-secondary" disabled={busy !== null || !profileId} onClick={() => void deleteProfile()}>删除方案</button>
-        </div>
-        <p>方案保存软件、网页、投影选项和窗口位置；修改后可另存新方案。</p>
-      </details>
-      <details className="preflight-notice">
-        <summary>首次设置：3 步完成开播准备</summary>
-        <ol>
-          <li>选择参与准备的软件，点击“自动发现”；未找到的程序可直接拖入快捷方式。</li>
-          <li>需要投影时先确认 OBS 已连接，点击“打开或重试投影”。摆好窗口后，勾选需要固定位置的项目并保存布局。</li>
-          <li>点击“一键开播准备”试运行。只会启动软件和恢复布局，不会自动推流；出现问题时按提示处理对应项目。</li>
-        </ol>
-      </details>
 
       <section className={`preflight-summary ${ready ? 'ready' : ''}`}>
         <div className="preflight-summary-icon">{ready ? <Check size={26} /> : <CircleAlert size={26} />}</div>

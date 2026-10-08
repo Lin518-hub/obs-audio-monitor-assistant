@@ -76,6 +76,104 @@ const REMOTE_ADMIN_COMMAND_LABELS = {
   rename_device: '修改直播间名称'
 };
 const COMMAND_TIMEOUT_MS = 20_000;
+
+// ---------------------------------------------------------------------------
+// 直播间分类（场地）
+// 分类与房间归属由监控中心维护，持久化在 remote-state.json，看板与监控列表共用。
+// “未分类”是系统保留的兜底分类，不进入 categories，由前端对未分配房间自动套用。
+// 注意：本段必须在 `let data = await loadData()` 之前求值——loadData() 会用到
+// 下面的清洗函数，而全局 cleanText 定义在文件更靠后的位置。
+// ---------------------------------------------------------------------------
+const DEFAULT_ROOM_CATEGORY = '未分类';
+const MAX_ROOM_CATEGORY_NAME = 24;
+const MAX_ROOM_CATEGORIES = 24;
+const MAX_ROOM_ASSIGNMENTS = 500;
+const LEGACY_ROOM_CATEGORY = '杭海路直播间';
+const LEGACY_ROOM_CATEGORY_ROOMS = [
+  '鸿蒙智行官方直播间',
+  '华为全屋智能',
+  '天猫小时达官方直播间',
+  '我的华为'
+];
+const cleanGroupText = (value, max) => String(value ?? '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, max);
+const roomCategoryKey = (value) => cleanGroupText(value, MAX_ROOM_CATEGORY_NAME).toLocaleLowerCase('zh-CN');
+
+/** 首次部署该功能时的初始分类：等价于改造前 room-groups.js 里硬编码的映射。 */
+function defaultRoomGroups() {
+  return {
+    categories: [LEGACY_ROOM_CATEGORY],
+    assignments: Object.fromEntries(LEGACY_ROOM_CATEGORY_ROOMS.map((room) => [room, LEGACY_ROOM_CATEGORY]))
+  };
+}
+
+/** 宽松归一：丢弃非法项而不报错，用于读取已有状态文件。 */
+function normalizeRoomGroups(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const categories = [];
+  const seenCategories = new Set();
+  for (const raw of Array.isArray(source.categories) ? source.categories : []) {
+    const name = cleanGroupText(raw, MAX_ROOM_CATEGORY_NAME);
+    if (!name || name === DEFAULT_ROOM_CATEGORY) continue;
+    const key = roomCategoryKey(name);
+    if (seenCategories.has(key)) continue;
+    seenCategories.add(key);
+    categories.push(name);
+  }
+  const allowed = new Set(categories);
+  const assignments = {};
+  let count = 0;
+  for (const [rawRoom, rawCategory] of Object.entries(source.assignments && typeof source.assignments === 'object' ? source.assignments : {})) {
+    if (count >= MAX_ROOM_ASSIGNMENTS) break;
+    const room = cleanGroupText(rawRoom, 60);
+    const category = cleanGroupText(rawCategory, MAX_ROOM_CATEGORY_NAME);
+    if (!room || !allowed.has(category)) continue;
+    assignments[room] = category;
+    count += 1;
+  }
+  return { categories, assignments };
+}
+
+/** 严格校验：设置面板提交时使用，非法输入抛出可读的 RangeError。 */
+function parseRoomGroups(body) {
+  const source = body && typeof body === 'object' ? body : {};
+  const rawCategories = Array.isArray(source.categories) ? source.categories : [];
+  if (rawCategories.length > MAX_ROOM_CATEGORIES) {
+    throw new RangeError(`分类最多 ${MAX_ROOM_CATEGORIES} 个`);
+  }
+  const categories = [];
+  const seen = new Set();
+  for (const raw of rawCategories) {
+    const name = cleanGroupText(raw, MAX_ROOM_CATEGORY_NAME);
+    if (!name) throw new RangeError('分类名称不能为空');
+    if (name === DEFAULT_ROOM_CATEGORY) {
+      throw new RangeError(`“${DEFAULT_ROOM_CATEGORY}”是系统保留分类，不能手动创建`);
+    }
+    const key = roomCategoryKey(name);
+    if (seen.has(key)) throw new RangeError(`分类名称“${name}”重复`);
+    seen.add(key);
+    categories.push(name);
+  }
+  const rawAssignments = source.assignments && typeof source.assignments === 'object' && !Array.isArray(source.assignments)
+    ? source.assignments
+    : {};
+  const entries = Object.entries(rawAssignments);
+  if (entries.length > MAX_ROOM_ASSIGNMENTS) {
+    throw new RangeError(`分配数量不能超过 ${MAX_ROOM_ASSIGNMENTS} 条`);
+  }
+  const allowed = new Set(categories);
+  const assignments = {};
+  for (const [rawRoom, rawCategory] of entries) {
+    const room = cleanGroupText(rawRoom, 60);
+    if (!room) continue;
+    const category = cleanGroupText(rawCategory, MAX_ROOM_CATEGORY_NAME);
+    if (!allowed.has(category)) {
+      throw new RangeError(`直播间“${room}”指定的分类不存在`);
+    }
+    assignments[room] = category;
+  }
+  return { categories, assignments };
+}
+
 const emptyData = () => ({
   schemaVersion: MONITORING_IDENTITY_REVISION,
   devices: [],
@@ -83,7 +181,9 @@ const emptyData = () => ({
   approvals: [],
   commands: [],
   notificationSettings: { ...DEFAULT_WECOM_NOTIFICATION_SETTINGS },
-  notificationSettingsUpdatedAt: null
+  notificationSettingsUpdatedAt: null,
+  roomGroups: defaultRoomGroups(),
+  roomGroupsUpdatedAt: null
 });
 let data = await loadData();
 weComNotifier.updateSettings(data.notificationSettings);
@@ -91,6 +191,19 @@ const desktopSockets = new Map();
 const mobileSockets = new Map();
 const pendingAdminCommands = new Map();
 const adminSessions = new Map();
+const monitorStreams = new Map();
+const pendingMonitorMeters = new Map();
+const monitorMeterTimer = setInterval(() => {
+  if (!pendingMonitorMeters.size) return;
+  const payload = `event: meters\ndata: ${JSON.stringify([...pendingMonitorMeters.values()])}\n\n`;
+  pendingMonitorMeters.clear();
+  for (const [res, session] of monitorStreams) {
+    if (session.expiresAt < now()) { res.end(); monitorStreams.delete(res); continue; }
+    // A slow viewer drops intermediate frames instead of growing a send queue.
+    if (!res.destroyed && res.writableLength < 16 * 1024) res.write(payload);
+  }
+}, 80);
+monitorMeterTimer.unref();
 const loginAttempts = new Map();
 const requestLimits = new Map();
 let saveQueue = Promise.resolve();
@@ -126,7 +239,19 @@ async function loadData() {
       notificationSettings: normalizeWeComNotificationSettings(parsed.notificationSettings),
       notificationSettingsUpdatedAt: Number.isFinite(Number(parsed.notificationSettingsUpdatedAt))
         ? Number(parsed.notificationSettingsUpdatedAt)
-        : null
+        : null,
+      // 老状态文件里没有 roomGroups：用改造前硬编码的四个房间做一次性种子，
+      // 保证升级后看板分类与升级前完全一致。
+      roomGroups: parsed.roomGroups && typeof parsed.roomGroups === 'object'
+        ? normalizeRoomGroups(parsed.roomGroups)
+        : defaultRoomGroups(),
+      // 注意 Number(null) === 0 且能通过 Number.isFinite：必须先排除 null/undefined，
+      // 否则「从未保存过」写盘为 null 后，第二次启动会被读成 0（数值化陷阱）。
+      roomGroupsUpdatedAt: parsed.roomGroupsUpdatedAt === null || parsed.roomGroupsUpdatedAt === undefined
+        ? null
+        : Number.isFinite(Number(parsed.roomGroupsUpdatedAt))
+          ? Number(parsed.roomGroupsUpdatedAt)
+          : null
     };
   } catch {
     return emptyData();
@@ -572,8 +697,32 @@ function monitorOverview() {
       available: Object.entries(REMOTE_ADMIN_COMMAND_LABELS).map(([id, label]) => ({ id, label })),
       recent: data.commands.slice(-50).reverse().map(publicCommand)
     },
-    rooms
+    rooms,
+    roomGroups: roomGroupsStatus()
   };
+}
+
+function roomGroupsStatus() {
+  return {
+    categories: data.roomGroups.categories,
+    assignments: data.roomGroups.assignments,
+    updatedAt: data.roomGroupsUpdatedAt
+  };
+}
+
+async function persistRoomGroups(next) {
+  const previousGroups = data.roomGroups;
+  const previousUpdatedAt = data.roomGroupsUpdatedAt;
+  data.roomGroups = normalizeRoomGroups(next);
+  data.roomGroupsUpdatedAt = now();
+  try {
+    await saveData();
+  } catch (error) {
+    data.roomGroups = previousGroups;
+    data.roomGroupsUpdatedAt = previousUpdatedAt;
+    throw error;
+  }
+  return roomGroupsStatus();
 }
 
 function notificationStatus() {
@@ -757,6 +906,24 @@ function notifyAdmins() {
   // Admin UI polls; this hook keeps future websocket support localized.
 }
 
+function streamFile(res, file, statusCode, headers, options) {
+  const stream = createReadStream(file, options);
+  const stop = () => stream.destroy();
+  res.once('close', stop);
+  stream.once('close', () => res.off('close', stop));
+  stream.once('error', () => {
+    if (res.destroyed) return;
+    if (res.headersSent) res.destroy();
+    else json(res, 500, { error: 'file_read_failed' });
+  });
+  // Do not commit success headers until the file has opened successfully.
+  stream.once('open', () => {
+    if (res.destroyed) return stream.destroy();
+    res.writeHead(statusCode, headers);
+    stream.pipe(res);
+  });
+}
+
 async function serveFile(req, res, file, cache = false) {
   try {
     const info = await stat(file);
@@ -777,13 +944,13 @@ async function serveFile(req, res, file, cache = false) {
         res.writeHead(416, { ...headers, 'Content-Range': `bytes */${info.size}` });
         return res.end();
       }
-      res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${info.size}`, 'Content-Length': end - start + 1 });
-      if (req.method === 'HEAD') return res.end();
-      return createReadStream(file, { start, end }).pipe(res);
+      const rangeHeaders = { ...headers, 'Content-Range': `bytes ${start}-${end}/${info.size}`, 'Content-Length': end - start + 1 };
+      if (req.method === 'HEAD') { res.writeHead(206, rangeHeaders); return res.end(); }
+      return streamFile(res, file, 206, rangeHeaders, { start, end });
     }
-    res.writeHead(200, { ...headers, 'Content-Length': info.size });
-    if (req.method === 'HEAD') return res.end();
-    createReadStream(file).pipe(res);
+    const fullHeaders = { ...headers, 'Content-Length': info.size };
+    if (req.method === 'HEAD') { res.writeHead(200, fullHeaders); return res.end(); }
+    streamFile(res, file, 200, fullHeaders);
   } catch {
     json(res, 404, { error: 'not_found' });
   }
@@ -1052,6 +1219,20 @@ async function handleApi(req, res, url) {
 
   if (url.pathname.startsWith('/api/monitor/')) {
     if (!adminSession(req)) return json(res, 401, { error: 'admin_auth_required' });
+    if (req.method === 'GET' && url.pathname === '/api/monitor/live') {
+      const session = adminSession(req);
+      if (monitorStreams.size >= 32) return json(res, 503, { error: 'monitor_stream_limit' });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive' });
+      res.write('retry: 2000\n: connected\n\n');
+      monitorStreams.set(res, session);
+      const keepalive = setInterval(() => {
+        if (session.expiresAt < now() || res.writableLength > 64 * 1024) return res.end();
+        res.write(': heartbeat\n\n');
+      }, 15_000);
+      keepalive.unref();
+      res.on('close', () => { clearInterval(keepalive); monitorStreams.delete(res); });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/monitor/overview') {
       return json(res, 200, cachedMonitorOverview());
     }
@@ -1077,6 +1258,22 @@ async function handleApi(req, res, url) {
         return json(res, 429, { error: 'too_many_requests', message: '恢复默认操作过于频繁，请稍后再试' });
       }
       return json(res, 200, await persistNotificationSettings(DEFAULT_WECOM_NOTIFICATION_SETTINGS));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/monitor/room-groups') {
+      return json(res, 200, roomGroupsStatus());
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/monitor/room-groups') {
+      if (!allowRequest(req, 'monitor-room-groups', 30, 60_000)) {
+        return json(res, 429, { error: 'too_many_requests', message: '分类设置修改过于频繁，请稍后再试' });
+      }
+      try {
+        return json(res, 200, await persistRoomGroups(parseRoomGroups(await readJson(req, 64 * 1024))));
+      } catch (error) {
+        if (error instanceof RangeError) {
+          return json(res, 400, { error: 'invalid_room_groups', message: error.message });
+        }
+        throw error;
+      }
     }
     const renameMatch = url.pathname.match(/^\/api\/monitor\/devices\/([^/]+)\/name$/);
     if (req.method === 'PATCH' && renameMatch) {
@@ -1113,6 +1310,12 @@ async function handleApi(req, res, url) {
           completedAt: now(),
           message: `${previousRoomName} → ${roomName}`
         });
+        // 直播间改名后让分类分配跟着走，避免监控中心留下指向旧名字的孤儿分配。
+        const carriedCategory = data.roomGroups.assignments[previousRoomName];
+        if (carriedCategory && !data.roomGroups.assignments[roomName]) {
+          data.roomGroups.assignments[roomName] = carriedCategory;
+          delete data.roomGroups.assignments[previousRoomName];
+        }
         await saveData();
       }
 
@@ -1389,11 +1592,13 @@ wss.on('connection', (socket, req, url) => {
         } else if (message.type === 'latency-ping' && Number.isFinite(Number(message.sentAt))) {
           socket.send(JSON.stringify({ type: 'latency-pong', sentAt: Number(message.sentAt) }));
         } else if (message.type === 'meter' && message.meter && typeof message.meter === 'object') {
-          if (device.mobileAccessEnabled !== true) return;
+          if (desktopSockets.get(uuid) !== socket) return;
           const rawLevelDb = message.meter.levelDb;
           const levelDb = typeof rawLevelDb === 'number' && Number.isFinite(rawLevelDb)
             ? Math.max(-100, Math.min(12, rawLevelDb))
             : null;
+          if (monitorStreams.size) pendingMonitorMeters.set(uuid, { uuid, levelDb, inputName: cleanText(message.meter.activeInputName, 100) });
+          if (device.mobileAccessEnabled !== true) return;
           broadcastMobile(uuid, {
             type: 'meter',
             meter: {
@@ -1415,7 +1620,7 @@ wss.on('connection', (socket, req, url) => {
       } catch { /* ignore malformed desktop message */ }
     });
     socket.on('close', () => {
-      if (desktopSockets.get(uuid) === socket) desktopSockets.delete(uuid);
+      if (desktopSockets.get(uuid) === socket) { desktopSockets.delete(uuid); pendingMonitorMeters.delete(uuid); }
       markMonitorChanged();
       failPendingCommandsForDevice(uuid, '电脑连接已断开');
       broadcastMobile(uuid, { type: 'device-status', online: false });

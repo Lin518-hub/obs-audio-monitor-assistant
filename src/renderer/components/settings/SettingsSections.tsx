@@ -913,9 +913,9 @@ export const RemoteAccessSection: React.FC<{
       />
       <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
     </div>
-    <div className="remote-route-card">
-      <strong role="status">{snapshot.remoteAccessConnected ? '监控服务器已连接' : connecting ? '正在连接监控服务器…' : '监控服务器未连接'}</strong>
-      <p className="settings-field-help">{snapshot.remoteAccessActiveServerUrl || snapshot.config.remoteServerUrl}</p>
+    <div className="monitor-server-card">
+      <div className="monitor-server-heading"><strong role="status">{snapshot.remoteAccessConnected ? '监控服务器已连接' : connecting ? '正在连接监控服务器…' : '监控服务器未连接'}</strong></div>
+      <p className="monitor-server-address">{snapshot.remoteAccessActiveServerUrl || snapshot.config.remoteServerUrl}</p>
       <p className="settings-field-help">最后同步：{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleString() : '尚未同步'}</p>
       {(error || snapshot.remoteAccessErrorMessage) && <p role="alert">{error || snapshot.remoteAccessErrorMessage}</p>}
       <button type="button" className="btn-secondary" disabled={connecting || !snapshot.config.livestreamRoomName.trim()} onClick={() => void reconnect()}>
