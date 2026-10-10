@@ -2,59 +2,6 @@
  * tokens.css — 浅黄色毛玻璃主题与语义色
  * ============================================================================= */
 
-@font-face {
-  font-family: 'HarmonyOS Sans';
-  src: url('../../../build/fonts/HarmonyOS_Sans_Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans';
-  src: url('../../../build/fonts/HarmonyOS_Sans_Medium.ttf') format('truetype');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans';
-  src: url('../../../build/fonts/HarmonyOS_Sans_Light.ttf') format('truetype');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans';
-  src: url('../../../build/fonts/HarmonyOS_Sans_Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans SC';
-  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans SC';
-  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Medium.ttf') format('truetype');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
-}
-@font-face {
-  font-family: 'HarmonyOS Sans SC';
-  src: url('../../../build/fonts/HarmonyOS_Sans_SC_Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+4E00-9FFF, U+3400-4DBF, U+3000-303F, U+FF00-FFEF;
-}
-
 :root {
   /* ============ 浅黄色品牌主题 ============ */
 

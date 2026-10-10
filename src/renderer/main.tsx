@@ -42,7 +42,6 @@ import { StyledSelect } from './components/StyledSelect';
 import { PreflightCheckPage } from './components/PreflightCheckPage';
 
 import { useSnapshot } from './hooks/useSnapshot';
-import { useUpdateState } from './hooks/useUpdateState';
 import { useAutoSave } from './hooks/useAutoSave';
 import { formatDb, shouldShowOnboarding, shouldShowReleaseNotes } from './utils/status';
 import { APP_VERSION } from './utils/appVersion';
@@ -129,60 +128,11 @@ root.render(
   </RendererErrorBoundary>
 );
 
-function RoomNameSetup({ onSave }: { onSave: (roomName: string) => Promise<unknown> }) {
-  const [roomName, setRoomName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const normalized = roomName.trim().replace(/[\u0000-\u001f]/g, '').slice(0, 60);
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (normalized.length < 2 || saving) return;
-    setError('');
-    setSaving(true);
-    try {
-      await onSave(normalized);
-    } catch { setError('保存失败，请检查磁盘是否可写后重试。'); } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <main className="room-name-setup">
-      <form className="room-name-card" onSubmit={(event) => void submit(event)}>
-        <div className="room-name-icon"><Mic2 size={32} /></div>
-        <div className="room-name-copy">
-          <span>直播工作站识别</span>
-          <h1>这台电脑属于哪个直播间？</h1>
-          <p>每个直播间对应一台检测电脑。填写后，软件会自动连接监控中心并汇总音频、机位、报警和版本状态。</p>
-        </div>
-        <label className="room-name-field">
-          <span>直播间名称</span>
-          <input
-            autoFocus
-            value={roomName}
-            maxLength={60}
-            onChange={(event) => setRoomName(event.target.value)}
-            placeholder="例如：品牌 A 一号直播间"
-            autoComplete="organization"
-          />
-        </label>
-        <button type="submit" className="btn-primary" disabled={normalized.length < 2 || saving}>
-          {saving ? '正在保存…' : '确认并继续'} <ArrowRight size={17} />
-        </button>
-        {error && <p role="alert">{error}</p>}
-        <small>请输入 2～60 个字符。以后可以在“设置 → 连接与设备 → 监控中心”中修改。</small>
-      </form>
-    </main>
-  );
-}
-
 // =============================================================================
 // SettingsApp — 3 栏主界面(左导航 / 中信息 / 右详情)
 // =============================================================================
 function SettingsApp() {
   const snapshot = useSnapshot();
-  const updateState = useUpdateState();
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [page, setPage] = useState<SidebarPage>(initialSettingsPage === 'preflight' ? 'preflight' : 'dashboard');
   const [search, setSearch] = useState('');
@@ -270,7 +220,6 @@ function SettingsApp() {
     }
   }, [draft]);
 
-  const checkForUpdates = useCallback(async () => { await window.obsGuard.checkForUpdates(); }, []);
   const completeOnboarding = useCallback(async (ready: boolean) => {
     if (!draft) throw new Error('配置尚未加载');
     await flushSave({
@@ -305,9 +254,6 @@ function SettingsApp() {
     return <div className="boot-screen">正在启动 OBS 音频检测助手…</div>;
   }
 
-  if (!draft.livestreamRoomName.trim()) {
-    return <RoomNameSetup onSave={(roomName) => flushSave({ livestreamRoomName: roomName })} />;
-  }
 
   // Only a first install or factory reset opens the setup wizard.
   if (shouldShowOnboarding(snapshot.config, APP_VERSION)) {
@@ -332,7 +278,6 @@ function SettingsApp() {
 
   const liveModeLabel = snapshot.simulatedLive ? '模拟开播' : snapshot.virtualCameraActive ? '虚拟摄像头' : snapshot.streaming ? '直播中' : snapshot.recording ? '录制中' : '未开播';
   const pageTitle = page === 'dashboard' ? liveModeLabel : page === 'atem' ? 'ATEM 导播台' : page === 'monitor' ? '监控面板 Beta' : '报警历史';
-  const hasUpdateNotice = updateState ? ['available', 'downloaded', 'error'].includes(updateState.status) : false;
 
   // 主中栏内容(根据 page 切换)
   const mainContent = (
@@ -367,22 +312,7 @@ function SettingsApp() {
         </>
       )}
 
-      {page === 'monitor' && (
-        <>
-          <div className="page-header">
-            <div className="page-header-title">
-              <h1>
-                <span>监控面板</span>
-                <span className="page-title-badge">BETA</span>
-              </h1>
-              <p className="page-header-subtitle">
-                OBS 性能、全部音频输入、电平历史与静音事件
-              </p>
-            </div>
-          </div>
-          <MonitoringDashboard snapshot={snapshot} search={search} />
-        </>
-      )}
+
 
       {page === 'safety' && <ProjectorSafetyPage config={draft.projectorSafety} onChange={value=>updateDraft('projectorSafety',value)} onOpenSettings={()=>openSettings('safety')}/>}
 
@@ -440,10 +370,8 @@ function SettingsApp() {
           searchPlaceholder={page === 'history' ? '搜索报警记录…' : page === 'atem' ? '搜索 ATEM 机位…' : page === 'preflight' ? '搜索开播项目…' : '搜索音源、历史记录…'}
           onSearchChange={setSearch}
           saveLabel={saveLabel}
-          onNotifications={() => openSettings('updates')}
-          hasUpdateNotice={hasUpdateNotice}
         />
-        {draft.setupChecklistPending && <div className="preflight-notice" data-tone="warning"><strong>首次配置尚未验证完成。</strong> 检测与开播准备是否可用，需要完成音源、报警和工作台验证。<button type="button" className="btn-secondary" onClick={() => void flushSave({ hasSeenGuide: false }).catch(() => window.alert('保存失败，请重试'))}>继续配置</button></div>}
+        {draft.setupChecklistPending && !draft.setupNoticeDismissed && <div className="preflight-notice" data-tone="warning"><strong>首次配置尚未验证完成。</strong> 检测与开播准备是否可用，需要完成音源、报警和工作台验证。<button type="button" className="btn-secondary" onClick={() => void flushSave({ hasSeenGuide: false }).catch(() => window.alert('保存失败，请重试'))}>继续配置</button><button type="button" className="btn-secondary" aria-label="关闭首次配置提示" onClick={() => void flushSave({ setupNoticeDismissed: true }).catch(() => window.alert('保存失败，请重试'))}>关闭</button></div>}
         <div className="page-transition" key={page}>{mainContent}</div>
       </section>
       <SettingsPanel
@@ -452,10 +380,6 @@ function SettingsApp() {
         snapshot={snapshot}
         draft={draft}
         onChangeDraft={updateDraft}
-        updateState={updateState}
-        onCheckUpdate={() => void checkForUpdates()}
-        onDownloadUpdate={() => void window.obsGuard.downloadUpdate()}
-        onInstallUpdate={() => void window.obsGuard.installUpdate()}
         testingConnection={testingConnection}
         testResult={testResult}
         onTestConnection={() => void testConnection()}
@@ -818,7 +742,6 @@ const SHORTCUT_CARDS: { id: string; title: string; desc: string; icon: React.Com
   { id: 'source', title: '目标音源', desc: '选择需要守护的音频源', icon: Mic2 },
   { id: 'rules', title: '报警规则', desc: '静音时长与阈值', icon: Timer },
   { id: 'diagnostics', title: '诊断测试', desc: '本地调试工具', icon: TestTube2 },
-  { id: 'updates', title: '软件更新', desc: '检查 GitHub 新版本', icon: Download },
   { id: 'about', title: '关于', desc: `当前 v${APP_VERSION}`, icon: Info }
 ];
 

@@ -1,9 +1,9 @@
 {
-  "name": "obs-audio-monitor-assistant",
-  "version": "3.9.16",
-  "description": "OBS audio monitor assistant for livestream operators, focused on silent microphone alerts during live commerce and production workflows.",
+  "name": "obs-audio-monitor-offline",
+  "version": "1.0.0",
+  "description": "Standalone offline OBS audio monitor; local OBS and LAN ATEM only.",
   "author": "OBS 音频检测助手",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "main": "dist/main/main/main.js",
   "type": "module",
@@ -22,9 +22,7 @@
   },
   "dependencies": {
     "atem-connection": "^3.9.0",
-    "electron-updater": "^6.8.9",
     "obs-websocket-js": "^5.0.8",
-    "proxy-agent": "^6.5.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -47,30 +45,25 @@
     "wait-on": "^8.0.3"
   },
   "build": {
-    "appId": "com.obsaudioassistant.app",
-    "productName": "OBS 音频检测助手",
+    "appId": "com.obsaudioassistant.offline",
+    "productName": "OBS 音频检测助手 离线版",
     "directories": {
       "output": "release"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "Lin518-hub",
-        "repo": "obs-audio-monitor-assistant"
-      }
-    ],
     "files": [
       "dist/**/*",
       "build/icon.*",
       "build/tray-*.png",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "README.md"
     ],
     "win": {
       "target": [
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "OBS-Audio-Monitor-Assistant-Setup-${version}-${arch}.${ext}"
+      "artifactName": "OBS-Audio-Monitor-Offline-${version}-${arch}.${ext}"
     },
     "mac": {
       "target": [
@@ -79,10 +72,10 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "OBS-Audio-Monitor-Assistant-${version}-${arch}.${ext}"
+      "artifactName": "OBS-Audio-Monitor-Offline-${version}-${arch}.${ext}"
     },
     "nsis": {
-      "guid": "com.obsaudioassistant.app",
+      "guid": "com.obsaudioassistant.offline",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -91,7 +84,7 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "OBS 音频检测助手",
+      "shortcutName": "OBS 音频检测助手 离线版",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerSidebar": "build/installer-sidebar.bmp",

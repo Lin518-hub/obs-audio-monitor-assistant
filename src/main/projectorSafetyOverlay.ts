@@ -14,6 +14,8 @@ export class ProjectorSafetyOverlay {
   private stableSince = 0;
   private lastFrame = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryDelay = 1000;
   private previewWindow: BrowserWindow | null = null;
   private status: ProjectorSafetyStatus = {message: '未开启', visible: false, selectedHandle: '', targets: []};
   getStatus() { return this.status; }
@@ -25,7 +27,7 @@ export class ProjectorSafetyOverlay {
     if (!next.enabled) { this.stop(); return; }
     if (process.platform !== 'win32') { this.status.message = '自动跟随目前支持 Windows；本机可预览安全区并保存设置'; return; }
     if (changed && this.window) { this.window.destroy(); this.window = null; this.ready = false; }
-    if (!this.worker) this.start();
+    if (!this.worker && !this.retryTimer) this.start();
   }
   preview(config: ProjectorSafetyConfig) {
     this.previewWindow?.destroy();
@@ -38,6 +40,7 @@ export class ProjectorSafetyOverlay {
     void this.previewWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).catch(() => {});
   }
   stop() {
+    if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = null; this.retryDelay = 1000;
     const worker = this.worker; this.worker = null; worker?.kill();
     if (this.watchdog) clearInterval(this.watchdog); this.watchdog = null;
     this.window?.destroy(); this.window = null; this.ready = false; this.signature = '';
@@ -52,26 +55,37 @@ export class ProjectorSafetyOverlay {
     this.status.message = '正在识别 OBS 投影窗口…'; this.lastFrame = Date.now();
     const worker = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(PROJECTOR_TRACKER_SCRIPT, 'utf16le').toString('base64')], {windowsHide: true});
     this.worker = worker;
-    worker.stderr.on('data', () => { if (this.worker === worker) this.hide('窗口识别失败，请关闭后重新开启安全区'); });
+    worker.stderr.on('data', () => { if (this.worker === worker) this.hide('窗口识别暂不可用，正在自动恢复…'); });
     const lines = createInterface({input: worker.stdout});
     lines.on('line', line => {
       if (this.worker !== worker) return;
       try {
         const frame = JSON.parse(line);
         if (!Array.isArray(frame.targets)) return;
-        this.lastFrame = Date.now();
+        this.lastFrame = Date.now(); this.retryDelay = 1000;
         this.track(frame.targets.filter((t: Target) => typeof t.handle === 'string' && typeof t.title === 'string' && [t.x,t.y,t.width,t.height].every(Number.isFinite) && t.width > 0 && t.height > 0));
       } catch { this.hide('窗口状态暂不可用'); }
     });
-    const failed = () => { if (this.worker !== worker) return; this.worker = null; lines.close(); if (this.watchdog) clearInterval(this.watchdog); this.watchdog = null; this.hide('窗口跟随已中断，请关闭后重新开启安全区'); };
+    const failed = () => {
+      if (this.worker !== worker) return;
+      this.worker = null; lines.close(); worker.kill();
+      if (this.watchdog) clearInterval(this.watchdog); this.watchdog = null;
+      this.signature = ''; this.hide('窗口跟随暂时中断，正在自动恢复…');
+      if (!this.config.enabled) return;
+      const delay = this.retryDelay; this.retryDelay = Math.min(30000, delay * 2);
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (this.config.enabled && !this.worker) this.start();
+      }, delay);
+    };
     worker.on('error', failed); worker.on('exit', failed);
-    this.watchdog = setInterval(() => { if (Date.now() - this.lastFrame > 1500) this.hide('正在等待投影窗口响应…'); }, 500);
+    this.watchdog = setInterval(() => { if (Date.now() - this.lastFrame > 1500) this.hide('正在等待投影窗口响应…'); if (Date.now() - this.lastFrame > 15000) failed(); }, 500);
   }
   private track(targets: Target[]) {
     this.status.targets = targets.map(({handle,title}) => ({handle,title}));
     const preferred = targets.find(t => t.handle === this.selected);
     const matches = this.config.targetTitle ? targets.filter(t => t.title === this.config.targetTitle) : targets;
-    const target = preferred ?? (matches.length === 1 ? matches[0] : undefined);
+    const target = preferred ?? (matches.length === 1 ? matches[0] : targets.length === 1 ? targets[0] : undefined);
     this.status.selectedHandle = target?.handle ?? '';
     if (!target) { this.signature = ''; this.hide(targets.length ? '请选择目标投影窗口（原目标未找到或存在多个投影）' : '等待 OBS 投影窗口打开'); return; }
     const signature = [target.handle,target.x,target.y,target.width,target.height].join(':');

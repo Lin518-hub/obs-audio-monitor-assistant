@@ -20,6 +20,36 @@ async function frame(targets:any[]){state.worker.stdout.write(JSON.stringify({ta
 beforeEach(()=>{Object.defineProperty(process,'platform',{value:'win32'});vi.spyOn(Date,'now').mockImplementation(()=>now);now=1000;state.windows=[];overlay=new ProjectorSafetyOverlay();overlay.configure({...defaults,enabled:true});});
 afterEach(()=>{overlay.destroy();vi.restoreAllMocks();Object.defineProperty(process,'platform',platform);});
 describe('projector safety lifecycle',()=>{
+ it('restores enabled state while waiting for a late projector and reacquires a changed title',async()=>{
+  overlay.configure({...defaults,enabled:true,targetTitle:'Old projector title'});
+  await frame([]);expect(overlay.getStatus().visible).toBe(false);
+  await frame([target]);now+=300;await frame([target]);await frame([target]);
+  expect(overlay.getStatus().visible).toBe(true);
+  await frame([]);
+  const reopened={...target,handle:'99',title:'Windowed Projector (Output)'};
+  await frame([reopened]);now+=300;await frame([reopened]);await frame([reopened]);
+  expect(overlay.getStatus().selectedHandle).toBe('99');
+  expect(overlay.getStatus().visible).toBe(true);
+ });
+ it('automatically restarts a failed worker but cancels recovery when manually disabled',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval']});
+  try {
+   const old=state.worker;old.emit('exit',1);
+   await vi.advanceTimersByTimeAsync(1000);
+   expect(state.worker).not.toBe(old);
+   const replacement=state.worker;replacement.emit('exit',1);
+   overlay.configure({...defaults,enabled:false});
+   await vi.advanceTimersByTimeAsync(31000);
+   expect(state.worker).toBe(replacement);
+   expect(overlay.getStatus().message).toBe('未开启');
+  } finally {vi.useRealTimers();}
+ });
+ it('does not start tracking after restoring a disabled configuration',()=>{
+  overlay.destroy();
+  const previous=state.worker;
+  overlay=new ProjectorSafetyOverlay();overlay.configure({...defaults,enabled:false});
+  expect(state.worker).toBe(previous);expect(overlay.getStatus().visible).toBe(false);
+ });
  it('waits for stability, hides during native resizing, then realigns',async()=>{
   await frame([target]);expect(state.windows).toHaveLength(0);
   now+=300;await frame([target]);await frame([target]);expect(overlay.getStatus().visible).toBe(true);

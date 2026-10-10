@@ -17,8 +17,8 @@ export type AlertSource = 'audio' | 'atem_camera';
 export type FloatingWindowMode = 'audio' | 'audio_atem' | 'multifunction';
 export type RemoteAccessConnectionState = 'disabled' | 'connecting' | 'connected' | 'error';
 export type RemoteRouteType = 'lan' | 'public' | 'custom' | null;
-export const LAN_REMOTE_SERVER_URL = 'http://192.168.110.111:8088';
-export const PUBLIC_REMOTE_SERVER_URL = 'https://obs.huaweilive.top:8088';
+export const LAN_REMOTE_SERVER_URL = '';
+export const PUBLIC_REMOTE_SERVER_URL = '';
 
 export interface RuntimeErrorSummary {
   code: string;
@@ -129,6 +129,7 @@ export interface InputMonitorSnapshot {
 }
 
 export interface AudioMeterFrame {
+  inputs?: { inputName: string; levelDb: number | null; timestamp: number }[];
   timestamp: number;
   activeInputName: string;
   levelDb: number | null;
@@ -369,6 +370,7 @@ export interface AppConfig {
   paused: boolean;
   themeColor: 'green' | 'yellow';
   setupChecklistPending: boolean;
+  setupNoticeDismissed: boolean;
   hasSeenGuide: boolean;
   guideSeenVersion: string;
   releaseNotesSeenVersion: string;
@@ -540,6 +542,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   paused: false,
   themeColor: 'green',
   setupChecklistPending: true,
+  setupNoticeDismissed: false,
   hasSeenGuide: false,
   guideSeenVersion: '',
   releaseNotesSeenVersion: '',
@@ -558,9 +561,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     atem: false,
     obsStats: false
   },
-  centralMonitoringEnabled: true,
+  centralMonitoringEnabled: false,
   remoteAccessEnabled: false,
-  remoteServerUrl: 'https://obs.huaweilive.top:8088',
+  remoteServerUrl: '',
   livestreamRoomName: '',
   livestreamRoomNameRevision: 0,
   monitoringIdentityRevision: 1,
@@ -568,7 +571,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   remoteDeviceSecret: '',
   developerModeEnabled: false,
   autoLaunch: false,
-  autoUpdateEnabled: true,
+  autoUpdateEnabled: false,
   updateSource: 'auto',
   aliyunUpdateBaseUrl: '',
   /** ATEM 导播台 */

@@ -1,6 +1,5 @@
 import { normalizeProjectorSafety } from '../shared/projectorSafety.js';
 import { app, safeStorage } from 'electron';
-import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
@@ -91,8 +90,8 @@ export class ConfigStore {
       ...DEFAULT_CONFIG,
       alertPositions: {},
       floatingWindowBounds: null,
-      remoteDeviceUuid: current.remoteDeviceUuid,
-      remoteDeviceSecret: current.remoteDeviceSecret
+      remoteDeviceUuid: '',
+      remoteDeviceSecret: '',
     });
   }
 
@@ -135,8 +134,8 @@ export class ConfigStore {
         : [];
 
     const floatingWindowModules = floatingWindowModulesValue(merged.floatingWindowModules);
-    const remoteDeviceUuid = uuidValue(merged.remoteDeviceUuid) || randomUUID();
-    const remoteDeviceSecret = secretValue(merged.remoteDeviceSecret) || randomBytes(32).toString('hex');
+    const remoteDeviceUuid = '';
+    const remoteDeviceSecret = '';
     const migratedPrimaryInputIds = positiveIntegerArrayValue(merged.atemPrimaryInputIds);
     const legacyPrimaryInputId = nullablePositiveIntegerValue(merged.atemPrimaryInputId);
     const atemPrimaryInputIds = migratedPrimaryInputIds.length > 0
@@ -163,6 +162,7 @@ export class ConfigStore {
       paused: booleanValue(merged.paused, DEFAULT_CONFIG.paused),
       themeColor: merged.themeColor === 'yellow' ? 'yellow' : 'green',
       setupChecklistPending: booleanValue(merged.setupChecklistPending, true),
+      setupNoticeDismissed: booleanValue(merged.setupNoticeDismissed, false),
       hasSeenGuide: booleanValue(merged.hasSeenGuide, DEFAULT_CONFIG.hasSeenGuide),
       guideSeenVersion: stringValue(merged.guideSeenVersion, DEFAULT_CONFIG.guideSeenVersion).trim(),
       releaseNotesSeenVersion: stringValue(merged.releaseNotesSeenVersion, DEFAULT_CONFIG.releaseNotesSeenVersion).trim(),
@@ -177,9 +177,9 @@ export class ConfigStore {
       floatingWindowLayoutVersion: clamp(Math.round(numberValue(merged.floatingWindowLayoutVersion, DEFAULT_CONFIG.floatingWindowLayoutVersion)), 1, DEFAULT_CONFIG.floatingWindowLayoutVersion),
       floatingWindowBounds: windowBoundsValue(merged.floatingWindowBounds),
       floatingWindowModules,
-      centralMonitoringEnabled: true,
-      remoteAccessEnabled: booleanValue(merged.remoteAccessEnabled, DEFAULT_CONFIG.remoteAccessEnabled),
-      remoteServerUrl: serverUrlValue(merged.remoteServerUrl),
+      centralMonitoringEnabled: false,
+      remoteAccessEnabled: false,
+      remoteServerUrl: '',
       livestreamRoomName: cleanRoomName(merged.livestreamRoomName),
       livestreamRoomNameRevision: clamp(Math.round(numberValue(merged.livestreamRoomNameRevision, DEFAULT_CONFIG.livestreamRoomNameRevision)), 0, Number.MAX_SAFE_INTEGER),
       monitoringIdentityRevision: DEFAULT_CONFIG.monitoringIdentityRevision,
@@ -187,9 +187,9 @@ export class ConfigStore {
       remoteDeviceSecret,
       developerModeEnabled: booleanValue(merged.developerModeEnabled, DEFAULT_CONFIG.developerModeEnabled),
       autoLaunch: booleanValue(merged.autoLaunch, DEFAULT_CONFIG.autoLaunch),
-      autoUpdateEnabled: booleanValue(merged.autoUpdateEnabled, DEFAULT_CONFIG.autoUpdateEnabled),
+      autoUpdateEnabled: false,
       updateSource: 'auto',
-      aliyunUpdateBaseUrl: normalizeUpdateBaseUrl(merged.aliyunUpdateBaseUrl),
+      aliyunUpdateBaseUrl: '',
       atemEnabled: booleanValue(merged.atemEnabled, DEFAULT_CONFIG.atemEnabled),
       atemHost: stringValue(merged.atemHost, DEFAULT_CONFIG.atemHost).trim() || DEFAULT_CONFIG.atemHost,
       atemHotkeyGlobal: booleanValue(merged.atemHotkeyGlobal, DEFAULT_CONFIG.atemHotkeyGlobal),

@@ -585,12 +585,6 @@ export const PreflightCheckPage: React.FC<PreflightCheckPageProps> = ({ draft, s
                       <input value={config.customLabel} onChange={(event) => updateApps(id, { customLabel: event.target.value })} placeholder="例如：抖音、淘宝、美团" maxLength={32} />
                     </label>
                   )}
-                  {id === 'browser' && (
-                    <label className="preflight-inline-field wide">
-                      <span>启动后打开的页面</span>
-                      <div className="preflight-url-input"><Globe2 size={16} /><input value={config.launchUrl} onChange={(event) => updateApps(id, { launchUrl: event.target.value })} placeholder="https://example.com/live" inputMode="url" /></div>
-                    </label>
-                  )}
                   {id === 'obs' && (
                     <div className="preflight-projector-settings">
                       <div className="preflight-projector-heading"><MonitorPlay size={18} /><div><strong>节目输出投影</strong><span>通过 OBS WebSocket 打开窗口化节目输出</span></div></div>

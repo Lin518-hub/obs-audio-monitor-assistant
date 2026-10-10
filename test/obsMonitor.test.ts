@@ -285,3 +285,26 @@ describe('OBSMonitor test alert', () => {
     });
   });
 });
+
+it('streams selected input levels while detection is paused for setup verification', async () => {
+  vi.useFakeTimers();
+  const monitor = new OBSMonitor(config, displays);
+  try {
+    const internals = monitor as unknown as {
+      state: { connected: boolean; monitoringActive: boolean };
+      handleVolumeMeters: (event: { inputs: { inputName: string; inputLevelsMul: number[][] }[] }) => void;
+    };
+    internals.state.connected = true;
+    internals.state.monitoringActive = false;
+    const frames: import('../src/shared/types.js').AudioMeterFrame[] = [];
+    monitor.on('meter', frame => frames.push(frame));
+    internals.handleVolumeMeters({ inputs: [{ inputName: 'Mic', inputLevelsMul: [[0.1, 0.1, 0.1]] }] });
+    await vi.advanceTimersByTimeAsync(40);
+    expect(frames.at(-1)?.inputs?.[0]).toMatchObject({ inputName: 'Mic', levelDb: -20 });
+    expect(frames.at(-1)?.inputs?.[0].timestamp).toBeGreaterThan(0);
+    expect(monitor.getSnapshot().monitoringActive).toBe(false);
+  } finally {
+    await monitor.stop();
+    vi.useRealTimers();
+  }
+});

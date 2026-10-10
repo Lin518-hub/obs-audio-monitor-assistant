@@ -362,11 +362,7 @@ export class PreflightCheckService {
     const config = configs[id];
     const target = config.path.trim();
     if (id === 'cosmic_cat' && process.platform !== 'win32') throw new Error('宇宙猫检测的管理员启动仅支持 Windows');
-    const launchUrl = id === 'browser' ? validatedLaunchUrl(config.launchUrl) : '';
-    if (!target && launchUrl) {
-      await shell.openExternal(launchUrl);
-      return;
-    }
+    if (id === 'browser') validatedLaunchUrl(config.launchUrl);
     if (!target) throw new Error('请先设置快捷方式或程序路径');
     if (!existsSync(target)) throw new Error('快捷方式或程序路径已失效');
 
@@ -383,16 +379,6 @@ export class PreflightCheckService {
       return;
     }
 
-    if (process.platform === 'win32' && launchUrl) {
-      await launchWindowsPathWithUrl(
-        resolvedShortcutTarget || target,
-        launchUrl,
-        shortcut?.args ?? '',
-        shortcut?.cwd ?? '',
-        browserNewWindowArgument(resolvedShortcutTarget || target)
-      );
-      return;
-    }
     if (process.platform === 'win32' && id === 'obs') {
       const executable = resolvedShortcutTarget || target;
       await launchWindowsPathWithArguments(
@@ -402,10 +388,6 @@ export class PreflightCheckService {
         ['--disable-missing-files-check']
       );
       if (waitForOBSStartup) await this.resolveOBSStartupDialogs(configs);
-      return;
-    }
-    if (launchUrl) {
-      await shell.openExternal(launchUrl);
       return;
     }
     const result = await shell.openPath(target);
@@ -560,26 +542,6 @@ function shortcutDetails(path: string): ShortcutDetails | null {
   }
 }
 
-async function launchWindowsPathWithUrl(target: string, launchUrl: string, shortcutArgs: string, cwd: string, windowArgument: string): Promise<void> {
-  const payload = JSON.stringify({ target, launchUrl, shortcutArgs, cwd, windowArgument });
-  const command = `
-$payload = ConvertFrom-Json $env:OBS_GUARD_PREFLIGHT_LAUNCH
-$arguments = @()
-if ($payload.shortcutArgs) { $arguments += [string]$payload.shortcutArgs }
-if ($payload.windowArgument) { $arguments += [string]$payload.windowArgument }
-$arguments += [string]$payload.launchUrl
-$start = @{ FilePath = [string]$payload.target; ArgumentList = $arguments }
-if ($payload.cwd -and (Test-Path -LiteralPath $payload.cwd)) { $start.WorkingDirectory = [string]$payload.cwd }
-Start-Process @start
-`;
-  const encoded = Buffer.from(command, 'utf16le').toString('base64');
-  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
-    windowsHide: true,
-    timeout: 30_000,
-    env: { ...process.env, OBS_GUARD_PREFLIGHT_LAUNCH: payload }
-  });
-}
-
 async function launchWindowsPathWithArguments(target: string, shortcutArgs: string, cwd: string, extraArgs: string[]): Promise<void> {
   const payload = JSON.stringify({ target, shortcutArgs, cwd, extraArgs });
   const command = `
@@ -612,15 +574,8 @@ function electronPlacementDisplays(): PlacementDisplay[] {
 }
 
 function validatedLaunchUrl(value: string): string {
-  const candidate = value.trim();
-  if (!candidate) return '';
-  try {
-    const url = new URL(candidate);
-    if (url.protocol === 'http:' || url.protocol === 'https:') return url.toString();
-  } catch {
-    // The UI will keep the invalid value visible until the user corrects it.
-  }
-  throw new Error('浏览器页面地址必须以 http:// 或 https:// 开头');
+  if (value.trim()) throw new Error('离线版不支持打开直播网页，请清空网页地址。');
+  return '';
 }
 
 function status(id: PreflightAppId, path: string, state: PreflightAppStatus['state'], message: string): PreflightAppStatus {

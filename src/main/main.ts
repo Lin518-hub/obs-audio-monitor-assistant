@@ -1,11 +1,11 @@
+import { offlineRendererUrlAllowed } from '../shared/offlineNetwork.js';
 import { ProjectorSafetyOverlay } from './projectorSafetyOverlay.js';
 import { SingleFlight } from '../shared/singleFlight.js';
 import { confirmLayoutWindow } from './confirmLayoutWindow.js';
 import { LaunchOverlay } from './launchOverlay.js';
 import { preflightError } from '../shared/preflightErrors.js';
 import { resizeFloatingBounds } from '../shared/floatingResize.js';
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
-import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import { app, session, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ConfigStore } from './configStore.js';
@@ -15,15 +15,12 @@ import { ATEMHistoryStore } from './atemHistoryStore.js';
 import { ATEMSessionStore } from './ATEMSessionStore.js';
 import { OBSMonitor } from './obsMonitor.js';
 import { ATEMMonitor } from './ATEMMonitor.js';
-import { RemoteBridge, remoteServerCandidates } from './RemoteBridge.js';
 import { PreflightCheckService } from './preflightCheck.js';
 import { crashRestartArgs } from './crashRecovery.js';
 import { installFileLogger } from './fileLogger.js';
 import { rendererSnapshot } from './rendererSnapshot.js';
 import { RuntimeDiagnosticsStore } from './runtimeDiagnostics.js';
 import { roundedWindowShape, type WindowShapeRectangle } from './windowShape.js';
-import { compareVersions, PendingUpdateStore, type PendingUpdate } from './pendingUpdateStore.js';
-import { LatestTaskQueue } from '../shared/latestTaskQueue.js';
 import { defaultATEMInputColor } from '../shared/atemPalette.js';
 import { isPreflightAppId } from '../shared/preflight.js';
 import { DEFAULT_CONFIG, PREFLIGHT_APP_IDS, type AlertAction, type AppConfig, type AppSnapshot, type ATEMLiveSession, type ATEMSessionSegment, type ATEMSwitchHistoryEntry, type AudioMeterFrame, type DisplayInfo, type PreflightAppConfigs, type PreflightPathSource, type PreflightProjectorResult, type PreflightSettings, type PreflightWindowPlacement, type PreflightWindowPlacements, type RemoteAdminCommand, type RemoteAdminCommandResult, type UpdateSnapshot, type UpdateSource, type WindowBounds } from '../shared/types.js';
@@ -104,23 +101,15 @@ const FLOATING_WINDOW_ASPECT_RATIO = FLOATING_WINDOW_DEFAULT_WIDTH / FLOATING_WI
 const FLOATING_WINDOW_BASE_RADIUS = 14;
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const UPDATE_INITIAL_CHECK_DELAY_MS = 12 * 1000;
-const GITHUB_OWNER = 'Lin518-hub';
-const GITHUB_REPO = 'obs-audio-monitor-assistant';
-const GITHUB_RELEASE_BASE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/latest/`;
-const GH_PROXY_RELEASE_BASE_URL = `https://gh-proxy.com/${GITHUB_RELEASE_BASE_URL}`;
-const GHPROXY_NET_RELEASE_BASE_URL = `https://ghproxy.net/${GITHUB_RELEASE_BASE_URL}`;
-const { autoUpdater } = electronUpdater;
 
-app.setName('OBS 音频检测助手');
-app.setPath('userData', join(app.getPath('appData'), 'obs-audio-monitor-assistant'));
+app.setName('OBS 音频检测助手 离线版');
+app.setPath('userData', join(app.getPath('appData'), 'obs-audio-monitor-offline'));
 
 const runtimeDiagnostics = new RuntimeDiagnosticsStore(join(app.getPath('userData'), 'runtime-error.json'));
-let diagnosticsBridge: RemoteBridge | null = null;
 const mainLogger = installFileLogger({
   directory: join(app.getPath('userData'), 'logs'),
   onError: (message) => {
     const summary = runtimeDiagnostics.record('main_log_error', 'main', message);
-    diagnosticsBridge?.updateRuntimeError(summary);
   }
 });
 let handlingFatalMainError = false;
@@ -145,26 +134,15 @@ let atemSwitchHistory: ATEMSwitchHistoryEntry[] = [];
 let atemCurrentSession: ATEMLiveSession | null = null;
 let atemRecentSessions: ATEMLiveSession[] = [];
 let atemSessionQueue: Promise<void> = Promise.resolve();
-let remoteRoomNameSyncQueue: Promise<void> = Promise.resolve();
 let atemSessionTransitionPending = false;
 let pendingATEMSessionStop: { endedAt: number; state: ReturnType<ATEMMonitor['getSnapshot']> } | null = null;
 let monitor: OBSMonitor;
 let atemMonitor: ATEMMonitor;
-let remoteBridge: RemoteBridge;
 let preflightCheckService: PreflightCheckService;
-let pendingUpdateStore: PendingUpdateStore;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let tray: Tray | null = null;
 let latestSnapshot: AppSnapshot | null = null;
-let updateState: UpdateSnapshot | null = null;
-const updateCheckQueue = new LatestTaskQueue<UpdateSnapshot>();
-let activeUpdaterGeneration: number | null = null;
-let updateInitialTimer: NodeJS.Timeout | null = null;
-let updateCheckTimer: NodeJS.Timeout | null = null;
-let downloadedUpdateFilePath: string | null = null;
-let updateDownloadMode: 'manual' | 'background' | 'startup' = 'manual';
-let startupUpdateInProgress = false;
 let alertActionInProgress = false;
 let floatingWindow: BrowserWindow | null = null;
 let monitoringPromptWindow: BrowserWindow | null = null;
@@ -204,6 +182,9 @@ if (!gotLock) {
 }
 
 async function initializeApp(): Promise<void> {
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    callback({cancel: !offlineRendererUrlAllowed(details.url)});
+  });
   Menu.setApplicationMenu(null);
   if (process.platform === 'darwin') {
     app.dock?.setIcon(appIconPngPath);
@@ -233,43 +214,8 @@ async function initializeApp(): Promise<void> {
   projectorSafetyOverlay.configure(config.projectorSafety);
 
   atemMonitor = new ATEMMonitor();
-  remoteBridge = new RemoteBridge(app.getVersion());
-  diagnosticsBridge = remoteBridge;
-  remoteBridge.updateRuntimeError(runtimeDiagnostics.getRecent());
-  remoteBridge.setCommandHandler(handleRemoteAdminCommand);
   preflightCheckService = new PreflightCheckService();
-  pendingUpdateStore = new PendingUpdateStore(app.getPath('userData'));
   latestSnapshot = injectATEMState(monitor.getSnapshot());
-
-  remoteBridge.on('stateChanged', () => {
-    if (!latestSnapshot) return;
-    latestSnapshot = injectATEMState(latestSnapshot);
-    broadcastSnapshot(latestSnapshot);
-  });
-  remoteBridge.on('roomNameChanged', ({ roomName, revision }) => {
-    remoteRoomNameSyncQueue = remoteRoomNameSyncQueue.catch(() => undefined).then(async () => {
-      const current = (latestSnapshot ?? monitor.getSnapshot()).config;
-      if (
-        revision < current.livestreamRoomNameRevision
-        || (revision === current.livestreamRoomNameRevision && roomName === current.livestreamRoomName)
-      ) {
-        return;
-      }
-      const nextConfig = await configStore.update({
-        livestreamRoomName: roomName,
-        livestreamRoomNameRevision: revision
-      });
-      const snapshot = await monitor.updateConfig(nextConfig);
-      latestSnapshot = injectATEMState(snapshot);
-      remoteBridge.updateSnapshot(latestSnapshot);
-      broadcastSnapshot(latestSnapshot);
-      updateTray(latestSnapshot);
-    }).catch((error) => {
-      console.error(`[remote] failed to persist livestream room name: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  });
-  remoteBridge.updateSnapshot(latestSnapshot);
-  void remoteBridge.configure(config);
 
   void atemMonitor.setConfig(
     config.atemEnabled,
@@ -284,15 +230,10 @@ async function initializeApp(): Promise<void> {
   });
 
   registerIpc();
-  const installingPendingUpdate = await initializeUpdater();
-  if (installingPendingUpdate || isQuitting) {
-    return;
-  }
   if (!launchHidden) {
     createSettingsWindow(launchPreflight ? 'preflight' : undefined);
   }
   createTray();
-  remoteBridge.updateUpdateState(getUpdateState());
   if (latestSnapshot.config.floatingWindowEnabled) {
     showFloatingWindow(latestSnapshot);
   }
@@ -314,7 +255,6 @@ async function initializeApp(): Promise<void> {
     const incoming = injectATEMState(snapshot);
     latestSnapshot = preserveSnapshotHistory(incoming);
     broadcastSnapshot(latestSnapshot);
-    remoteBridge.updateSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
     if (!snapshot.virtualCameraActive || !snapshot.connected || snapshot.monitoringActive) {
@@ -328,7 +268,6 @@ async function initializeApp(): Promise<void> {
   });
   monitor.on('meter', (frame) => {
     broadcastMeterFrame(frame);
-    remoteBridge.updateMeter(frame);
   });
   monitor.on('alert', (snapshot) => {
     const previousSnapshot = latestSnapshot;
@@ -343,7 +282,6 @@ async function initializeApp(): Promise<void> {
       const merged = injectATEMState(latestSnapshot);
       latestSnapshot = merged;
       broadcastSnapshot(merged);
-      remoteBridge.updateSnapshot(merged);
       updateTray(merged);
       syncFloatingWindow(merged);
       syncPreAlertSurfaces(merged);
@@ -361,7 +299,6 @@ async function initializeApp(): Promise<void> {
       if (!latestSnapshot) return;
       latestSnapshot = injectATEMState(latestSnapshot);
       broadcastSnapshot(latestSnapshot);
-      remoteBridge.updateSnapshot(latestSnapshot);
     }).catch((error) => {
       console.error(`[atem-session] failed to record camera switch: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -374,7 +311,6 @@ async function initializeApp(): Promise<void> {
   atemRecentSessions = storedSessions.sessions;
   latestSnapshot = injectATEMState(monitor.getSnapshot());
   broadcastSnapshot(latestSnapshot);
-  remoteBridge.updateSnapshot(latestSnapshot);
 
   await monitor.start();
 }
@@ -387,17 +323,8 @@ app.on('before-quit', () => {
   isQuitting = true;
   projectorSafetyOverlay.destroy();
   void mainLogger.flush();
-  if (updateInitialTimer) {
-    clearTimeout(updateInitialTimer);
-    updateInitialTimer = null;
-  }
-  if (updateCheckTimer) {
-    clearInterval(updateCheckTimer);
-    updateCheckTimer = null;
-  }
   void monitor?.stop();
   void atemMonitor?.stop();
-  void remoteBridge?.stop();
   closeAlertWindows('destroy');
   closeAlertBackdropWindows('destroy');
   closeToastAlertWindows('destroy');
@@ -504,36 +431,12 @@ function registerIpc(): void {
       syncATEMHotkeys();
     }
     if (Object.hasOwn(patch, 'centralMonitoringEnabled') || Object.hasOwn(patch, 'remoteAccessEnabled') || Object.hasOwn(patch, 'developerModeEnabled') || Object.hasOwn(patch, 'remoteServerUrl') || Object.hasOwn(patch, 'livestreamRoomName')) {
-      void remoteBridge.configure(nextConfig);
-    }
-    if (Object.hasOwn(patch, 'updateSource') || Object.hasOwn(patch, 'aliyunUpdateBaseUrl') || Object.hasOwn(patch, 'remoteServerUrl')) {
-      refreshUpdateSourceState(nextConfig);
-    }
-    if (Object.hasOwn(patch, 'autoUpdateEnabled') && nextConfig.autoUpdateEnabled !== previous.autoUpdateEnabled) {
-      if (nextConfig.autoUpdateEnabled) {
-        void runScheduledUpdateCycle();
-      } else {
-        await pendingUpdateStore.clear({ removeArtifact: true });
-        if (getUpdateState().status === 'downloaded') {
-          downloadedUpdateFilePath = null;
-          setUpdateState({
-            status: 'idle',
-            availableVersion: null,
-            downloadedVersion: null,
-            downloadedFilePath: null,
-            percent: null,
-            errorMessage: null,
-            message: '自动更新已关闭，已清理预下载安装包'
-          });
-        }
-      }
     }
     return latestSnapshot;
   });
   ipcMain.handle('config:reset', () => resetToFactoryDefaults());
   ipcMain.handle('inputs:refresh', () => monitor.refreshInputs());
   ipcMain.handle('obs:reconnect', () => monitor.reconnect());
-  ipcMain.handle('remote:reconnect', () => remoteBridge.reconnect());
   ipcMain.handle('obs:test-connection', async (_event, patch: Partial<AppConfig>) => {
     const config = {
       ...(latestSnapshot ?? monitor.getSnapshot()).config,
@@ -581,7 +484,6 @@ function registerIpc(): void {
     const snapshot = injectATEMState(monitor.getSnapshot());
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
-    remoteBridge.updateSnapshot(snapshot);
     updateTray(snapshot);
     syncFloatingWindow(snapshot);
     return snapshot;
@@ -621,17 +523,12 @@ function registerIpc(): void {
     const snapshot = injectATEMState(monitor.getSnapshot());
     latestSnapshot = snapshot;
     broadcastSnapshot(snapshot);
-    remoteBridge.updateSnapshot(snapshot);
     return history;
   });
   ipcMain.handle('alert:position-updated', async (_event, displayId: number, position: { x: number; y: number }) => {
     await saveAlertPosition(displayId, position);
   });
   ipcMain.handle('displays:get', () => getDisplays());
-  ipcMain.handle('update:get-state', () => getUpdateState());
-  ipcMain.handle('update:check', () => checkAndStageUpdate(true));
-  ipcMain.handle('update:download', () => downloadUpdate('manual'));
-  ipcMain.handle('update:install', () => installDownloadedUpdate());
   ipcMain.handle('preflight:release-control', () => releasePreflightControl());
   ipcMain.handle('preflight:overlay-state', () => launchOverlay.state());
   ipcMain.handle('preflight:restore-target', (_event, target: unknown, settings: unknown) => {
@@ -735,7 +632,6 @@ function registerIpc(): void {
     const merged = injectATEMState(latestSnapshot ?? monitor.getSnapshot());
     latestSnapshot = merged;
     broadcastSnapshot(merged);
-    remoteBridge.updateSnapshot(merged);
     return atemSwitchHistory;
   });
   ipcMain.handle('atem:change-preview-input', async (_event, input: number) => {
@@ -942,7 +838,6 @@ async function waitForOBSConnection(timeoutMs: number): Promise<boolean> {
 // Merge ATEM state into an AppSnapshot
 function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
   const atem = atemMonitor?.getSnapshot();
-  const remote = remoteBridge?.getSnapshot();
   const customizations = snapshot.config.atemInputCustomizations;
   const hardwareLabels = atem?.inputLabels ?? snapshot.atemInputHardwareLabels ?? {};
   const effectiveLabels = Object.fromEntries(Object.entries(hardwareLabels).map(([inputId, label]) => [
@@ -1000,18 +895,6 @@ function injectATEMState(snapshot: AppSnapshot): AppSnapshot {
       atemCurrentSession: decorateATEMSession(atemCurrentSession, snapshot.config, atem),
       atemRecentSessions: atemRecentSessions.map((session) => decorateATEMSession(session, snapshot.config, null) as ATEMLiveSession)
     } : {}),
-    ...(remote ? {
-      remoteAccessConnectionState: remote.connectionState,
-      remoteAccessConnected: remote.connected,
-      remoteAccessActiveServerUrl: remote.activeServerUrl,
-      remoteAccessPairUrl: remote.pairUrl,
-      remoteAccessErrorMessage: remote.errorMessage,
-      remoteAccessLastConnectedAt: remote.lastConnectedAt,
-      remoteAccessRouteType: remote.routeType,
-      remoteAccessLatencyMs: remote.latencyMs,
-      remoteAccessOnlineMobileClients: remote.onlineMobileClients,
-      remoteAccessLastSyncAt: remote.lastSyncAt
-    } : {})
   };
 }
 
@@ -1038,7 +921,6 @@ function syncATEMLiveSession(snapshot: AppSnapshot): void {
     if (!latestSnapshot) return;
     latestSnapshot = injectATEMState(latestSnapshot);
     broadcastSnapshot(latestSnapshot);
-    remoteBridge.updateSnapshot(latestSnapshot);
   }).catch((error) => {
     console.error(`[atem-session] failed to update live session: ${error instanceof Error ? error.message : String(error)}`);
   }).finally(() => {
@@ -1181,747 +1063,6 @@ function unregisterATEMHotkeys(): void {
   } catch {
     // Some shortcuts may not be registered.
   }
-}
-
-async function initializeUpdater(): Promise<boolean> {
-  updateState = createInitialUpdateState();
-  broadcastUpdateState();
-
-  if (!isUpdaterSupported()) {
-    return false;
-  }
-
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = process.platform === 'win32';
-  autoUpdater.autoRunAppAfterInstall = true;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.allowDowngrade = false;
-  autoUpdater.disableDifferentialDownload = true;
-
-  autoUpdater.on('checking-for-update', () => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    const state = getUpdateState();
-    setUpdateState({
-      status: 'checking',
-      percent: null,
-      errorMessage: null,
-      message: `正在检查 ${state.sourceLabel} 上的新版本...`
-    });
-  });
-  autoUpdater.on('update-available', (info: UpdateInfo) => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    const state = getUpdateState();
-    downloadedUpdateFilePath = null;
-    setUpdateState({
-      status: 'available',
-      availableVersion: info.version ?? null,
-      downloadedVersion: null,
-      downloadedFilePath: null,
-      percent: null,
-      errorMessage: null,
-      lastCheckedAt: Date.now(),
-      message: info.version ? `${state.sourceLabel} 发现新版本 ${info.version}` : `${state.sourceLabel} 发现新版本`
-    });
-  });
-  autoUpdater.on('update-not-available', (info: UpdateInfo) => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    const state = getUpdateState();
-    downloadedUpdateFilePath = null;
-    setUpdateState({
-      status: 'not_available',
-      availableVersion: info.version ?? null,
-      downloadedVersion: null,
-      downloadedFilePath: null,
-      percent: null,
-      errorMessage: null,
-      lastCheckedAt: Date.now(),
-      message: `${state.sourceLabel} 已确认当前为最新版本`
-    });
-  });
-  autoUpdater.on('download-progress', (progress: ProgressInfo) => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    setUpdateState({
-      status: 'downloading',
-      percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : null,
-      errorMessage: null,
-      message: updateDownloadMode === 'background' ? '正在后台预下载更新...' : '正在下载更新...'
-    });
-  });
-  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    const version = info.version ?? getUpdateState().availableVersion;
-    const manualInstall = usesManualMacInstall();
-    setUpdateState({
-      status: 'downloaded',
-      availableVersion: version,
-      downloadedVersion: version,
-      downloadedFilePath: downloadedUpdateFilePath,
-      installMode: manualInstall ? 'manual' : 'auto',
-      percent: 100,
-      errorMessage: null,
-      message: manualInstall
-        ? (version ? `已检测到新版本 ${version}，请从发布页下载 macOS 安装包` : '已检测到新版，请从发布页下载 macOS 安装包')
-        : (version ? `新版本 ${version} 已在后台准备好，退出或下次启动时静默安装` : '更新已在后台准备好，退出或下次启动时静默安装')
-    });
-  });
-  autoUpdater.on('error', (error: Error) => {
-    if (!isCurrentUpdaterEvent()) {
-      return;
-    }
-    const errorMessage = formatUpdateError(error);
-    setUpdateState({
-      status: 'error',
-      percent: null,
-      errorMessage,
-      lastCheckedAt: Date.now(),
-      message: errorMessage
-    });
-  });
-
-  return startUpdaterLifecycle();
-}
-
-async function startUpdaterLifecycle(): Promise<boolean> {
-  const installing = await resumePendingUpdateAtStartup();
-  if (installing || isQuitting) return installing;
-
-  updateInitialTimer = setTimeout(() => {
-    void runScheduledUpdateCycle();
-  }, UPDATE_INITIAL_CHECK_DELAY_MS);
-  updateCheckTimer = setInterval(() => {
-    void runScheduledUpdateCycle();
-  }, UPDATE_CHECK_INTERVAL_MS);
-  return false;
-}
-
-async function runScheduledUpdateCycle(): Promise<void> {
-  if (!isUpdaterSupported() || startupUpdateInProgress || isQuitting) return;
-  if (!currentUpdateConfig().autoUpdateEnabled) return;
-  await checkAndStageUpdate(false);
-}
-
-async function resumePendingUpdateAtStartup(): Promise<boolean> {
-  if (!isUpdaterSupported()) return false;
-  const pending = await pendingUpdateStore.load();
-  if (!pending) return false;
-
-  const currentVersion = app.getVersion();
-  if (compareVersions(currentVersion, pending.version) >= 0) {
-    await pendingUpdateStore.clear({ removeArtifact: true, pending });
-    return false;
-  }
-  if (!currentUpdateConfig().autoUpdateEnabled) {
-    await pendingUpdateStore.clear({ removeArtifact: true, pending });
-    return false;
-  }
-
-  if (usesManualMacInstall()) {
-    await pendingUpdateStore.clear({ removeArtifact: true, pending });
-    setUpdateState({
-      status: 'available',
-      sourceLabel: pending.sourceLabel || getUpdateState().sourceLabel,
-      sourceUrl: pending.sourceUrl,
-      availableVersion: pending.version,
-      downloadedVersion: null,
-      downloadedFilePath: null,
-      installMode: 'manual',
-      percent: null,
-      errorMessage: null,
-      message: `检测到新版本 ${pending.version}，macOS 请从发布页下载并替换应用`
-    });
-    return false;
-  }
-
-  if (pending.installAttempts >= 2) {
-    await pendingUpdateStore.clear({ removeArtifact: true, pending });
-    setUpdateState({
-      status: 'error',
-      errorMessage: '自动安装连续失败，已停止重试',
-      message: '自动安装连续失败，请在设置中手动检查更新'
-    });
-    return false;
-  }
-
-  startupUpdateInProgress = true;
-  try {
-    setUpdateState({
-      status: 'idle',
-      availableVersion: pending.version,
-      errorMessage: null,
-      message: `正在校验已预下载的新版本 ${pending.version}...`
-    });
-    const checked = await checkForUpdates(false);
-    if (checked.status !== 'available') return false;
-    if (checked.availableVersion && compareVersions(checked.availableVersion, pending.version) > 0) {
-      await pendingUpdateStore.clear({ removeArtifact: true, pending });
-    }
-    const downloaded = await downloadUpdate('startup');
-    if (downloaded.status !== 'downloaded') return false;
-    const downloadedVersion = downloaded.downloadedVersion ?? downloaded.availableVersion ?? pending.version;
-    await pendingUpdateStore.recordInstallAttempt({
-      version: downloadedVersion,
-      downloadedAt: Date.now(),
-      filePath: downloaded.downloadedFilePath,
-      sourceLabel: downloaded.sourceLabel,
-      sourceUrl: downloaded.sourceUrl,
-      installAttempts: compareVersions(downloadedVersion, pending.version) === 0 ? pending.installAttempts : 0,
-      lastInstallAttemptAt: compareVersions(downloadedVersion, pending.version) === 0 ? pending.lastInstallAttemptAt : null
-    });
-    installDownloadedUpdate(true);
-    return true;
-  } catch (error) {
-    console.error(`[updater] failed to resume pending update: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  } finally {
-    startupUpdateInProgress = false;
-  }
-}
-
-function isCurrentUpdaterEvent(): boolean {
-  return activeUpdaterGeneration !== null && updateCheckQueue.isCurrent(activeUpdaterGeneration);
-}
-
-function getUpdateState(): UpdateSnapshot {
-  if (!updateState) {
-    updateState = createInitialUpdateState();
-  }
-
-  return updateState;
-}
-
-function createInitialUpdateState(): UpdateSnapshot {
-  const source = resolveConfiguredUpdateSource();
-  return {
-    status: isUpdaterSupported() ? 'idle' : 'unsupported',
-    source: source.id,
-    sourceLabel: source.label,
-    sourceUrl: source.url,
-    attemptedSources: [],
-    currentVersion: app.getVersion(),
-    availableVersion: null,
-    downloadedVersion: null,
-    downloadedFilePath: null,
-    installMode: usesManualMacInstall() ? 'manual' : 'auto',
-    percent: null,
-    message: isUpdaterSupported() ? '可检查更新' : '打包安装后可检查更新',
-    lastCheckedAt: null,
-    errorMessage: null
-  };
-}
-
-function isUpdaterSupported(): boolean {
-  return app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin');
-}
-
-function usesManualMacInstall(): boolean {
-  return process.platform === 'darwin';
-}
-
-function setUpdateState(patch: Partial<UpdateSnapshot>): UpdateSnapshot {
-  updateState = {
-    ...getUpdateState(),
-    ...patch,
-    currentVersion: app.getVersion()
-  };
-  remoteBridge?.updateUpdateState(updateState);
-  broadcastUpdateState();
-  if (latestSnapshot) {
-    updateTray(latestSnapshot);
-  }
-  return updateState;
-}
-
-async function handleRemoteAdminCommand(command: RemoteAdminCommand): Promise<RemoteAdminCommandResult> {
-  switch (command) {
-    case 'show_app':
-      showSettingsWindow();
-      return { ok: true, message: '已在电脑端打开检测助手' };
-    case 'reconnect_obs': {
-      const snapshot = injectATEMState(await monitor.reconnect());
-      publishRemoteCommandSnapshot(snapshot);
-      return {
-        ok: snapshot.connected,
-        message: snapshot.connected ? 'OBS 已重新连接' : snapshot.errorMessage || 'OBS 仍未连接'
-      };
-    }
-    case 'reconnect_atem': {
-      const config = (latestSnapshot ?? monitor.getSnapshot()).config;
-      if (!config.atemEnabled) return { ok: false, message: '电脑端尚未启用 ATEM' };
-      await atemMonitor.connect();
-      const snapshot = injectATEMState(monitor.getSnapshot());
-      publishRemoteCommandSnapshot(snapshot);
-      return {
-        ok: snapshot.atemConnected,
-        message: snapshot.atemConnected ? 'ATEM 已重新连接' : snapshot.atemConnectionState === 'connecting' ? 'ATEM 正在连接' : 'ATEM 仍未连接'
-      };
-    }
-    case 'check_update': {
-      const state = await checkAndStageUpdate(false);
-      return {
-        ok: state.status !== 'error',
-        message: state.message
-      };
-    }
-    case 'pause_monitoring':
-    case 'resume_monitoring': {
-      const paused = command === 'pause_monitoring';
-      const snapshot = injectATEMState(monitor.setMonitoringActive(!paused));
-      publishRemoteCommandSnapshot(snapshot);
-      return { ok: true, message: paused ? '检测已暂停' : '检测已恢复' };
-    }
-  }
-}
-
-function publishRemoteCommandSnapshot(snapshot: AppSnapshot): void {
-  latestSnapshot = snapshot;
-  broadcastSnapshot(snapshot);
-  remoteBridge.updateSnapshot(snapshot);
-  updateTray(snapshot);
-  syncFloatingWindow(snapshot);
-  syncPreAlertSurfaces(snapshot);
-}
-
-async function checkForUpdates(manual: boolean): Promise<UpdateSnapshot> {
-  if (!isUpdaterSupported()) {
-    const source = resolveConfiguredUpdateSource();
-    return setUpdateState({
-      status: 'unsupported',
-      source: source.id,
-      sourceLabel: source.label,
-      sourceUrl: source.url,
-      attemptedSources: [],
-      message: '请在已安装的 Windows 或 macOS 版本中检查更新',
-      errorMessage: null
-    });
-  }
-
-  const current = getUpdateState();
-  if (current.status === 'checking' || current.status === 'downloading') {
-    return current;
-  }
-  const staged = current.status === 'downloaded' && current.downloadedVersion
-    ? {
-        version: current.downloadedVersion,
-        filePath: current.downloadedFilePath,
-        source: current.source,
-        sourceLabel: current.sourceLabel,
-        sourceUrl: current.sourceUrl,
-        installMode: current.installMode
-      }
-    : null;
-
-  if (updateCheckQueue.isBusy && !updateCheckQueue.isRunningCurrentGeneration) {
-    const source = resolveConfiguredUpdateSource();
-    setUpdateState({
-      status: 'checking',
-      source: source.id,
-      sourceLabel: source.label,
-      sourceUrl: source.url,
-      attemptedSources: [],
-      percent: null,
-      errorMessage: null,
-      message: `更新源已切换为 ${source.label}，正在等待上一项检查结束...`
-    });
-  }
-
-  return updateCheckQueue.run(async (generation) => {
-    activeUpdaterGeneration = generation;
-    const config = currentUpdateConfig();
-    const candidates = resolveUpdateCandidates(config);
-    if (candidates.length === 0) {
-      const source = resolveConfiguredUpdateSource();
-      return setUpdateState({
-        status: 'error',
-        source: source.id,
-        sourceLabel: source.label,
-        sourceUrl: source.url,
-        attemptedSources: [],
-        downloadedFilePath: null,
-        percent: null,
-        errorMessage: '阿里云镜像源尚未配置',
-        lastCheckedAt: Date.now(),
-        message: '请先填写阿里云 OSS/CDN 镜像地址，或切换到 GitHub / GitHub 加速源'
-      });
-    }
-
-    const attemptedSources: string[] = [];
-    let lastError: unknown = null;
-
-    for (const candidate of candidates) {
-      if (!updateCheckQueue.isCurrent(generation)) {
-        return getUpdateState();
-      }
-      attemptedSources.push(candidate.label);
-      autoUpdater.setFeedURL(candidate.feed);
-      setUpdateState({
-        status: 'checking',
-        source: candidate.id,
-        sourceLabel: candidate.label,
-        sourceUrl: candidate.url,
-        attemptedSources: [...attemptedSources],
-        percent: null,
-        errorMessage: null,
-        message: manual ? `正在检查 ${candidate.label}...` : `正在通过 ${candidate.label} 后台检查更新...`
-      });
-
-      try {
-        const result = await autoUpdater.checkForUpdates();
-        if (!updateCheckQueue.isCurrent(generation)) {
-          return getUpdateState();
-        }
-        const latest = getUpdateState();
-        const checkedVersion = result?.updateInfo.version ?? latest.availableVersion ?? null;
-        if (staged && checkedVersion && compareVersions(checkedVersion, staged.version) <= 0) {
-          downloadedUpdateFilePath = staged.filePath;
-          return setUpdateState({
-            status: 'downloaded',
-            source: candidate.id,
-            sourceLabel: candidate.label,
-            sourceUrl: candidate.url,
-            attemptedSources: [...attemptedSources],
-            availableVersion: staged.version,
-            downloadedVersion: staged.version,
-            downloadedFilePath: staged.filePath,
-            installMode: staged.installMode,
-            percent: 100,
-            errorMessage: null,
-            lastCheckedAt: Date.now(),
-            message: `v${staged.version} 已准备好，未发现比它更新的版本`
-          });
-        }
-        if (staged && checkedVersion && compareVersions(checkedVersion, staged.version) > 0) {
-          await pendingUpdateStore.clear({ removeArtifact: true });
-          downloadedUpdateFilePath = null;
-          return setUpdateState({
-            status: 'available',
-            availableVersion: checkedVersion,
-            downloadedVersion: null,
-            downloadedFilePath: null,
-            percent: null,
-            errorMessage: null,
-            lastCheckedAt: Date.now(),
-            message: `${candidate.label} 发现更新版本 ${checkedVersion}`
-          });
-        }
-        if (latest.status === 'checking') {
-          const version = checkedVersion;
-          setUpdateState({
-            status: 'not_available',
-            availableVersion: version,
-            downloadedFilePath: null,
-            lastCheckedAt: Date.now(),
-            message: `${candidate.label} 已确认当前为最新版本`
-          });
-        }
-        return getUpdateState();
-      } catch (error) {
-        if (!updateCheckQueue.isCurrent(generation)) {
-          return getUpdateState();
-        }
-        lastError = error;
-      }
-    }
-
-    if (!updateCheckQueue.isCurrent(generation)) {
-      return getUpdateState();
-    }
-    const errorMessage = formatUpdateError(lastError);
-    if (staged) {
-      downloadedUpdateFilePath = staged.filePath;
-      return setUpdateState({
-        status: 'downloaded',
-        source: staged.source,
-        sourceLabel: staged.sourceLabel,
-        sourceUrl: staged.sourceUrl,
-        attemptedSources,
-        availableVersion: staged.version,
-        downloadedVersion: staged.version,
-        downloadedFilePath: staged.filePath,
-        installMode: staged.installMode,
-        percent: 100,
-        errorMessage,
-        lastCheckedAt: Date.now(),
-        message: `v${staged.version} 已准备好；暂时无法确认是否还有更新版本`
-      });
-    }
-    return setUpdateState({
-      status: 'error',
-      percent: null,
-      errorMessage,
-      attemptedSources,
-      lastCheckedAt: Date.now(),
-      message: attemptedSources.length > 1 ? `${errorMessage}；已尝试 ${attemptedSources.join('、')}` : errorMessage
-    });
-  });
-}
-
-async function checkAndStageUpdate(manual: boolean): Promise<UpdateSnapshot> {
-  const checked = await checkForUpdates(manual);
-  if (checked.status !== 'available' || usesManualMacInstall()) {
-    return checked;
-  }
-  return downloadUpdate(manual ? 'manual' : 'background');
-}
-
-type UpdateFeed = Parameters<typeof autoUpdater.setFeedURL>[0];
-
-interface UpdateSourceInfo {
-  id: UpdateSource;
-  label: string;
-  url: string | null;
-}
-
-interface UpdateCandidate extends UpdateSourceInfo {
-  feed: UpdateFeed;
-}
-
-function currentUpdateConfig(): AppConfig {
-  return (latestSnapshot ?? monitor?.getSnapshot())?.config ?? DEFAULT_CONFIG;
-}
-
-function refreshUpdateSourceState(config: AppConfig): void {
-  updateCheckQueue.invalidate();
-  activeUpdaterGeneration = null;
-  const source = resolveConfiguredUpdateSource(config);
-  const current = getUpdateState();
-  if (current.status === 'downloaded') {
-    setUpdateState({
-      source: source.id,
-      sourceLabel: source.label,
-      sourceUrl: source.url,
-      attemptedSources: [],
-      errorMessage: null,
-      message: current.downloadedVersion
-        ? `v${current.downloadedVersion} 已准备好，更新线路将在下次检查时自动选择`
-        : '更新已准备好，更新线路将在下次检查时自动选择'
-    });
-    return;
-  }
-  downloadedUpdateFilePath = null;
-  setUpdateState({
-    status: isUpdaterSupported() ? 'idle' : 'unsupported',
-    source: source.id,
-    sourceLabel: source.label,
-    sourceUrl: source.url,
-    attemptedSources: [],
-    availableVersion: null,
-    downloadedVersion: null,
-    downloadedFilePath: null,
-    percent: null,
-    errorMessage: null,
-    message: isUpdaterSupported() ? `更新源已切换为 ${source.label}` : '打包安装后可检查更新'
-  });
-}
-
-function resolveConfiguredUpdateSource(config = currentUpdateConfig()): UpdateSourceInfo {
-  void config;
-  return {
-    id: 'auto',
-    label: '自动选择（内部服务器优先）',
-    url: null
-  };
-}
-
-function resolveUpdateCandidates(config: AppConfig): UpdateCandidate[] {
-  return sourceCandidatesFor(config, true);
-}
-
-function sourceCandidatesFor(config: AppConfig, includeFallbacks: boolean): UpdateCandidate[] {
-  const aliyunUrl = normalizeUpdateBaseUrl(config.aliyunUpdateBaseUrl);
-  const internalUpdateUrls = remoteServerCandidates(config.remoteServerUrl)
-    .map((serverUrl) => normalizeUpdateBaseUrl(`${serverUrl}/updates`))
-    .filter(Boolean);
-  const candidates: UpdateCandidate[] = [];
-
-  if (includeFallbacks) {
-    for (const [index, updateUrl] of internalUpdateUrls.entries()) {
-      candidates.push(genericUpdateCandidate(
-        'lan',
-        internalUpdateUrls.length > 1
-          ? `直播间内部更新服务器（${index === 0 ? '局域网' : '公网'}）`
-          : '直播间内部更新服务器',
-        updateUrl
-      ));
-    }
-  }
-
-  if (includeFallbacks && aliyunUrl) {
-    candidates.push(genericUpdateCandidate('aliyun', '阿里云 OSS/CDN 镜像', aliyunUrl));
-  }
-
-  if (includeFallbacks) {
-    candidates.push(genericUpdateCandidate('gh_proxy', 'GitHub 加速源 gh-proxy.com', GH_PROXY_RELEASE_BASE_URL));
-  }
-
-  if (includeFallbacks) {
-    candidates.push(genericUpdateCandidate('ghproxy_net', 'GitHub 加速源 ghproxy.net', GHPROXY_NET_RELEASE_BASE_URL));
-  }
-
-  if (includeFallbacks) {
-    candidates.push(genericUpdateCandidate('github', 'GitHub Releases', GITHUB_RELEASE_BASE_URL));
-  }
-
-  return candidates;
-}
-
-function genericUpdateCandidate(id: UpdateSource, label: string, url: string): UpdateCandidate {
-  const normalized = normalizeUpdateBaseUrl(url);
-  return {
-    id,
-    label,
-    url: normalized,
-    feed: {
-      provider: 'generic',
-      url: normalized
-    } as UpdateFeed
-  };
-}
-
-function normalizeUpdateBaseUrl(url: string): string {
-  const trimmed = url.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
-}
-
-async function downloadUpdate(mode: 'manual' | 'background' | 'startup' = 'manual'): Promise<UpdateSnapshot> {
-  if (!isUpdaterSupported()) {
-    return getUpdateState();
-  }
-
-  const current = getUpdateState();
-  if (current.status === 'downloaded' || current.status === 'downloading') {
-    return current;
-  }
-
-  if (current.status !== 'available') {
-    const checked = await checkForUpdates(true);
-    if (checked.status !== 'available') {
-      return checked;
-    }
-  }
-
-  updateDownloadMode = mode;
-  try {
-    activeUpdaterGeneration = updateCheckQueue.currentGeneration;
-    setUpdateState({
-      status: 'downloading',
-      percent: 0,
-      errorMessage: null,
-      message: mode === 'background' ? '正在后台预下载更新...' : '正在下载更新...'
-    });
-    const downloadedFiles = await autoUpdater.downloadUpdate();
-    downloadedUpdateFilePath = pickDownloadedUpdateFile(downloadedFiles);
-    if (getUpdateState().status === 'downloaded') {
-      const version = getUpdateState().downloadedVersion ?? getUpdateState().availableVersion;
-      setUpdateState({
-        downloadedFilePath: downloadedUpdateFilePath,
-        installMode: usesManualMacInstall() ? 'manual' : 'auto',
-        message: usesManualMacInstall()
-          ? (version ? `检测到新版本 ${version}，请从发布页下载 macOS 安装包` : '检测到新版，请从发布页下载 macOS 安装包')
-          : (version ? `新版本 ${version} 已在后台准备好，退出或下次启动时静默安装` : '更新已在后台准备好，退出或下次启动时静默安装')
-      });
-      if (mode !== 'startup' && version && !usesManualMacInstall()) {
-        const state = getUpdateState();
-        const pending: PendingUpdate = {
-          version,
-          downloadedAt: Date.now(),
-          filePath: downloadedUpdateFilePath,
-          sourceLabel: state.sourceLabel,
-          sourceUrl: state.sourceUrl,
-          installAttempts: 0,
-          lastInstallAttemptAt: null
-        };
-        try {
-          await pendingUpdateStore.save(pending);
-        } catch (error) {
-          console.error(`[updater] failed to persist pending update: ${error instanceof Error ? error.message : String(error)}`);
-          setUpdateState({
-            message: '更新已下载，但无法登记下次启动静默安装；请重新检查更新'
-          });
-        }
-      }
-    }
-    return getUpdateState();
-  } catch (error) {
-    const errorMessage = formatUpdateError(error);
-    return setUpdateState({
-      status: 'error',
-      percent: null,
-      errorMessage,
-      lastCheckedAt: Date.now(),
-      message: errorMessage
-    });
-  } finally {
-    updateDownloadMode = 'manual';
-  }
-}
-
-function installDownloadedUpdate(silent = false): UpdateSnapshot {
-  const current = getUpdateState();
-  if (current.status !== 'downloaded') {
-    return current;
-  }
-
-  if (usesManualMacInstall()) {
-    const filePath = downloadedUpdateFilePath ?? current.downloadedFilePath;
-    if (filePath) {
-      shell.showItemInFolder(filePath);
-      return setUpdateState({
-        message: '已在 Finder 中显示安装包。请解压后将新版 App 拖入“应用程序”并替换旧版本。'
-      });
-    }
-
-    return setUpdateState({
-      status: 'error',
-      errorMessage: '找不到已下载的更新包，请重新下载',
-      message: '找不到已下载的更新包，请重新下载'
-    });
-  }
-
-  isQuitting = true;
-  setImmediate(() => {
-    autoUpdater.quitAndInstall(silent, true);
-  });
-  return current;
-}
-
-function pickDownloadedUpdateFile(paths: string[] | string | null | undefined): string | null {
-  const list = Array.isArray(paths) ? paths : typeof paths === 'string' ? [paths] : [];
-  if (list.length === 0) {
-    return null;
-  }
-
-  return list.find((item) => /\.(zip|dmg|exe|msi)$/i.test(item)) ?? list[0] ?? null;
-}
-
-function formatUpdateError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  if (/code signature|did not pass validation|ShipIt|签名/i.test(raw)) {
-    return 'macOS 自动替换需要签名安装包，请从发布页下载新版并替换应用。';
-  }
-
-  if (/github|api\.github|release|latest\.yml/i.test(raw)) {
-    return '无法连接 GitHub 更新源，请稍后重试或手动下载新版安装包';
-  }
-
-  if (/net|timeout|econn|enotfound|certificate|proxy/i.test(raw)) {
-    return '网络无法访问更新源，请检查网络、代理或稍后重试';
-  }
-
-  return raw ? `检查更新失败：${raw}` : '检查更新失败';
 }
 
 function createSettingsWindow(initialPage?: 'preflight'): void {
@@ -2148,7 +1289,6 @@ async function resetToFactoryDefaults(): Promise<AppSnapshot> {
   projectorSafetyOverlay.configure(nextConfig.projectorSafety);
   const nextSnapshot = await monitor.updateConfig(nextConfig);
   latestSnapshot = injectATEMState(nextSnapshot);
-  await remoteBridge.configure(nextConfig);
   await atemMonitor.setConfig(
     nextConfig.atemEnabled,
     nextConfig.atemHost,
@@ -2527,7 +1667,6 @@ async function handleAlertActionFromMain(action: AlertAction): Promise<AppSnapsh
     const previousSnapshot = before;
     latestSnapshot = injectATEMState(monitorSnapshot);
     broadcastSnapshot(latestSnapshot);
-    remoteBridge.updateSnapshot(latestSnapshot);
     updateTray(latestSnapshot);
     syncFloatingWindow(latestSnapshot);
     syncAlertSurfaces(previousSnapshot, latestSnapshot);
@@ -2557,8 +1696,6 @@ function updateTray(snapshot: AppSnapshot): void {
     statusText,
     snapshot.config.floatingWindowEnabled,
     snapshot.monitoringActive,
-    updateState?.status ?? 'idle',
-    updateState?.availableVersion ?? ''
   ].join('|');
 
   if (lastTrayTone !== tone) {
@@ -2578,13 +1715,6 @@ function updateTray(snapshot: AppSnapshot): void {
     Menu.buildFromTemplate([
       { label: `状态：${statusText}`, enabled: false },
       { label: '打开设置', click: showSettingsWindow },
-      {
-        label: updateTrayLabel(),
-        enabled: updateTrayEnabled(),
-        click: () => {
-          void handleTrayUpdateClick();
-        }
-      },
       {
         label: snapshot.config.floatingWindowEnabled ? '关闭小浮窗' : '打开小浮窗',
         click: () => {
@@ -2643,16 +1773,6 @@ function broadcastMeterFrame(frame: AudioMeterFrame): void {
   for (const window of [settingsWindow, floatingWindow]) {
     if (window) sendToWindow(window, 'meter:update', frame);
   }
-}
-
-function broadcastUpdateState(): void {
-  if (!updateState) {
-    return;
-  }
-
-  BrowserWindow.getAllWindows().forEach((window) => {
-    sendToWindow(window, 'update:state', updateState);
-  });
 }
 
 function sendToWindow(window: BrowserWindow, channel: string, payload: unknown): void {
@@ -2715,7 +1835,6 @@ function attachWindowDiagnostics(window: BrowserWindow, label: string): void {
 
 function reportRuntimeError(code: string, source: string, error: unknown): void {
   const summary = runtimeDiagnostics.record(code, source, error);
-  diagnosticsBridge?.updateRuntimeError(summary);
 }
 
 function handleFatalMainError(error: unknown, code: string): void {
@@ -3030,36 +2149,6 @@ function statusLabel(status: string): string {
   };
 
   return labels[status] ?? status;
-}
-
-function updateTrayLabel(): string {
-  const state = getUpdateState();
-  switch (state.status) {
-    case 'checking':
-      return '正在检查更新...';
-    case 'available':
-      return state.availableVersion ? `检查并准备更新 ${state.availableVersion}` : '检查并准备更新';
-    case 'downloading':
-      return state.percent === null ? '正在下载更新...' : `正在下载更新 ${Math.round(state.percent)}%`;
-    case 'downloaded':
-      return state.installMode === 'manual' ? '检查是否有更新版本' : '检查更新（已准备安装）';
-    case 'error':
-      return '检查更新失败，重试';
-    case 'unsupported':
-      return '检查更新（安装包版本可用）';
-    default:
-      return '检查更新';
-  }
-}
-
-function updateTrayEnabled(): boolean {
-  const state = getUpdateState();
-  return state.status !== 'checking' && state.status !== 'downloading' && state.status !== 'unsupported';
-}
-
-async function handleTrayUpdateClick(): Promise<void> {
-  showSettingsWindow();
-  await checkAndStageUpdate(true);
 }
 
 function isHistoryAction(action: AlertAction): boolean {

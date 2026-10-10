@@ -7,11 +7,9 @@ interface TopBarProps {
   searchPlaceholder: string;
   onSearchChange: (q: string) => void;
   saveLabel: SaveLabel;
-  onNotifications: () => void;
-  hasUpdateNotice?: boolean;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ searchPlaceholder, onSearchChange, saveLabel, onNotifications, hasUpdateNotice = false }) => {
+export const TopBar: React.FC<TopBarProps> = ({ searchPlaceholder, onSearchChange, saveLabel }) => {
   return (
     <header className="topbar">
       <div className="topbar-search">
@@ -29,10 +27,7 @@ export const TopBar: React.FC<TopBarProps> = ({ searchPlaceholder, onSearchChang
           <span className="save-chip-dot" />
           {saveLabel.text}
         </span>
-        <button type="button" className="topbar-icon-btn" onClick={onNotifications} aria-label="软件更新">
-          <Bell size={18} />
-          {hasUpdateNotice && <span className="notif-dot" />}
-        </button>
+
       </div>
     </header>
   );

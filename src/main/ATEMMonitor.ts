@@ -1,3 +1,4 @@
+import { requireLanHost } from '../shared/offlineNetwork.js';
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
 import { createSocket, type Socket } from 'node:dgram';
@@ -287,7 +288,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     });
 
     try {
-      await atem.connect(this.host, ATEM_PORT);
+      await atem.connect(requireLanHost(this.host), ATEM_PORT);
     } catch (error) {
       if (!isCurrentConnection()) {
         return this.getSnapshot();
@@ -730,7 +731,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     });
 
     try {
-      await atem.connect(host, ATEM_PORT);
+      await atem.connect(requireLanHost(host), ATEM_PORT);
       await connected;
       return atem;
     } catch (error) {

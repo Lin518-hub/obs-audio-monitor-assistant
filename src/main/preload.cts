@@ -31,7 +31,6 @@ const obsGuardApi = {
   resetConfig: () => ipcRenderer.invoke('config:reset') as Promise<AppSnapshot>,
   refreshInputs: () => ipcRenderer.invoke('inputs:refresh'),
   reconnect: () => ipcRenderer.invoke('obs:reconnect') as Promise<AppSnapshot>,
-  reconnectRemote: () => ipcRenderer.invoke('remote:reconnect') as Promise<void>,
   testConnection: (patch: Partial<AppConfig>) =>
     ipcRenderer.invoke('obs:test-connection', patch) as Promise<TestConnectionResult>,
   setMonitoringActive: (active: boolean) => ipcRenderer.invoke('monitor:set-active', active) as Promise<AppSnapshot>,
@@ -48,10 +47,6 @@ const obsGuardApi = {
   updateAlertPosition: (displayId: number, position: { x: number; y: number }) =>
     ipcRenderer.invoke('alert:position-updated', displayId, position) as Promise<void>,
   getDisplays: () => ipcRenderer.invoke('displays:get'),
-  getUpdateState: () => ipcRenderer.invoke('update:get-state') as Promise<UpdateSnapshot>,
-  checkForUpdates: () => ipcRenderer.invoke('update:check') as Promise<UpdateSnapshot>,
-  downloadUpdate: () => ipcRenderer.invoke('update:download') as Promise<UpdateSnapshot>,
-  installUpdate: () => ipcRenderer.invoke('update:install') as Promise<UpdateSnapshot>,
   checkPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:check', settings) as Promise<PreflightCheckResult>,
   launchPreflightApps: (settings: PreflightSettings) => ipcRenderer.invoke('preflight:launch-all', settings) as Promise<PreflightLaunchResult>,
   launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings, retry = false) => ipcRenderer.invoke('preflight:launch', id, settings, retry) as Promise<PreflightLaunchResult>,
@@ -74,14 +69,6 @@ const obsGuardApi = {
 
     return () => {
       ipcRenderer.off('meter:update', listener);
-    };
-  },
-  onUpdateState: (callback: (snapshot: UpdateSnapshot) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, snapshot: UpdateSnapshot) => callback(snapshot);
-    ipcRenderer.on('update:state', listener);
-
-    return () => {
-      ipcRenderer.off('update:state', listener);
     };
   },
   /** ATEM 导播台 API */

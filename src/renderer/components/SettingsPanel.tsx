@@ -33,10 +33,7 @@ import {
   DisplaySection,
   FloatingWindowSection,
   HistorySection,
-  MobileAccessSection,
-  RemoteAccessSection,
   RulesSection,
-  UpdatesSection
 } from './settings/SettingsSections';
 
 type SectionId = 'devices' | 'rules' | 'alerts' | 'system' | 'maintenance';
@@ -47,10 +44,6 @@ interface SettingsPanelProps {
   snapshot: AppSnapshot;
   draft: AppConfig;
   onChangeDraft: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-  updateState: UpdateSnapshot | null;
-  onCheckUpdate: () => void;
-  onDownloadUpdate: () => void;
-  onInstallUpdate: () => void;
   testingConnection: boolean;
   testResult: TestConnectionResult | null;
   onTestConnection: () => void;
@@ -72,7 +65,7 @@ const tabs: TabItem[] = [
   { id: 'devices', label: '连接与设备', description: 'OBS、音源与ATEM', icon: Cable },
   { id: 'rules', label: '检测规则', description: '静音、机位与多音源', icon: ShieldCheck },
   { id: 'alerts', label: '提醒与窗口', description: '报警、声音、浮窗与多屏', icon: BellRing },
-  { id: 'system', label: '系统与更新', description: '后台、更新与本地数据', icon: Settings2 },
+  { id: 'system', label: '系统与本地', description: '后台运行与本地数据', icon: Settings2 },
   { id: 'maintenance', label: '维护工具', description: '测试、说明与恢复', icon: Wrench }
 ];
 
@@ -221,10 +214,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     snapshot,
     draft,
     onChangeDraft,
-    updateState,
-    onCheckUpdate,
-    onDownloadUpdate,
-    onInstallUpdate,
     testingConnection,
     testResult,
     onTestConnection,
@@ -326,13 +315,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
   if (!open && !closing) return null;
 
   const activeTab = tabs.find((tab) => tab.id === active) ?? tabs[0];
-  const updateSummary = !updateState
-    ? `当前 v${appVersion}`
-    : updateState.status === 'available'
-      ? `可更新至 v${updateState.availableVersion ?? ''}`
-      : updateState.status === 'downloaded'
-        ? '更新已下载'
-        : `当前 v${updateState.currentVersion}`;
+
   const alertSummary = `${draft.silenceDurationSeconds} 秒 · ${draft.silenceThresholdDb} dB · ${draft.alertSoundEnabled ? '声音开启' : '静音提醒'}`;
   const atemTimerSummary = draft.atemCameraTimeAlertEnabled
     ? `${Math.round(draft.atemCameraTimeLimitSeconds / 60)} 分钟标红 · ${draft.atemCameraFullscreenAlertEnabled ? '强提醒开启' : '仅小浮窗'}`
@@ -417,34 +400,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 >
                   <ATEMSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
                 </SettingsDisclosure>
-                <SettingsDisclosure
-                  {...disclosureState('devices-remote')}
-                  icon={Monitor}
-                  title="直播间与监控服务器"
-                  description="直播间名称、服务器状态与重新连接"
-                  summary={`${draft.livestreamRoomName.trim() || '尚未命名'} · ${snapshot.remoteAccessConnected ? '服务器已连接' : '服务器未连接'}`}
-                  tone={snapshot.remoteAccessConnected ? 'success' : 'warning'}
-                >
-                  <RemoteAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
-                </SettingsDisclosure>
-                {draft.developerModeEnabled && (
-                  <SettingsDisclosure
-                    {...disclosureState('devices-mobile')}
-                    icon={Smartphone}
-                    title="手机监看"
-                    description="扫码审批、移动监看与音频画中画"
-                    summary={draft.remoteAccessEnabled
-                      ? snapshot.remoteAccessConnected
-                        ? `已启用 · ${snapshot.remoteAccessOnlineMobileClients} 台在线`
-                        : '已启用 · 等待服务'
-                      : '开发者功能 · 未启用'}
-                    tone={draft.remoteAccessEnabled
-                      ? snapshot.remoteAccessConnected ? 'success' : 'warning'
-                      : 'default'}
-                  >
-                    <MobileAccessSection draft={draft} snapshot={snapshot} onChange={onChangeDraft} />
-                  </SettingsDisclosure>
-                )}
+
+
               </>
             )}
 
@@ -527,16 +484,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 >
                   <BackgroundSection draft={draft} onChange={onChangeDraft} snapshot={snapshot} />
                 </SettingsDisclosure>
-                <SettingsDisclosure
-                  {...disclosureState('system-updates')}
-                  icon={Download}
-                  title="软件更新"
-                  description="版本状态与更新线路"
-                  summary={updateSummary}
-                  tone={updateState?.status === 'available' || updateState?.status === 'downloaded' ? 'warning' : 'default'}
-                >
-                  <UpdatesSection draft={draft} onChange={onChangeDraft} updateState={updateState} onCheck={onCheckUpdate} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} />
-                </SettingsDisclosure>
+
                 <SettingsDisclosure
                   {...disclosureState('system-history')}
                   icon={History}

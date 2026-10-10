@@ -152,7 +152,7 @@ const ConnectionStep: React.FC<{
         <input
           className="onboarding-input"
           type="text"
-          value={draft.obsHost}
+          value="127.0.0.1" readOnly
           onChange={(e) => onUpdateDraft('obsHost', e.target.value)}
           placeholder="127.0.0.1"
         />

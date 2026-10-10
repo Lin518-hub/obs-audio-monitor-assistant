@@ -158,23 +158,23 @@ describe('ConfigStore', () => {
 
     const enabled = await new ConfigStore().load();
     expect(enabled.developerModeEnabled).toBe(true);
-    expect(enabled.remoteAccessEnabled).toBe(true);
+    expect(enabled.remoteAccessEnabled).toBe(false);
 
     await store.update({ developerModeEnabled: false });
     expect((await new ConfigStore().load()).developerModeEnabled).toBe(false);
   });
 
-  it('enables automatic updates when loading a legacy config without the setting', async () => {
+  it('keeps automatic updates disabled in offline configs', async () => {
     mkdirSync(electronMock.userData, { recursive: true });
     const { autoUpdateEnabled: _removed, ...legacyConfig } = DEFAULT_CONFIG;
     writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify(legacyConfig));
 
     const migrated = await new ConfigStore().load();
 
-    expect(migrated.autoUpdateEnabled).toBe(true);
+    expect(migrated.autoUpdateEnabled).toBe(false);
   });
 
-  it('resets the legacy room identity once while keeping central monitoring always on', async () => {
+  it('disables legacy remote settings in the offline build', async () => {
     mkdirSync(electronMock.userData, { recursive: true });
     const { monitoringIdentityRevision: _removed, ...legacyConfig } = DEFAULT_CONFIG;
     writeFileSync(join(electronMock.userData, 'config.json'), JSON.stringify({
@@ -188,7 +188,7 @@ describe('ConfigStore', () => {
     const migrated = await new ConfigStore().load();
 
     expect(migrated.livestreamRoomName).toBe('');
-    expect(migrated.centralMonitoringEnabled).toBe(true);
+    expect(migrated.centralMonitoringEnabled).toBe(false);
     expect(migrated.remoteAccessEnabled).toBe(false);
     expect(migrated.remoteServerUrl).toBe(DEFAULT_CONFIG.remoteServerUrl);
     expect(migrated.monitoringIdentityRevision).toBe(DEFAULT_CONFIG.monitoringIdentityRevision);
@@ -430,8 +430,8 @@ describe('ConfigStore', () => {
       remoteDeviceUuid: beforeReset.remoteDeviceUuid,
       remoteDeviceSecret: beforeReset.remoteDeviceSecret
     });
-    expect(reset.remoteDeviceUuid).toMatch(/^[0-9a-f-]{20,64}$/i);
-    expect(reset.remoteDeviceSecret).toMatch(/^[0-9a-f]{64,128}$/i);
+    expect(reset.remoteDeviceUuid).toBe('');
+    expect(reset.remoteDeviceSecret).toBe('');
   });
 
   it('serializes concurrent patches without losing an earlier setting', async () => {

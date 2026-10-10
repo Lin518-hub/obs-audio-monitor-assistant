@@ -34,7 +34,6 @@ export interface ObsGuardApi {
   resetConfig: () => Promise<AppSnapshot>;
   refreshInputs: () => Promise<InputOption[]>;
   reconnect: () => Promise<AppSnapshot>;
-  reconnectRemote: () => Promise<void>;
   testConnection: (patch: Partial<AppConfig>) => Promise<TestConnectionResult>;
   setMonitoringActive: (active: boolean) => Promise<AppSnapshot>;
   setPaused: (paused: boolean) => Promise<AppSnapshot>;
@@ -49,10 +48,6 @@ export interface ObsGuardApi {
   clearHistory: () => Promise<AppSnapshot['history']>;
   updateAlertPosition: (displayId: number, position: { x: number; y: number }) => Promise<void>;
   getDisplays: () => Promise<AppSnapshot['displays']>;
-  getUpdateState: () => Promise<UpdateSnapshot>;
-  checkForUpdates: () => Promise<UpdateSnapshot>;
-  downloadUpdate: () => Promise<UpdateSnapshot>;
-  installUpdate: () => Promise<UpdateSnapshot>;
   checkPreflightApps: (settings: PreflightSettings) => Promise<PreflightCheckResult>;
   launchPreflightApps: (settings: PreflightSettings) => Promise<PreflightLaunchResult>;
   launchPreflightApp: (id: PreflightAppId, settings: PreflightSettings, retry?: boolean) => Promise<PreflightLaunchResult>;
@@ -63,7 +58,6 @@ export interface ObsGuardApi {
   getDroppedPreflightPath: (file: File) => string;
   onSnapshot: (callback: (snapshot: AppSnapshot) => void) => () => void;
   onMeter: (callback: (frame: AudioMeterFrame) => void) => () => void;
-  onUpdateState: (callback: (snapshot: UpdateSnapshot) => void) => () => void;
   getATEMState: () => Promise<AppSnapshot>;
   clearATEMHistory: () => Promise<AppSnapshot['atemSwitchHistory']>;
   changePreviewInput: (input: number) => Promise<void>;

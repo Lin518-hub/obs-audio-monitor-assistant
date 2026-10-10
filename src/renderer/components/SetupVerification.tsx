@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { AppConfig, AppSnapshot } from '../../shared/types';
+import { useVerificationMeter } from '../hooks/useVerificationMeter';
 export function SetupVerification({ draft, snapshot, verifiedSource, onVerified, confirmed, onConfirmed }: {
   draft: AppConfig; snapshot: AppSnapshot; verifiedSource: string; onVerified: (source: string) => void; confirmed: boolean; onConfirmed: () => void;
 }) {
@@ -8,11 +9,12 @@ export function SetupVerification({ draft, snapshot, verifiedSource, onVerified,
   const [tested, setTested] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const {timestamp: sourceTimestamp, level: sourceLevel} = useVerificationMeter(snapshot, draft.targetInputName);
   useEffect(() => { setStartedAt(0); setHeardSource(''); }, [draft.targetInputName]);
   useEffect(() => {
-    if (startedAt && snapshot.connected && snapshot.activeInputName === draft.targetInputName
-      && (snapshot.lastAudioMeterReceivedAt ?? 0) > startedAt && (snapshot.lastLevelDb ?? -100) > draft.silenceThresholdDb) setHeardSource(draft.targetInputName);
-  }, [snapshot, draft.targetInputName, draft.silenceThresholdDb, startedAt]);
+    if (startedAt && snapshot.connected && sourceTimestamp > startedAt && Date.now() - sourceTimestamp < 2000
+      && sourceLevel !== null && sourceLevel > draft.silenceThresholdDb) setHeardSource(draft.targetInputName);
+  }, [snapshot.connected, sourceTimestamp, sourceLevel, draft.targetInputName, draft.silenceThresholdDb, startedAt]);
   const test = async () => {
     setBusy(true); setError(''); setTested(false);
     try { await window.obsGuard.testAlert(); setTested(true); }
@@ -22,7 +24,7 @@ export function SetupVerification({ draft, snapshot, verifiedSource, onVerified,
   const audioConfirmed = Boolean(verifiedSource && verifiedSource === draft.targetInputName);
   const heard = Boolean(heardSource && heardSource === draft.targetInputName);
   const ready = snapshot.connected && Boolean(draft.targetInputName);
-  const level = ready && snapshot.activeInputName === draft.targetInputName && Date.now() - (snapshot.lastAudioMeterReceivedAt ?? 0) < 2000 ? snapshot.lastLevelDb : null;
+  const level = ready && Date.now() - sourceTimestamp < 2000 ? sourceLevel : null;
   return <div className="onboarding-card-body setup-verification">
     <div className="onboarding-step-title"><h2>确认音频与提醒</h2></div>
     <p className="onboarding-step-desc">完成两项检查，确保检测的是正确声音，并且能看到报警。</p>

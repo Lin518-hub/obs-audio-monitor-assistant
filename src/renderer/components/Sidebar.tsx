@@ -24,7 +24,6 @@ const groups: Array<{
       { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
       { id: 'preflight', label: '开播检查', icon: ListChecks },
       { id: 'safety', label: '投影安全区', icon: ScanLine },
-      { id: 'monitor', label: '监控面板', icon: Activity, badge: 'BETA' }
     ]
   },
   {

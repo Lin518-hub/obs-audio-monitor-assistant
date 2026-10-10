@@ -17,9 +17,9 @@ const electronUrls = [
   `https://npmmirror.com/mirrors/electron/v${electronVersion}/${electronZipName}`,
   `https://github.com/electron/electron/releases/download/v${electronVersion}/${electronZipName}`
 ];
-const unpackDir = join(releaseDir, `OBS-Audio-Monitor-Assistant-${appVersion}-win-x64-portable`);
+const unpackDir = join(releaseDir, `OBS-Audio-Monitor-Offline-${appVersion}-win-x64-portable`);
 const appDir = join(unpackDir, 'resources', 'app');
-const zipPath = join(releaseDir, `OBS-Audio-Monitor-Assistant-${appVersion}-win-x64-portable.zip`);
+const zipPath = join(releaseDir, `OBS-Audio-Monitor-Offline-${appVersion}-win-x64-portable.zip`);
 
 rmSync(workDir, { recursive: true, force: true });
 rmSync(unpackDir, { recursive: true, force: true });
@@ -54,6 +54,8 @@ execFileSync('unzip', ['-q', electronZip, '-d', unpackDir], { stdio: 'inherit' }
 console.log('Writing app payload');
 mkdirSync(appDir, { recursive: true });
 cpSync(join(root, 'dist'), join(appDir, 'dist'), { recursive: true });
+copyFileSync(join(root, 'LICENSE'), join(appDir, 'LICENSE'));
+copyFileSync(join(root, 'README.md'), join(appDir, 'README.md'));
 copyFileSync(join(root, 'package-lock.json'), join(appDir, 'package-lock.json'));
 writeFileSync(
   join(appDir, 'package.json'),

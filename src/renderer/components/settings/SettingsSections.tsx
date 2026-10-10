@@ -283,7 +283,7 @@ export const ConnectionSection: React.FC<{
   <Section id="settings-connection" icon={Cable} title="OBS 连接" description="WebSocket 地址与密码">
     <div className="settings-field">
       <label className="settings-field-label" htmlFor="conn-host">主机</label>
-      <input id="conn-host" className="input" value={draft.obsHost} onChange={(e) => onChange('obsHost', e.target.value)} placeholder="127.0.0.1" />
+      <input id="conn-host" className="input" value="127.0.0.1" readOnly placeholder="127.0.0.1" />
     </div>
     <div className="settings-field-row">
       <div className="settings-field">
@@ -559,7 +559,7 @@ export const ATEMRulesSection: React.FC<{
         <div className="settings-field settings-fixed-rule">
           <label className="settings-field-label">统一机位提醒时间</label>
           <strong>10 分钟标红 · 12 分钟电脑强提醒</strong>
-          <span className="settings-field-hint">监控中心和企业微信按 10 分钟提醒；电脑端正式弹窗仅在开启强提醒后于 12 分钟出现。</span>
+          <span className="settings-field-hint">开启强提醒后，电脑端会在 12 分钟时弹出提醒。</span>
         </div>
         <ToggleRow
           id="atem-camera-fullscreen-alert"
@@ -674,7 +674,7 @@ export const RulesSection: React.FC<{
       <div className="settings-field settings-fixed-rule">
         <label className="settings-field-label">静音报警时长</label>
         <strong>2 分钟</strong>
-        <span className="settings-field-hint">客户端、监控中心和企业微信使用同一时间。</span>
+        <span className="settings-field-hint">设置本机静音提醒的等待时间。</span>
       </div>
       <div className="settings-field">
         <label className="settings-field-label" htmlFor="rule-threshold">静音阈值</label>
@@ -883,137 +883,6 @@ export const BackgroundSection: React.FC<{
   </Section>
 );
 
-export const RemoteAccessSection: React.FC<{
-  draft: AppConfig;
-  snapshot: AppSnapshot;
-  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, snapshot, onChange }) => {
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState('');
-  const connecting = busy || snapshot.remoteAccessConnectionState === 'connecting';
-  const reconnect = async () => {
-    if (busy) return;
-    setBusy(true); setError('');
-    try { await window.obsGuard.reconnectRemote(); }
-    catch { setError('重连请求失败，请稍后重试'); }
-    finally { setBusy(false); }
-  };
-  return (
-  <Section id="settings-remote" icon={Monitor} title="直播间与监控服务器" description="设置直播间名称，查看监控中心连接状态">
-    <div className="room-identity-setting">
-      <label className="settings-field-label" htmlFor="livestream-room-name">直播间名称</label>
-      <input
-        id="livestream-room-name"
-        className="input"
-        value={draft.livestreamRoomName}
-        maxLength={60}
-        onChange={(event) => onChange('livestreamRoomName', event.target.value)}
-        placeholder="例如：品牌 A 一号直播间"
-        aria-required="true"
-      />
-      <span className="settings-field-help">用于区分这台检测电脑所属的直播间；每个直播间只使用一台电脑。</span>
-    </div>
-    <div className="monitor-server-card">
-      <div className="monitor-server-heading"><strong role="status">{snapshot.remoteAccessConnected ? '监控服务器已连接' : connecting ? '正在连接监控服务器…' : '监控服务器未连接'}</strong></div>
-      <p className="monitor-server-address">{snapshot.remoteAccessActiveServerUrl || snapshot.config.remoteServerUrl}</p>
-      <p className="settings-field-help">最后同步：{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleString() : '尚未同步'}</p>
-      {(error || snapshot.remoteAccessErrorMessage) && <p role="alert">{error || snapshot.remoteAccessErrorMessage}</p>}
-      <button type="button" className="btn-secondary" disabled={connecting || !snapshot.config.livestreamRoomName.trim()} onClick={() => void reconnect()}>
-        <RefreshCw size={16} />{connecting ? '连接中…' : '重新连接服务器'}
-      </button>
-      <p className="settings-field-help">重连不会中断 OBS 本地音频检测。请先填写并保存直播间名称。</p>
-    </div>
-  </Section>
-);
-};
-
-export const MobileAccessSection: React.FC<{
-  draft: AppConfig;
-  snapshot: AppSnapshot;
-  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-}> = ({ draft, snapshot, onChange }) => {
-  const [qrDataUrl, setQrDataUrl] = React.useState('');
-  const [copyLabel, setCopyLabel] = React.useState('复制扫码链接');
-  const normalizedServerUrl = draft.remoteServerUrl.trim().replace(/\/$/, '');
-  const usingBuiltInService = normalizedServerUrl === LAN_REMOTE_SERVER_URL || normalizedServerUrl === PUBLIC_REMOTE_SERVER_URL;
-  const pairFallbackBase = usingBuiltInService ? PUBLIC_REMOTE_SERVER_URL : normalizedServerUrl;
-
-  React.useEffect(() => {
-    let active = true;
-    if (!draft.remoteAccessEnabled || !snapshot.remoteAccessPairUrl) {
-      setQrDataUrl('');
-      return () => { active = false; };
-    }
-    void QRCode.toDataURL(snapshot.remoteAccessPairUrl, {
-      width: 320,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#0F172A', light: '#FFFFFF' }
-    }).then((url) => { if (active) setQrDataUrl(url); });
-    return () => { active = false; };
-  }, [draft.remoteAccessEnabled, snapshot.remoteAccessPairUrl]);
-
-  const status = snapshot.remoteAccessConnected
-    ? { label: snapshot.remoteAccessRouteType === 'lan' ? '已连接局域网服务' : '已连接公网服务', tone: 'ok' }
-    : snapshot.remoteAccessConnectionState === 'connecting'
-      ? { label: '正在连接手机监看服务', tone: 'pending' }
-      : snapshot.remoteAccessErrorMessage
-        ? { label: snapshot.remoteAccessErrorMessage, tone: 'bad' }
-        : { label: '等待连接手机监看服务', tone: 'idle' };
-
-  const copyPairUrl = async () => {
-    if (!snapshot.remoteAccessPairUrl) return;
-    await navigator.clipboard.writeText(snapshot.remoteAccessPairUrl);
-    setCopyLabel('已复制');
-    window.setTimeout(() => setCopyLabel('复制扫码链接'), 1500);
-  };
-
-  return (
-    <Section id="settings-mobile-access" icon={QrCode} title="手机远程监看" description="开发者功能 · 只读监看与音频画中画">
-      <ToggleRow
-        id="remote-access-enabled"
-        title="启用手机扫码监看"
-        description="手机首次访问需要后台审批；关闭后不影响集中监控和企业微信报警"
-        checked={draft.remoteAccessEnabled}
-        onChange={(value) => onChange('remoteAccessEnabled', value)}
-      />
-      <div className={`remote-route-card ${usingBuiltInService ? 'auto' : 'custom'}`}>
-        <Route size={18} />
-        <div>
-          <strong>{usingBuiltInService ? '自动选择连接线路' : '使用自定义远程服务'}</strong>
-          <span>{usingBuiltInService ? '局域网可用时优先连接，否则自动切换公网 HTTPS。' : normalizedServerUrl}</span>
-        </div>
-        {usingBuiltInService && <b>自动</b>}
-      </div>
-      <div className={`diagnostic-result ${status.tone}`}><Wifi size={15} /> {status.label}</div>
-      <div className="remote-metrics-grid">
-        <div><span>线路类型</span><strong>{snapshot.remoteAccessRouteType === 'lan' ? '局域网' : snapshot.remoteAccessRouteType === 'public' ? '公网 HTTPS' : snapshot.remoteAccessRouteType === 'custom' ? '自定义' : '--'}</strong></div>
-        <div><span>服务延迟</span><strong>{snapshot.remoteAccessLatencyMs === null ? '--' : `${snapshot.remoteAccessLatencyMs} ms`}</strong></div>
-        <div><span>在线手机</span><strong>{snapshot.remoteAccessOnlineMobileClients} 台</strong></div>
-        <div><span>最后同步</span><strong>{snapshot.remoteAccessLastSyncAt ? new Date(snapshot.remoteAccessLastSyncAt).toLocaleTimeString() : '--'}</strong></div>
-      </div>
-      {draft.remoteAccessEnabled ? (
-        <div className="remote-access-grid">
-          <div className="remote-qr-card">
-            {qrDataUrl
-              ? <img src={qrDataUrl} alt="手机远程监看二维码" />
-              : <div className="remote-qr-placeholder"><QrCode size={42} /><span>连接服务后生成二维码</span></div>}
-          </div>
-          <div className="remote-access-copy">
-            <strong>首次扫码需要审批</strong>
-            <p>管理员批准后，手机可查看音频、机位和 OBS 状态；画中画只显示麦克风状态。</p>
-            <button type="button" className="btn-secondary" disabled={!snapshot.remoteAccessPairUrl} onClick={() => void copyPairUrl()}>{copyLabel}</button>
-            <code>{snapshot.remoteAccessPairUrl || `${pairFallbackBase}/pair/等待连接`}</code>
-          </div>
-        </div>
-      ) : (
-        <div className="settings-hint">手机访问已关闭。集中监控、版本上报和企业微信报警仍会继续运行。</div>
-      )}
-      <div className="settings-hint warn">手机端仅提供只读监看，不允许远程切换 ATEM。请只批准可信设备，并及时撤销不再使用的授权。</div>
-    </Section>
-  );
-};
-
 // ====== 6. 诊断测试 ======
 export const DiagnosticsSection: React.FC<{
   mode?: 'all' | 'tests' | 'support';
@@ -1128,110 +997,6 @@ export const HistorySection: React.FC<{
   </Section>
 );
 
-// ====== 8. 软件更新 ======
-const updateIcon = (state: UpdateSnapshot) => {
-  switch (state.status) {
-    case 'available': case 'downloading': return <Download size={16} />;
-    case 'downloaded': return <Info size={16} />;
-    case 'error': return <AlertTriangle size={16} />;
-    default: return <RefreshCw size={16} />;
-  }
-};
-const updateTone = (state: UpdateSnapshot) => {
-  switch (state.status) {
-    case 'available': return 'warning';
-    case 'downloaded': return 'success';
-    case 'error': return 'error';
-    default: return 'info';
-  }
-};
-const updateTitle = (state: UpdateSnapshot) => {
-  switch (state.status) {
-    case 'available': return state.availableVersion ? `发现 v${state.availableVersion}` : '发现新版本';
-    case 'downloading': return '正在下载更新';
-    case 'downloaded': return state.downloadedVersion
-      ? `v${state.downloadedVersion} 已下载`
-      : '更新已下载';
-    case 'error': return '更新源暂时不可用';
-    case 'not_available': return '当前为最新版本';
-    case 'checking': return '正在检查更新';
-    default: return '检查软件更新';
-  }
-};
-
-export const UpdatesSection: React.FC<{
-  draft: AppConfig;
-  onChange: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-  updateState: UpdateSnapshot | null;
-  onCheck: () => void;
-  onDownload: () => void;
-  onInstall: () => void;
-}> = ({ draft, onChange, updateState, onCheck, onDownload, onInstall }) => {
-  if (!updateState) {
-    return <Section id="settings-updates" icon={Download} title="软件更新" description="正在加载…"><div className="empty-block">正在加载更新信息</div></Section>;
-  }
-  const busy = updateState.status === 'checking' || updateState.status === 'downloading';
-  const canCheck = updateState.status !== 'unsupported' && !busy;
-  const tone = updateTone(updateState);
-  return (
-    <Section id="settings-updates" icon={Download} title="软件更新" description="内部服务器优先，自动保持最新">
-      <div className="update-panel">
-        <div className="update-panel-head">
-          <span className={`update-panel-icon tone-${tone}`}>{updateIcon(updateState)}</span>
-          <div className="update-panel-copy">
-            <div className="update-panel-title">{updateTitle(updateState)}</div>
-            <div className="update-panel-msg">{updateState.message}</div>
-          </div>
-        </div>
-        <ToggleRow
-          id="auto-update-enabled"
-          checked={draft.autoUpdateEnabled}
-          onChange={(checked) => onChange('autoUpdateEnabled', checked)}
-          title="自动保持软件最新"
-          description={updateState.installMode === 'manual'
-            ? '自动检测新版本；macOS 需要从发布页下载并替换应用'
-            : '后台优先从内部服务器预下载，退出或下次启动时静默安装'}
-        />
-        <div className="about-list">
-          <div className="about-row"><span>当前版本</span><strong>v{updateState.currentVersion}</strong></div>
-          <div className="about-row"><span>当前更新源</span><strong>{updateState.sourceLabel}</strong></div>
-          {updateState.sourceUrl && <div className="about-row"><span>源地址</span><strong>{updateState.sourceUrl}</strong></div>}
-          {updateState.attemptedSources.length > 0 && <div className="about-row"><span>已尝试</span><strong>{updateState.attemptedSources.join('、')}</strong></div>}
-          {updateState.lastCheckedAt && <div className="about-row"><span>上次检查</span><strong>{new Date(updateState.lastCheckedAt).toLocaleString()}</strong></div>}
-        </div>
-        {(updateState.status === 'downloading' || updateState.status === 'downloaded') && (
-          <div className="update-progress"><span style={{ width: `${updateState.percent ?? 0}%` }} /></div>
-        )}
-        <div className="update-actions">
-          {updateState.status === 'available' && (
-            <button type="button" className="btn-primary" onClick={onDownload} disabled={busy}>
-              <Download size={14} />
-              {updateState.installMode === 'manual' ? '立即下载' : '立即下载并准备安装'}
-            </button>
-          )}
-          {updateState.status === 'downloaded' && (
-            <button type="button" className="btn-primary" onClick={onInstall}>
-              {updateState.installMode === 'manual' ? '在 Finder 中显示安装包' : '立即安装并重启'}
-            </button>
-          )}
-          <button type="button" className="btn-secondary" onClick={onCheck} disabled={!canCheck}>
-            <RefreshCw size={14} />
-            {updateState.status === 'checking'
-              ? '检查中…'
-              : updateState.status === 'downloading'
-                ? `下载中${updateState.percent === null ? '' : ` ${Math.round(updateState.percent)}%`}`
-                : '检查更新'}
-          </button>
-        </div>
-        {updateState.status === 'unsupported' && (
-          <div className="settings-hint warn">开发模式不会检查更新。安装包版本会自动启用。</div>
-        )}
-      </div>
-
-    </Section>
-  );
-};
-
 // ====== 9. 关于 ======
 export const AboutSection: React.FC<{
   appVersion: string;
@@ -1245,7 +1010,7 @@ export const AboutSection: React.FC<{
         <span>当前版本</span><strong>v{appVersion}</strong>
       </button>
       <div className="about-row"><span>当前音源</span><strong>{targetName}</strong></div>
-      <div className="about-row"><span>更新方式</span><strong>GitHub / 镜像源自动更新</strong></div>
+      <div className="about-row"><span>更新方式</span><strong>离线最终版，无自动更新</strong></div>
     </div>
     <p className="settings-section-hint">
       OBS 音频检测助手是一款直播现场音频异常提醒工具。仅连接本地 OBS WebSocket,数据不离开本机。

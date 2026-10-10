@@ -43,7 +43,7 @@ const atemMock = vi.hoisted(() => {
 
     async connect(host: string, port?: number): Promise<void> {
       this.connectCalls.push({ host, port });
-      if (host === '192.0.2.1') throw new Error('ECONNREFUSED');
+      if (host === '192.168.254.254') throw new Error('ECONNREFUSED');
       this.emit('connected');
       if (atemMock.emitStateOnConnect) this.emit('stateChanged', this.state);
     }
@@ -273,7 +273,7 @@ describe('ATEMMonitor connection lifecycle', () => {
 
   it('returns a clear failure when the ATEM refuses the connection', async () => {
     const monitor = new ATEMMonitor();
-    const result = await monitor.testConnection('192.0.2.1');
+    const result = await monitor.testConnection('192.168.254.254');
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('ECONNREFUSED');

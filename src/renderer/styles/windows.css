@@ -170,7 +170,7 @@
   height: 100vh;
   overflow: hidden;
   position: relative;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 .floating-shell {
   position: relative;
@@ -182,7 +182,7 @@
   padding: calc(12px * var(--floating-ui-scale, 1)) calc(14px * var(--floating-ui-scale, 1));
   border-radius: calc(14px * var(--floating-ui-scale, 1));
   overflow: hidden;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   contain: layout paint style;
   transition: background 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
 }
@@ -877,11 +877,11 @@ body:not([data-route="settings"]) #root {
   box-shadow: inset 0 0 0 2px rgba(248,113,113,.95), inset 0 0 30px rgba(239,68,68,.45);
   animation: floating-recovery-confirm 920ms cubic-bezier(.22,.76,.24,1) both;
 }
-.floating-resize { position: absolute; z-index: 20; -webkit-app-region: no-drag; touch-action: none; }
-.floating-resize-n, .floating-resize-s { left: 18px; right: 18px; height: 5px; cursor: ns-resize; }
+.floating-resize { position: absolute; z-index: 20; -webkit-app-region: no-drag; touch-action: none; background: rgba(128,128,128,.01); }
+.floating-resize-n, .floating-resize-s { left: 18px; right: 18px; height: 10px; cursor: ns-resize; }
 .floating-resize-n { top: 0; }
 .floating-resize-s { bottom: 0; }
-.floating-resize-e, .floating-resize-w { top: 18px; bottom: 18px; width: 5px; cursor: ew-resize; }
+.floating-resize-e, .floating-resize-w { top: 18px; bottom: 18px; width: 10px; cursor: ew-resize; }
 .floating-resize-e { right: 0; }
 .floating-resize-w { left: 0; }
 .floating-resize-ne, .floating-resize-nw, .floating-resize-se, .floating-resize-sw { width: 18px; height: 18px; }
@@ -927,3 +927,7 @@ body[data-route="settings"] #root {
 .floating-time > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .floating-locked, .floating-locked * { -webkit-app-region: no-drag !important; }
+
+/* Keep native dragging inside the resize hit areas. */
+.floating-header { -webkit-app-region:drag; }
+.floating-window-actions { position:relative; z-index:21; }

@@ -364,7 +364,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     const obs = new OBSWebSocket();
 
     try {
-      await obs.connect(`ws://${config.obsHost}:${config.obsPort}`, config.obsPassword || undefined, {
+      await obs.connect(`ws://127.0.0.1:${config.obsPort}`, config.obsPassword || undefined, {
         eventSubscriptions: EventSubscription.None
       });
     } catch (error) {
@@ -476,7 +476,7 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     });
 
     try {
-      await obs.connect(`ws://${this.config.obsHost}:${this.config.obsPort}`, this.config.obsPassword || undefined, {
+      await obs.connect(`ws://127.0.0.1:${this.config.obsPort}`, this.config.obsPassword || undefined, {
         eventSubscriptions: EventSubscription.All | EventSubscription.InputVolumeMeters
       });
       this.state = {
@@ -1052,7 +1052,11 @@ export class OBSMonitor extends EventEmitter<MonitorEvents> {
     this.pendingMeterFrame = {
       timestamp: now,
       activeInputName: this.activeInputName || this.getTargetInputNames()[0] || '',
-      levelDb: this.state.lastLevelDb
+      levelDb: this.state.lastLevelDb,
+      inputs: this.getTargetInputNames().map(inputName => {
+        const input = this.inputStates.get(inputName);
+        return { inputName, levelDb: input?.lastLevelDb ?? null, timestamp: input?.lastMeterAt ?? 0 };
+      })
     };
     if (this.meterFrameTimer) return;
 
