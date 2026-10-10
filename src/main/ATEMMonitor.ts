@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process';
 import { createSocket, type Socket } from 'node:dgram';
 import { networkInterfaces } from 'node:os';
 import { promisify } from 'node:util';
-import { Atem, AtemConnectionStatus, Enums } from 'atem-connection';
+import type { Atem } from 'atem-connection';
+import * as Enums from 'atem-connection/dist/enums/index.js';
 import type { AtemState } from 'atem-connection';
 import { CAMERA_ALERT_SECONDS, CAMERA_DESKTOP_ALERT_SECONDS } from '../shared/reminderTiming.js';
 import type { AlertAction, ATEMDiscoveredDevice, ATEMScanResult, ATEMStateSnapshot, ATEMSwitchHistoryEntry, ATEMTestResult } from '../shared/types.js';
@@ -229,7 +230,17 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
     };
     this.emitState();
 
-    const atem = this.createAtem(true);
+    let atem: Atem;
+    try {
+      atem = await this.createAtem(true);
+    } catch (error) {
+      console.error('[ATEM] native module load failed', error);
+      this.connectionState = 'error';
+      this.lastState = { ...this.emptyState(), connectionState: 'error', errorMessage: 'ATEM 组件加载失败，请重新安装修复版；OBS 音频检测可继续使用。' };
+      this.emitState();
+      return this.getSnapshot();
+    }
+    if (generation !== this.connectionGeneration) { await atem.destroy(); return this.getSnapshot(); }
     this.atem = atem;
     const isCurrentConnection = () => this.atem === atem && this.connectionGeneration === generation;
 
@@ -670,13 +681,17 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   }
 
   private requireConnected(action: string): Atem {
-    if (!this.atem || this.atem.status !== AtemConnectionStatus.CONNECTED || !this.lastState.connected) {
+    if (!this.atem || this.atem.status !== this.atemRuntime?.AtemConnectionStatus.CONNECTED || !this.lastState.connected) {
       throw new Error(`ATEM 未连接，无法${action}`);
     }
     return this.atem;
   }
 
-  private createAtem(trackState: boolean): Atem {
+  private atemRuntime: typeof import('atem-connection') | null = null;
+
+  private async createAtem(trackState: boolean): Promise<Atem> {
+    this.atemRuntime = await import('atem-connection');
+    const { Atem } = this.atemRuntime;
     // Initial ATEM state sync can legitimately take a few seconds on older
     // switchers. A one-second worker watchdog causes false disconnects.
     const atem = new Atem({ childProcessTimeout: 8000 });
@@ -698,7 +713,7 @@ export class ATEMMonitor extends EventEmitter<ATEMMonitorEvents> {
   }
 
   private async connectTemporary(host: string, timeoutMs: number): Promise<Atem> {
-    const atem = this.createAtem(false);
+    const atem = await this.createAtem(false);
     let settled = false;
 
     const connected = new Promise<void>((resolve, reject) => {

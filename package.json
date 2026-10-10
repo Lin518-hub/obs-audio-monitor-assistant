@@ -1,6 +1,6 @@
 {
   "name": "obs-audio-monitor-offline",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Standalone offline OBS audio monitor; local OBS and LAN ATEM only.",
   "author": "OBS 音频检测助手",
   "license": "MIT",
@@ -56,7 +56,8 @@
       "build/tray-*.png",
       "package.json",
       "LICENSE",
-      "README.md"
+      "README.md",
+      "!node_modules/@julusian/freetype2/build/**/*"
     ],
     "win": {
       "target": [
@@ -90,6 +91,7 @@
       "installerSidebar": "build/installer-sidebar.bmp",
       "installerHeader": "build/installer-header.bmp",
       "include": "build/installer.nsh"
-    }
+    },
+    "afterPack": "scripts/verify-native-package.cjs"
   }
 }

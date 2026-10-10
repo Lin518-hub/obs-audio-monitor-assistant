@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Activity, MonitorUp, ShieldCheck } from 'lucide-react';
 
 const CLIENT_RELEASE_NOTES: Record<string, { icon: typeof Activity; title: string; detail: string }[]> = {
+  '1.0.1': [{icon: ShieldCheck,title:'修复 Windows 启动失败',detail:'修正原生组件打包并增加 ATEM 加载保护；这是离线最终版的修复版本。'}],
   '1.0.0': [{icon: MonitorUp,title:'离线开源最终版',detail:'保留本机 OBS 音频检测、浮窗、投影安全区和局域网 ATEM；无监控上报、远程控制或自动更新。'}]
 };
 
